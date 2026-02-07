@@ -114,7 +114,7 @@ Emerging brand with 1-5 licensees, currently using spreadsheets.
 - [x] Init FastAPI project
 - [x] Setup Supabase (auth, DB, storage)
 - [x] Port extraction logic to FastAPI endpoint
-- [ ] Test extraction API with spike's 4 sample contracts
+- [x] Test extraction API with spike's 4 sample contracts
 
 **Day 3-4: Database + CRUD**
 - [x] Create schema in Supabase
@@ -123,9 +123,9 @@ Emerging brand with 1-5 licensees, currently using spreadsheets.
 - [x] Build royalty calculation engine
 
 **Day 5: Testing**
-- [ ] Unit tests for royalty calculator (flat, tiered, category)
-- [ ] Integration tests for extraction flow
-- [ ] Validate against spike's ground truth
+- [x] Unit tests for royalty calculator (flat, tiered, category)
+- [x] Integration tests for extraction flow
+- [x] Validate against spike's ground truth
 
 ### Week 2: Frontend
 
