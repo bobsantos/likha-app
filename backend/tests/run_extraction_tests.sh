@@ -1,6 +1,6 @@
 #!/bin/bash
-# Script to run extraction tests with sample contracts
-# Usage: ./run_extraction_tests.sh [--with-api]
+# Script to run extraction tests (all mocked - no API costs!)
+# Usage: ./run_extraction_tests.sh
 
 set -e
 
@@ -23,28 +23,12 @@ echo "✅ Found sample contracts:"
 ls -1 "$SAMPLE_DIR"/*.pdf | xargs -n 1 basename
 echo ""
 
-# Check for API key
-if [ -z "$ANTHROPIC_API_KEY" ] && [ "$1" != "--with-api" ]; then
-    echo "⚠️  ANTHROPIC_API_KEY not set"
-    echo "Running PDF extraction tests only (no Claude API calls)"
-    echo ""
-    echo "To run full extraction tests with Claude API:"
-    echo "  export ANTHROPIC_API_KEY=sk-ant-your-key"
-    echo "  ./run_extraction_tests.sh --with-api"
-    echo ""
+echo "✅ All tests use MOCKED API calls (no ANTHROPIC_API_KEY needed)"
+echo "✅ No API costs incurred"
+echo "✅ Fast execution (~0.8s for all tests)"
+echo ""
 
-    pytest tests/test_extractor.py::TestPdfExtraction -v
-elif [ -n "$ANTHROPIC_API_KEY" ] || [ "$1" == "--with-api" ]; then
-    echo "✅ ANTHROPIC_API_KEY is set"
-    echo "Running full extraction tests (including Claude API)"
-    echo ""
-    echo "⚠️  Warning: This will make API calls (~$0.02-0.05 per contract)"
-    echo ""
-
-    pytest tests/test_extractor.py -v -s
-else
-    pytest tests/test_extractor.py::TestPdfExtraction -v
-fi
+pytest tests/test_extractor.py -v
 
 echo ""
 echo "==================================="

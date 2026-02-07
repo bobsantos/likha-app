@@ -399,34 +399,37 @@ def test_api_error_handling(mocker):
 
 ## Running Tests
 
-### Run All Tests (Including Mocked)
+### Run All Tests (All Mocked - No API Costs!)
 
 ```bash
 pytest backend/tests/
 ```
 
-### Run Only Mocked Tests (No API Calls)
+### Run Only Extraction Tests (All Mocked)
 
 ```bash
-pytest backend/tests/test_extractor_mocked.py
+pytest backend/tests/test_extractor.py -v
 ```
 
-### Run Only Real API Tests (When Needed)
+### Run Specific Test Classes
 
 ```bash
-# Requires ANTHROPIC_API_KEY
-pytest backend/tests/test_extractor.py -k "TestClaudeExtraction"
+# Only PDF extraction (no mocking needed)
+pytest backend/tests/test_extractor.py::TestPdfExtraction -v
+
+# Only mocked Claude API tests
+pytest backend/tests/test_extractor.py::TestClaudeExtractionMocked -v
 ```
 
-### Skip API Tests in CI
+### CI/CD Configuration
 
-In your CI configuration, you can skip real API tests:
+All tests are mocked, so no special configuration needed:
 
 ```yaml
 # .github/workflows/test.yml
 - name: Run tests
-  run: pytest -m "not extraction"
-  # This skips tests marked with @pytest.mark.extraction
+  run: pytest
+  # No API key needed, no costs incurred
 ```
 
 ## Cost Comparison
@@ -511,15 +514,16 @@ response_data = {
 
 ## Example: Complete Test Suite
 
-See `/Users/bobsantos/likha/dev/likha-app/backend/tests/test_extractor_mocked.py` for a comprehensive example suite including:
+See `/Users/bobsantos/likha/dev/likha-app/backend/tests/test_extractor.py` for a comprehensive example suite including:
 
-- Flat rate extraction
-- Tiered rate extraction
-- Category-specific extraction
-- Partial extraction (missing fields)
-- Markdown code fence handling
-- Error handling
-- Token usage tracking
+- PDF text extraction (no mocking needed)
+- Flat rate extraction (mocked)
+- Tiered rate extraction (mocked)
+- Category-specific extraction (mocked)
+- Partial extraction with missing fields (mocked)
+- Markdown code fence handling (mocked)
+- Error handling (mocked)
+- Token usage tracking (mocked)
 - Reusable fixtures
 - Factory patterns
 
