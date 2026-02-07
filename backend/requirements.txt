@@ -1,0 +1,21 @@
+# Core
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# Database
+supabase>=2.3.0
+psycopg2-binary>=2.9.9
+
+# PDF processing (from spike)
+pdfplumber>=0.11.0
+
+# AI
+anthropic>=0.39.0
+
+# Validation
+pydantic>=2.6.0
+pydantic-settings>=2.1.0
+
+# Utils
+python-dotenv>=1.0.0
