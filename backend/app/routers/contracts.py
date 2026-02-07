@@ -10,6 +10,7 @@ import os
 from app.models.contract import Contract, ContractCreate, ExtractedTerms
 from app.services.extractor import extract_contract
 from app.db import supabase
+from app.auth import get_current_user, verify_contract_ownership
 
 router = APIRouter()
 
@@ -17,12 +18,15 @@ router = APIRouter()
 @router.post("/extract", response_model=dict)
 async def extract_contract_terms(
     file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user),
 ):
     """
     Upload a contract PDF and extract licensing terms using AI.
 
     Returns extraction results including extracted terms, confidence score,
     and token usage.
+
+    Requires authentication.
     """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
@@ -52,14 +56,13 @@ async def extract_contract_terms(
 @router.post("/", response_model=Contract)
 async def create_contract(
     contract: ContractCreate,
-    # TODO: Add user authentication dependency
+    user_id: str = Depends(get_current_user),
 ):
     """
     Create a new contract after user has reviewed and corrected extraction.
-    """
-    # TODO: Get user_id from auth token
-    user_id = "temp-user-id"  # Placeholder
 
+    Requires authentication.
+    """
     # TODO: Upload PDF to Supabase storage and get URL
     pdf_url = "https://placeholder.pdf"  # Placeholder
 
@@ -89,13 +92,13 @@ async def create_contract(
 
 @router.get("/", response_model=List[Contract])
 async def list_contracts(
-    # TODO: Add user authentication dependency
+    user_id: str = Depends(get_current_user),
 ):
     """
     List all contracts for the authenticated user.
+
+    Requires authentication.
     """
-    # TODO: Get user_id from auth token
-    user_id = "temp-user-id"  # Placeholder
 
     result = supabase.table("contracts").select("*").eq("user_id", user_id).execute()
 
@@ -105,12 +108,15 @@ async def list_contracts(
 @router.get("/{contract_id}", response_model=Contract)
 async def get_contract(
     contract_id: str,
-    # TODO: Add user authentication dependency
+    user_id: str = Depends(get_current_user),
 ):
     """
     Get a single contract by ID.
+
+    Requires authentication. User must own the contract.
     """
-    # TODO: Verify user owns this contract
+    # Verify user owns this contract
+    await verify_contract_ownership(contract_id, user_id)
 
     result = supabase.table("contracts").select("*").eq("id", contract_id).execute()
 
@@ -123,12 +129,16 @@ async def get_contract(
 @router.delete("/{contract_id}")
 async def delete_contract(
     contract_id: str,
-    # TODO: Add user authentication dependency
+    user_id: str = Depends(get_current_user),
 ):
     """
     Delete a contract.
+
+    Requires authentication. User must own the contract.
     """
-    # TODO: Verify user owns this contract
+    # Verify user owns this contract
+    await verify_contract_ownership(contract_id, user_id)
+
     # TODO: Delete associated sales periods
     # TODO: Delete PDF from storage
 
