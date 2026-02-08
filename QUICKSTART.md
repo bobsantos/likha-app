@@ -2,6 +2,48 @@
 
 Get up and running in 30 minutes.
 
+## Two Setup Options
+
+1. **Local Development** (Recommended) - Use local Supabase via CLI
+2. **Cloud Development** - Use Supabase Cloud
+
+## Option 1: Local Development (Recommended)
+
+See [LOCAL_DEVELOPMENT.md](./LOCAL_DEVELOPMENT.md) for complete instructions.
+
+**Quick version:**
+
+```bash
+# Install Supabase CLI
+brew install supabase/tap/supabase
+
+# Start local Supabase
+supabase start
+
+# Configure backend
+cd backend && cp .env.local.example .env.local
+# Add your ANTHROPIC_API_KEY to .env.local
+
+# Configure frontend
+cd ../frontend && cp .env.local.example .env.local
+
+# Start backend (terminal 1)
+cd ../backend && source .venv/bin/activate
+uvicorn app.main:app --reload
+
+# Start frontend (terminal 2)
+cd ../frontend && npm run dev
+```
+
+Access:
+- Frontend: http://localhost:3000
+- Backend: http://localhost:8000
+- Supabase Studio: http://127.0.0.1:54323
+
+---
+
+## Option 2: Cloud Development
+
 ## Prerequisites Checklist
 
 - [ ] Python 3.11+ installed

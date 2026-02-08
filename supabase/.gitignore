@@ -1,0 +1,8 @@
+# Supabase local volumes and cache
+.branches/
+.temp/
+
+# Keep these files
+!config.toml
+!migrations/
+!seed/

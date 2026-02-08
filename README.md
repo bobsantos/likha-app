@@ -51,8 +51,33 @@ likha-app/
 
 - Python 3.11+
 - Node.js 18+
-- Supabase account ([supabase.com](https://supabase.com))
+- Docker (for local Supabase)
+- Supabase CLI (for local development) or Supabase account ([supabase.com](https://supabase.com))
 - Anthropic API key ([console.anthropic.com](https://console.anthropic.com))
+
+### Local Development (Recommended)
+
+For local development with Supabase CLI, see [LOCAL_DEVELOPMENT.md](./LOCAL_DEVELOPMENT.md) for detailed instructions.
+
+**Quick start:**
+```bash
+# Install Supabase CLI
+brew install supabase/tap/supabase  # macOS
+
+# Start local Supabase
+supabase start
+
+# Configure backend
+cd backend
+cp .env.local.example .env.local
+# Add your ANTHROPIC_API_KEY to .env.local
+
+# Configure frontend
+cd ../frontend
+cp .env.local.example .env.local
+```
+
+### Production Setup (Supabase Cloud)
 
 ### Backend Setup
 
@@ -97,11 +122,13 @@ Frontend will be available at `http://localhost:3000`
 
 ### Database Setup
 
-Run the SQL schema in Supabase SQL Editor:
+**For local development:**
+Migrations are automatically applied when you run `supabase start`.
 
-```sql
--- See schema.sql
-```
+**For production (Supabase Cloud):**
+Run the SQL files in your Supabase SQL Editor:
+1. `schema.sql` - Main database schema
+2. `storage_setup.sql` - Storage bucket and policies
 
 ## Development Workflow
 
