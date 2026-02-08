@@ -6,13 +6,16 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from typing import List
 import tempfile
 import os
+import logging
 
 from app.models.contract import Contract, ContractCreate, ExtractedTerms
 from app.services.extractor import extract_contract
+from app.services.storage import upload_contract_pdf, get_signed_url, delete_contract_pdf
 from app.db import supabase
 from app.auth import get_current_user, verify_contract_ownership
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/extract", response_model=dict)
@@ -24,20 +27,28 @@ async def extract_contract_terms(
     Upload a contract PDF and extract licensing terms using AI.
 
     Returns extraction results including extracted terms, confidence score,
-    and token usage.
+    token usage, storage path, and signed PDF URL.
 
     Requires authentication.
     """
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    # Save uploaded file temporarily
+    # Read file content
+    content = await file.read()
+
+    # Save uploaded file temporarily for extraction
     with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-        content = await file.read()
         tmp_file.write(content)
         tmp_path = tmp_file.name
 
     try:
+        # Upload PDF to storage
+        storage_path = upload_contract_pdf(content, user_id, file.filename)
+
+        # Generate signed URL for frontend access
+        pdf_url = get_signed_url(storage_path)
+
         # Extract terms
         extracted_terms, token_usage = await extract_contract(tmp_path)
 
@@ -45,6 +56,8 @@ async def extract_contract_terms(
             "extracted_terms": extracted_terms.model_dump(),
             "token_usage": token_usage,
             "filename": file.filename,
+            "storage_path": storage_path,
+            "pdf_url": pdf_url,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
@@ -61,16 +74,16 @@ async def create_contract(
     """
     Create a new contract after user has reviewed and corrected extraction.
 
+    The PDF should have been uploaded during the /extract step, and the
+    pdf_url should be included in the ContractCreate data.
+
     Requires authentication.
     """
-    # TODO: Upload PDF to Supabase storage and get URL
-    pdf_url = "https://placeholder.pdf"  # Placeholder
-
-    # Insert into database
+    # Insert into database using the PDF URL from storage
     result = supabase.table("contracts").insert({
         "user_id": user_id,
         "licensee_name": contract.licensee_name,
-        "pdf_url": pdf_url,
+        "pdf_url": contract.pdf_url,
         "extracted_terms": contract.extracted_terms.model_dump(),
         "royalty_rate": contract.royalty_rate,
         "royalty_base": contract.royalty_base,
@@ -132,16 +145,34 @@ async def delete_contract(
     user_id: str = Depends(get_current_user),
 ):
     """
-    Delete a contract.
+    Delete a contract and its associated PDF from storage.
 
     Requires authentication. User must own the contract.
     """
     # Verify user owns this contract
     await verify_contract_ownership(contract_id, user_id)
 
-    # TODO: Delete associated sales periods
-    # TODO: Delete PDF from storage
+    # Get contract to retrieve PDF URL
+    contract_result = supabase.table("contracts").select("*").eq("id", contract_id).execute()
 
+    if not contract_result.data:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    contract = contract_result.data[0]
+    pdf_url = contract.get("pdf_url")
+
+    # Delete PDF from storage (best-effort, continue if it fails)
+    if pdf_url:
+        try:
+            delete_contract_pdf(pdf_url)
+            logger.info(f"Deleted PDF from storage: {pdf_url}")
+        except Exception as e:
+            # Log error but don't fail the request
+            logger.error(f"Failed to delete PDF from storage: {str(e)}")
+
+    # TODO: Delete associated sales periods (will be handled by cascade delete in DB)
+
+    # Delete contract from database
     result = supabase.table("contracts").delete().eq("id", contract_id).execute()
 
     if not result.data:

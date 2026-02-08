@@ -53,6 +53,7 @@ class ExtractedTerms(BaseModel):
 class ContractCreate(BaseModel):
     """Request to create a new contract."""
     licensee_name: str
+    pdf_url: str  # From storage upload during extraction
     extracted_terms: ExtractedTerms
     # Normalized/validated fields (from extraction review)
     royalty_rate: RoyaltyRate

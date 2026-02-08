@@ -72,43 +72,46 @@ Week 2 focuses on:
 ### Frontend Tasks
 
 **Morning: App Layout & Navigation**
-- [ ] Create main layout: `/frontend/app/(app)/layout.tsx`
+- [x] Create main layout: `/frontend/app/(app)/layout.tsx`
   - Top navigation bar with logo, user menu
   - Protected route (check auth, redirect to login if not authenticated)
-- [ ] Build navigation component: `/frontend/components/nav.tsx`
-- [ ] Add logout functionality
+- [x] Build navigation component: `/frontend/components/nav.tsx`
+- [x] Add logout functionality
 
 **Afternoon: Dashboard Page**
-- [ ] Create dashboard: `/frontend/app/(app)/dashboard/page.tsx`
+- [x] Create dashboard: `/frontend/app/(app)/dashboard/page.tsx`
   - Fetch all contracts via `getContracts()`
   - Display loading skeleton while fetching
   - Handle empty state (no contracts yet)
 
 **Components:**
-- `ContractCard` - Display contract summary
-- `DashboardSummary` - High-level metrics (total contracts, YTD royalties)
-- `EmptyState` - No contracts yet with CTA to upload
+- [x] `ContractCard` - Display contract summary
+- [x] `DashboardSummary` - High-level metrics (total contracts, YTD royalties)
+- [x] `EmptyState` - No contracts yet with CTA to upload
 
 ### Backend Tasks
 
 **Supabase Storage Upload**
-- [ ] Create storage service: `backend/app/services/storage.py`
+- [x] Create storage service: `backend/app/services/storage.py`
   - `upload_contract_pdf(file_content, user_id, filename)`
+  - `get_signed_url(storage_path, expiry_seconds)`
   - `delete_contract_pdf(pdf_url)`
   - Use bucket: `contracts/{user_id}/{filename}`
 
-- [ ] Update contracts router:
+- [x] Update contracts router:
   - Replace placeholder `pdf_url = "https://placeholder.pdf"`
   - Upload PDF during `/extract` endpoint
   - Return storage URL in response
 
-- [ ] Implement cascade delete:
+- [x] Implement cascade delete:
   - Delete PDF from storage when contract is deleted
 
 **Success Criteria:**
-- PDFs uploaded to `contracts/{user_id}/{uuid}.pdf`
-- Signed URLs returned in contract responses
-- PDFs deleted when contract is deleted
+- [x] PDFs uploaded to `contracts/{user_id}/{uuid}.pdf`
+- [x] Signed URLs returned in contract responses
+- [x] PDFs deleted when contract is deleted
+- [x] All tests passing (94/94)
+- [x] TDD approach followed
 
 ---
 
