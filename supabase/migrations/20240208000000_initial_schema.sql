@@ -4,6 +4,9 @@
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Enable btree_gist extension for exclusion constraints on UUID columns
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
 -- Contracts table
 CREATE TABLE contracts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
