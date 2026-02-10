@@ -51,7 +51,7 @@ describe('Nav Component', () => {
     render(<Nav userEmail="test@example.com" />)
 
     const dashboardLink = screen.getByText('Dashboard').closest('a')
-    expect(dashboardLink).toHaveClass('text-blue-600')
+    expect(dashboardLink).toHaveClass('text-primary-600')
   })
 
   it('handles sign out', async () => {

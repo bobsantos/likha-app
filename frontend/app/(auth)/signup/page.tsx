@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { CheckCircle2 } from 'lucide-react'
 import AuthForm from '@/components/AuthForm'
 import AuthError from '@/components/AuthError'
 import { signUp } from '@/lib/auth'
@@ -42,7 +43,7 @@ export default function SignupPage() {
         <h2 className="text-2xl font-bold text-gray-900">Create your account</h2>
         <p className="mt-2 text-sm text-gray-600">
           Already have an account?{' '}
-          <Link href="/login" className="font-medium text-blue-600 hover:text-blue-500">
+          <Link href="/login" className="font-medium text-primary-600 hover:text-primary-500">
             Sign in
           </Link>
         </p>
@@ -52,9 +53,12 @@ export default function SignupPage() {
 
       {success && (
         <div className="rounded-lg bg-green-50 p-4">
-          <p className="text-sm text-green-600">
-            Account created successfully! Redirecting...
-          </p>
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="h-5 w-5 text-green-600 mt-0.5 flex-shrink-0" />
+            <p className="text-sm text-green-600">
+              Account created successfully! Redirecting...
+            </p>
+          </div>
         </div>
       )}
 

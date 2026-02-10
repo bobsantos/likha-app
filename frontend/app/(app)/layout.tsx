@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
 import { getCurrentUser } from '@/lib/auth'
 import Nav from '@/components/Nav'
 
@@ -38,7 +39,10 @@ export default function AppLayout({
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-600">Loading...</p>
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 text-primary-600 animate-spin" />
+          <p className="text-gray-600">Loading...</p>
+        </div>
       </div>
     )
   }
@@ -50,7 +54,7 @@ export default function AppLayout({
   return (
     <div className="min-h-screen bg-gray-50">
       <Nav userEmail={user.email} />
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 animate-fade-in">
         {children}
       </main>
     </div>

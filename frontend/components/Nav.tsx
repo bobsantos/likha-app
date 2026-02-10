@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
+import { LayoutDashboard, FileText, LogOut, Upload } from 'lucide-react'
 import { signOut } from '@/lib/auth'
 
 interface NavProps {
@@ -40,39 +41,49 @@ export default function Nav({ userEmail }: NavProps) {
         <div className="flex justify-between h-16">
           <div className="flex items-center gap-8">
             <Link href="/dashboard" className="flex items-center">
-              <h1 className="text-xl font-bold text-gray-900">Likha</h1>
+              <h1 className="text-xl font-bold text-primary-600">Likha</h1>
             </Link>
 
-            <div className="flex gap-6">
+            <div className="flex gap-2">
               <Link
                 href="/dashboard"
-                className={`px-3 py-2 text-sm font-medium ${
+                className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 ${
                   isActive('/dashboard')
-                    ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-700 hover:text-gray-900'
+                    ? 'bg-primary-50 text-primary-600'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-50'
                 }`}
               >
+                <LayoutDashboard className="w-4 h-4" />
                 Dashboard
               </Link>
               <Link
                 href="/contracts"
-                className={`px-3 py-2 text-sm font-medium ${
+                className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 ${
                   isActive('/contracts')
-                    ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-700 hover:text-gray-900'
+                    ? 'bg-primary-50 text-primary-600'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-50'
                 }`}
               >
+                <FileText className="w-4 h-4" />
                 Contracts
               </Link>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <Link
+              href="/contracts/upload"
+              className="btn-primary flex items-center gap-2"
+            >
+              <Upload className="w-4 h-4" />
+              Upload Contract
+            </Link>
             <span className="text-sm text-gray-600">{userEmail}</span>
             <button
               onClick={handleSignOut}
-              className="px-4 py-2 text-sm text-gray-700 hover:text-gray-900"
+              className="px-3 py-2 text-sm text-gray-700 hover:text-gray-900 hover:bg-gray-50 rounded-lg transition-colors flex items-center gap-2"
             >
+              <LogOut className="w-4 h-4" />
               Sign Out
             </button>
           </div>
