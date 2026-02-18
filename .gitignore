@@ -62,6 +62,7 @@ next-env.d.ts
 
 # Testing
 .coverage
+coverage/
 .pytest_cache/
 htmlcov/
 .tox/
@@ -134,6 +135,9 @@ tmp/
 # Database
 *.sql.gz
 *.dump
+
+# Claude
+.claude/
 
 # Supabase
 .supabase/
