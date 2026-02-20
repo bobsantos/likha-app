@@ -32,7 +32,10 @@ class TestUploadContractPdf:
 
             result = upload_contract_pdf(file_content, user_id, filename)
 
-            assert result == f"contracts/{user_id}/{filename}"
+            # Result includes a short UUID prefix to avoid 409 Conflict on duplicate names,
+            # so match the directory prefix and the sanitized base filename instead of exact path.
+            assert result.startswith(f"contracts/{user_id}/")
+            assert result.endswith(f"_{filename}")
             mock_supabase.storage.from_.assert_called_once_with("contracts")
 
     def test_upload_generates_unique_filename_if_not_provided(self):

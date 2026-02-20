@@ -4,21 +4,64 @@
 
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Upload, FileText, Loader2, CheckCircle2, ArrowLeft, AlertCircle } from 'lucide-react'
-import { uploadContract, createContract } from '@/lib/api'
+import { Upload, FileText, Loader2, CheckCircle2, ArrowLeft, AlertCircle, RefreshCw, FolderOpen } from 'lucide-react'
+import { uploadContract, createContract, ApiError } from '@/lib/api'
 import type { ExtractedTerms, ExtractionResponse } from '@/types'
 
 type Step = 'upload' | 'extracting' | 'review' | 'saving'
+type ErrorType = 'validation' | 'upload' | 'extraction' | 'save' | 'auth' | null
+
+interface ErrorInfo {
+  type: ErrorType
+  title: string
+  message: string
+}
+
+function classifyError(error: unknown): ErrorInfo {
+  if (error instanceof ApiError && error.status === 401) {
+    return {
+      type: 'auth',
+      title: 'Your session has expired',
+      message: 'Please sign in again to continue.',
+    }
+  }
+
+  const msg = error instanceof Error ? error.message.toLowerCase() : ''
+
+  if (msg.includes('storage') || msg.includes('upload')) {
+    return {
+      type: 'upload',
+      title: 'Upload failed',
+      message: "We couldn't store your file. Check your connection and try again.",
+    }
+  }
+
+  if (msg.includes('extract') || msg.includes('parse')) {
+    return {
+      type: 'extraction',
+      title: 'Could not read contract',
+      message: "The AI couldn't extract terms from this PDF. The file may be scanned or image-based.",
+    }
+  }
+
+  return {
+    type: 'upload',
+    title: 'Something went wrong',
+    message: 'We hit an unexpected error. Please try again.',
+  }
+}
 
 export default function UploadContractPage() {
   const router = useRouter()
+  const retryFileInputRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('upload')
   const [file, setFile] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errorType, setErrorType] = useState<ErrorType>(null)
   const [extractedTerms, setExtractedTerms] = useState<ExtractedTerms | null>(null)
   const [formData, setFormData] = useState<any>({})
 
@@ -40,11 +83,13 @@ export default function UploadContractPage() {
     const validationError = validateFile(selectedFile)
     if (validationError) {
       setError(validationError)
+      setErrorType('validation')
       setFile(null)
       return
     }
 
     setError(null)
+    setErrorType(null)
     setFile(selectedFile)
   }
 
@@ -77,34 +122,45 @@ export default function UploadContractPage() {
     try {
       setStep('extracting')
       setError(null)
+      setErrorType(null)
 
       const response: ExtractionResponse = await uploadContract(file)
       setExtractedTerms(response.extracted_terms)
 
-      // Initialize form data with extracted terms
+      // Initialize form data with backend-normalized values
+      const fv = response.form_values
       setFormData({
-        licensee_name: response.extracted_terms.licensee_name || '',
-        licensor_name: response.extracted_terms.licensor_name || '',
-        contract_start: response.extracted_terms.contract_start || '',
-        contract_end: response.extracted_terms.contract_end || '',
-        royalty_rate: response.extracted_terms.royalty_rate
-          ? typeof response.extracted_terms.royalty_rate === 'string'
-            ? response.extracted_terms.royalty_rate
-            : JSON.stringify(response.extracted_terms.royalty_rate)
+        licensee_name: fv.licensee_name || '',
+        licensor_name: fv.licensor_name || '',
+        contract_start: fv.contract_start_date || '',
+        contract_end: fv.contract_end_date || '',
+        royalty_rate: typeof fv.royalty_rate === 'number'
+          ? String(fv.royalty_rate)
+          : typeof fv.royalty_rate === 'object'
+            ? JSON.stringify(fv.royalty_rate)
+            : fv.royalty_rate || '',
+        royalty_base: fv.royalty_base || 'net_sales',
+        territories: fv.territories
+          ? fv.territories.join(', ')
           : '',
-        royalty_base: response.extracted_terms.royalty_base || 'net_sales',
-        territories: response.extracted_terms.territories
-          ? response.extracted_terms.territories.join(', ')
-          : '',
-        reporting_frequency: response.extracted_terms.reporting_frequency || 'quarterly',
-        minimum_guarantee: response.extracted_terms.minimum_guarantee || '',
-        advance_payment: response.extracted_terms.advance_payment || '',
+        reporting_frequency: fv.reporting_frequency || 'quarterly',
+        minimum_guarantee: fv.minimum_guarantee != null ? String(fv.minimum_guarantee) : '',
+        advance_payment: fv.advance_payment != null ? String(fv.advance_payment) : '',
       })
 
       setStep('review')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to extract contract terms')
+      const info = classifyError(err)
+
+      if (info.type === 'auth') {
+        router.push('/login')
+        return
+      }
+
+      setError(info.message)
+      setErrorType(info.type)
       setStep('upload')
+      // Keep file in state so user can retry
     }
   }
 
@@ -115,6 +171,7 @@ export default function UploadContractPage() {
     try {
       setStep('saving')
       setError(null)
+      setErrorType(null)
 
       // Parse royalty rate from percentage string to decimal
       let royaltyRate: number | object
@@ -149,7 +206,8 @@ export default function UploadContractPage() {
       const contract = await createContract(contractData)
       router.push(`/contracts/${contract.id}`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save contract')
+      setError('Your extracted terms are still here — nothing was lost. Please try saving again.')
+      setErrorType('save')
       setStep('review')
     }
   }
@@ -157,6 +215,18 @@ export default function UploadContractPage() {
   const handleInputChange = (field: string, value: string) => {
     setFormData((prev: any) => ({ ...prev, [field]: value }))
   }
+
+  // Derive friendly title for current error
+  const errorTitle = (() => {
+    if (!error) return ''
+    if (errorType === 'save') return 'Contract could not be saved'
+    if (errorType === 'extraction') return 'Could not read contract'
+    if (errorType === 'validation') return 'Invalid file'
+    return 'Upload failed'
+  })()
+
+  // Whether the dropzone should show error state
+  const showDropzoneError = step === 'upload' && error !== null && errorType !== 'save'
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -175,67 +245,120 @@ export default function UploadContractPage() {
         <p className="mt-2 text-gray-600">Upload a PDF contract to extract licensing terms</p>
       </div>
 
-      {/* Error Display */}
-      {error && (
-        <div className="card border border-red-200 bg-red-50 mb-6">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
-            <div>
-              <h3 className="text-sm font-semibold text-red-900">Error</h3>
-              <p className="text-sm text-red-700 mt-1">{error}</p>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Step 1: Upload */}
       {step === 'upload' && (
         <div className="card animate-fade-in">
-          <div
-            className={`relative border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
-              dragActive
-                ? 'border-primary-500 bg-primary-50'
-                : 'border-gray-300 hover:border-gray-400'
-            }`}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-          >
-            <input
-              type="file"
-              accept=".pdf"
-              onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
+          {showDropzoneError ? (
+            /* Error state dropzone */
+            <div
+              className="border-2 border-red-300 rounded-xl p-12 text-center transition-colors duration-300 bg-red-50"
+              onDragEnter={handleDrag}
+              onDragLeave={handleDrag}
+              onDragOver={handleDrag}
+              onDrop={handleDrop}
+            >
+              <div className="flex flex-col items-center animate-slide-up">
+                <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                  <AlertCircle className="w-8 h-8 text-red-500" />
+                </div>
+                <p className="text-base font-semibold text-gray-900 mb-1">{errorTitle}</p>
+                <p className="text-sm text-gray-500 mb-6 text-center max-w-xs">{error}</p>
 
-            <div className="flex flex-col items-center">
-              {file ? (
-                <>
-                  <FileText className="w-16 h-16 text-primary-600 mb-4" />
-                  <p className="text-lg font-medium text-gray-900 mb-2">{file.name}</p>
-                  <p className="text-sm text-gray-500 mb-6">
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                {file && (
+                  <p className="text-xs text-gray-400 mb-6 flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" />
+                    {file.name} &middot; {(file.size / 1024 / 1024).toFixed(2)} MB
                   </p>
-                  <button
-                    onClick={handleUpload}
-                    className="btn-primary flex items-center gap-2"
-                  >
-                    <Upload className="w-5 h-5" />
-                    Upload & Extract
-                  </button>
-                </>
-              ) : (
-                <>
-                  <Upload className="w-16 h-16 text-gray-400 mb-4" />
-                  <p className="text-lg font-medium text-gray-900 mb-2">
-                    Drop your PDF here or click to browse
-                  </p>
-                  <p className="text-sm text-gray-500">PDF files only, max 10MB</p>
-                </>
-              )}
+                )}
+
+                {errorType === 'validation' ? (
+                  /* Validation errors: only offer file chooser, no retry */
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept=".pdf"
+                      onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                      className="hidden"
+                    />
+                    <span className="btn-primary flex items-center gap-2">
+                      <FolderOpen className="w-4 h-4" />
+                      Choose a file
+                    </span>
+                  </label>
+                ) : (
+                  /* Upload/extraction errors: offer retry + choose different file */
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleUpload}
+                      className="btn-primary flex items-center gap-2"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Try again
+                    </button>
+                    <label className="cursor-pointer">
+                      <input
+                        ref={retryFileInputRef}
+                        type="file"
+                        accept=".pdf"
+                        onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                        className="hidden"
+                      />
+                      <span className="btn-secondary flex items-center gap-2">
+                        <FolderOpen className="w-4 h-4" />
+                        Choose different file
+                      </span>
+                    </label>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          ) : (
+            /* Normal dropzone */
+            <div
+              className={`relative border-2 border-dashed rounded-xl p-12 text-center transition-colors duration-300 ${
+                dragActive
+                  ? 'border-primary-500 bg-primary-50'
+                  : 'border-gray-300 hover:border-gray-400'
+              }`}
+              onDragEnter={handleDrag}
+              onDragLeave={handleDrag}
+              onDragOver={handleDrag}
+              onDrop={handleDrop}
+            >
+              <div className="flex flex-col items-center">
+                {file ? (
+                  <>
+                    <FileText className="w-16 h-16 text-primary-600 mb-4" />
+                    <p className="text-lg font-medium text-gray-900 mb-2">{file.name}</p>
+                    <p className="text-sm text-gray-500 mb-6">
+                      {(file.size / 1024 / 1024).toFixed(2)} MB
+                    </p>
+                    <button
+                      onClick={handleUpload}
+                      className="btn-primary flex items-center gap-2"
+                    >
+                      <Upload className="w-5 h-5" />
+                      Upload & Extract
+                    </button>
+                  </>
+                ) : (
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept=".pdf"
+                      onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                      className="hidden"
+                    />
+                    <Upload className="w-16 h-16 text-gray-400 mb-4 mx-auto" />
+                    <p className="text-lg font-medium text-gray-900 mb-2">
+                      Drop your PDF here or click to browse
+                    </p>
+                    <p className="text-sm text-gray-500">PDF files only, max 10MB</p>
+                  </label>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -257,6 +380,17 @@ export default function UploadContractPage() {
             <CheckCircle2 className="w-6 h-6 text-green-600" />
             <h2 className="text-xl font-semibold text-gray-900">Review Extracted Terms</h2>
           </div>
+
+          {/* Inline save error */}
+          {errorType === 'save' && error && (
+            <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg mb-6 animate-slide-up">
+              <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-red-800">{errorTitle}</p>
+                <p className="text-sm text-red-600 mt-0.5">{error}</p>
+              </div>
+            </div>
+          )}
 
           <form onSubmit={handleSaveContract} className="space-y-6">
             <div className="grid gap-6 md:grid-cols-2">
@@ -407,6 +541,8 @@ export default function UploadContractPage() {
                   setFile(null)
                   setExtractedTerms(null)
                   setFormData({})
+                  setError(null)
+                  setErrorType(null)
                 }}
                 className="btn-secondary"
               >

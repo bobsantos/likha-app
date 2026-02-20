@@ -54,21 +54,23 @@ export interface CategoryRate {
   }
 }
 
-// Extracted terms from PDF
+// Extracted terms from PDF (field names match backend ExtractedTerms model)
 export interface ExtractedTerms {
   licensor_name: string | null
   licensee_name: string | null
-  contract_start: string | null
-  contract_end: string | null
+  contract_start_date: string | null
+  contract_end_date: string | null
   royalty_rate: string | object | null
   royalty_base: string | null
   territories: string[] | null
   product_categories: string[] | null
   minimum_guarantee: string | null
-  mg_period: string | null
   advance_payment: string | null
-  reporting_frequency: string | null
   payment_terms: string | null
+  reporting_frequency: string | null
+  exclusivity: string | null
+  confidence_score: number | null
+  extraction_notes: string[] | null
 }
 
 // Sales period types
@@ -94,7 +96,28 @@ export interface ApiResponse<T> {
   error?: string
 }
 
+export interface FormValues {
+  licensee_name: string
+  licensor_name: string
+  royalty_rate: number | object | string
+  royalty_base: 'net_sales' | 'gross_sales'
+  minimum_guarantee: number | null
+  advance_payment: number | null
+  contract_start_date: string
+  contract_end_date: string
+  reporting_frequency: 'monthly' | 'quarterly' | 'semi_annually' | 'annually'
+  territories: string[]
+}
+
 export interface ExtractionResponse {
   extracted_terms: ExtractedTerms
-  raw_text: string
+  form_values: FormValues
+  token_usage: {
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+  }
+  filename: string
+  storage_path: string
+  pdf_url: string
 }

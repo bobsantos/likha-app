@@ -6,7 +6,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useRouter } from 'next/navigation'
 import UploadContractPage from '@/app/(app)/contracts/upload/page'
-import { uploadContract, createContract } from '@/lib/api'
+import { uploadContract, createContract, ApiError } from '@/lib/api'
 
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
@@ -17,6 +17,14 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/lib/api', () => ({
   uploadContract: jest.fn(),
   createContract: jest.fn(),
+  ApiError: class ApiError extends Error {
+    status: number
+    constructor(message: string, status: number) {
+      super(message)
+      this.name = 'ApiError'
+      this.status = status
+    }
+  },
 }))
 
 describe('Upload Contract Page', () => {
@@ -94,19 +102,33 @@ describe('Upload Contract Page', () => {
       extracted_terms: {
         licensee_name: 'Test Corp',
         licensor_name: 'Test Author',
-        contract_start: '2024-01-01',
-        contract_end: '2025-12-31',
-        royalty_rate: '15%',
-        royalty_base: 'net_sales',
+        contract_start_date: '2024-01-01',
+        contract_end_date: '2025-12-31',
+        royalty_rate: '15% of net sales',
+        royalty_base: 'net sales',
         territories: ['US'],
         reporting_frequency: 'quarterly',
         minimum_guarantee: null,
         advance_payment: null,
         product_categories: null,
-        mg_period: null,
         payment_terms: null,
       },
-      raw_text: 'Test contract text',
+      form_values: {
+        licensee_name: 'Test Corp',
+        licensor_name: 'Test Author',
+        contract_start_date: '2024-01-01',
+        contract_end_date: '2025-12-31',
+        royalty_rate: 15,
+        royalty_base: 'net_sales',
+        territories: ['US'],
+        reporting_frequency: 'quarterly',
+        minimum_guarantee: null,
+        advance_payment: null,
+      },
+      token_usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+      filename: 'contract.pdf',
+      storage_path: 'contracts/user-123/abc_contract.pdf',
+      pdf_url: 'https://example.com/signed-url',
     })
 
     render(<UploadContractPage />)
@@ -133,19 +155,33 @@ describe('Upload Contract Page', () => {
       extracted_terms: {
         licensee_name: 'Test Corp',
         licensor_name: null,
-        contract_start: null,
-        contract_end: null,
-        royalty_rate: '10',
-        royalty_base: 'net_sales',
+        contract_start_date: null,
+        contract_end_date: null,
+        royalty_rate: '10%',
+        royalty_base: null,
         territories: null,
         reporting_frequency: 'quarterly',
         minimum_guarantee: null,
         advance_payment: null,
         product_categories: null,
-        mg_period: null,
         payment_terms: null,
       },
-      raw_text: '',
+      form_values: {
+        licensee_name: 'Test Corp',
+        licensor_name: '',
+        contract_start_date: '',
+        contract_end_date: '',
+        royalty_rate: 10,
+        royalty_base: 'net_sales',
+        territories: [],
+        reporting_frequency: 'quarterly',
+        minimum_guarantee: null,
+        advance_payment: null,
+      },
+      token_usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150 },
+      filename: 'contract.pdf',
+      storage_path: 'contracts/user-123/abc_contract.pdf',
+      pdf_url: 'https://example.com/signed-url',
     })
 
     mockCreateContract.mockResolvedValue({ id: 'new-contract-123' })
@@ -177,7 +213,7 @@ describe('Upload Contract Page', () => {
     })
   })
 
-  it('shows error on extraction failure', async () => {
+  it('shows friendly error message on extraction failure', async () => {
     mockUploadContract.mockRejectedValue(new Error('Failed to upload contract'))
 
     render(<UploadContractPage />)
@@ -193,7 +229,72 @@ describe('Upload Contract Page', () => {
     fireEvent.click(screen.getByText(/upload & extract/i))
 
     await waitFor(() => {
-      expect(screen.getByText(/failed to upload contract/i)).toBeInTheDocument()
+      // The friendly classified message is shown, not the raw error
+      expect(
+        screen.getByText(/we couldn't store your file/i)
+      ).toBeInTheDocument()
+    })
+  })
+
+  it('shows "Try again" button after upload error', async () => {
+    mockUploadContract.mockRejectedValue(new Error('Failed to upload contract'))
+
+    render(<UploadContractPage />)
+
+    const file = new File(['test'], 'contract.pdf', { type: 'application/pdf' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/upload & extract/i)).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText(/upload & extract/i))
+
+    await waitFor(() => {
+      // The "Try again" button specifically (not the text in the error message body)
+      expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument()
+    })
+  })
+
+  it('shows "Choose different file" button after upload error', async () => {
+    mockUploadContract.mockRejectedValue(new Error('Failed to upload contract'))
+
+    render(<UploadContractPage />)
+
+    const file = new File(['test'], 'contract.pdf', { type: 'application/pdf' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/upload & extract/i)).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText(/upload & extract/i))
+
+    await waitFor(() => {
+      expect(screen.getByText(/choose different file/i)).toBeInTheDocument()
+    })
+  })
+
+  it('shows file name as context in error state', async () => {
+    mockUploadContract.mockRejectedValue(new Error('Failed to upload contract'))
+
+    render(<UploadContractPage />)
+
+    const file = new File(['test'], 'my-contract.pdf', { type: 'application/pdf' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/upload & extract/i)).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByText(/upload & extract/i))
+
+    await waitFor(() => {
+      // File name should still be visible in the error state context line
+      expect(screen.getByText(/my-contract\.pdf/i)).toBeInTheDocument()
     })
   })
 })

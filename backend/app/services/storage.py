@@ -36,8 +36,10 @@ def upload_contract_pdf(
     if not filename:
         filename = f"{uuid4().hex}.pdf"
     else:
-        # Sanitize filename: replace spaces and special chars with underscores
-        filename = re.sub(r'[^\w\-.]', '_', filename)
+        # Sanitize filename: replace spaces and special chars with underscores,
+        # then prepend a short UUID to prevent 409 Conflict on duplicate names.
+        sanitized_filename = re.sub(r'[^\w\-.]', '_', filename)
+        filename = f"{uuid4().hex[:8]}_{sanitized_filename}"
 
     # Construct storage path
     storage_path = f"contracts/{user_id}/{filename}"

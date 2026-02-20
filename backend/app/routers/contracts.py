@@ -10,6 +10,7 @@ import logging
 
 from app.models.contract import Contract, ContractCreate, ExtractedTerms
 from app.services.extractor import extract_contract
+from app.services.normalizer import normalize_extracted_terms
 from app.services.storage import upload_contract_pdf, get_signed_url, delete_contract_pdf
 from app.db import supabase
 from app.auth import get_current_user, verify_contract_ownership
@@ -44,22 +45,32 @@ async def extract_contract_terms(
 
     try:
         # Upload PDF to storage
+        logger.info(f"Uploading PDF to storage for user {user_id}: {file.filename}")
         storage_path = upload_contract_pdf(content, user_id, file.filename)
 
         # Generate signed URL for frontend access
         pdf_url = get_signed_url(storage_path)
 
         # Extract terms
+        logger.info(f"Extracting terms from PDF: {file.filename}")
         extracted_terms, token_usage = await extract_contract(tmp_path)
 
+        # Normalise raw extraction into form-ready values
+        form_values = normalize_extracted_terms(extracted_terms)
+
+        logger.info(f"Extraction complete for {file.filename}, tokens used: {token_usage.get('total_tokens', 'N/A')}")
         return {
             "extracted_terms": extracted_terms.model_dump(),
+            "form_values": form_values.model_dump(),
             "token_usage": token_usage,
             "filename": file.filename,
             "storage_path": storage_path,
             "pdf_url": pdf_url,
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Extraction failed for {file.filename}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
     finally:
         # Clean up temp file
