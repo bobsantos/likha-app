@@ -222,3 +222,40 @@ cd frontend && npm run dev
 ```bash
 docker-compose up
 ```
+
+## Deployment
+
+### Database Migrations
+
+Supabase does **not** auto-run migration files from the repo. Migrations must be explicitly applied.
+
+**Local development:**
+```bash
+# Option A: Paste SQL in Supabase Dashboard > SQL Editor
+# Option B: Reset and re-run all migrations (wipes data)
+supabase db reset
+```
+
+**Production:**
+```bash
+# Link to your production project (one-time setup)
+supabase link --project-ref <your-prod-project-id>
+
+# Apply pending migrations (tracks which have already run)
+supabase db push
+```
+
+**CI/CD (future):**
+Supabase offers a GitHub integration that auto-applies migrations on push. Configure in Supabase Dashboard > Settings > Integrations.
+
+**Important:** Always apply migrations *before* deploying new app code that depends on schema changes. The app will crash if code references columns that don't exist yet (tests won't catch this since they mock the database).
+
+### App Deployment
+
+| Component | Suggested Platform |
+|-----------|-------------------|
+| Backend (FastAPI) | Railway or Render |
+| Frontend (Next.js) | Vercel |
+| Database + Storage | Supabase (hosted) |
+
+Environment variables for each platform must match those listed in the Environment Variables section above.
