@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from app.models.sales import SalesPeriod, SalesPeriodCreate, RoyaltySummary
 from app.services.royalty_calc import calculate_royalty
-from app.db import supabase
+from app.db import supabase_admin as supabase
 from app.auth import get_current_user, verify_contract_ownership
 
 router = APIRouter()

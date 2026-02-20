@@ -355,7 +355,7 @@ class TestExtractDuplicateCheck:
 
         existing = _make_db_contract(status="active", filename="Nike_License_2024.pdf")
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             # Duplicate check query returns an existing active contract
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(
@@ -389,7 +389,7 @@ class TestExtractDuplicateCheck:
             filename="Nike_License_2024.pdf",
         )
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(
                     data=[existing]
@@ -421,7 +421,7 @@ class TestExtractDuplicateCheck:
             filename="new_contract.pdf",
         )
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             # No existing contract
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
@@ -466,7 +466,7 @@ class TestExtractDuplicateCheck:
         # Simulate DB returning a match (case-insensitive query finds it)
         existing = _make_db_contract(status="active", filename="nike_license_2024.pdf")
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(
                     data=[existing]
@@ -494,7 +494,7 @@ class TestExtractDuplicateCheck:
             filename="contract.pdf",
         )
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             ilike_mock = Mock()
             ilike_mock.execute.return_value = Mock(data=[])  # no duplicates
             eq_mock = Mock()
@@ -549,7 +549,7 @@ class TestExtractDraftInsertion:
             filename="contract.pdf",
         )
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             # No duplicates
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
@@ -597,7 +597,7 @@ class TestExtractDraftInsertion:
             filename="contract.pdf",
         )
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
             mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock(
@@ -632,7 +632,7 @@ class TestExtractDraftInsertion:
         mock_file.filename = "contract.pdf"
         mock_file.read = AsyncMock(return_value=pdf_content)
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
 
@@ -664,7 +664,7 @@ class TestExtractDraftInsertion:
         mock_file.filename = "contract.pdf"
         mock_file.read = AsyncMock(return_value=pdf_content)
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
             # Insert returns empty data (failure)
@@ -718,7 +718,7 @@ class TestConfirmEndpoint:
         )
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 mock_verify.return_value = None
 
                 # Fetch draft
@@ -758,7 +758,7 @@ class TestConfirmEndpoint:
         )
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 mock_verify.return_value = None
 
                 mock_supabase.table.return_value.select.return_value \
@@ -792,7 +792,7 @@ class TestConfirmEndpoint:
         )
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 mock_verify.return_value = None
 
                 mock_supabase.table.return_value.select.return_value \
@@ -818,7 +818,7 @@ class TestConfirmEndpoint:
         )
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 mock_verify.return_value = None
 
                 mock_supabase.table.return_value.select.return_value \
@@ -844,7 +844,7 @@ class TestConfirmEndpoint:
         )
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 # Ownership check raises 403
                 mock_verify.side_effect = HTTPException(
                     status_code=403, detail="You are not authorized to access this contract"
@@ -873,7 +873,7 @@ class TestListContractsStatusFilter:
         active_2 = _make_db_contract(contract_id="a-2", status="active")
         # draft should NOT appear in default response
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             eq_mock = Mock()
             eq_mock.eq.return_value.execute.return_value = Mock(data=[active_1, active_2])
             mock_supabase.table.return_value.select.return_value.eq.return_value = eq_mock
@@ -894,7 +894,7 @@ class TestListContractsStatusFilter:
         active_row = _make_db_contract(contract_id="a-1", status="active")
         draft_row = _make_draft_db_contract(contract_id="d-1")
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             # When include_drafts=True, no status filter applied — just eq on user_id
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.execute.return_value = Mock(data=[active_row, draft_row])
@@ -910,7 +910,7 @@ class TestListContractsStatusFilter:
 
         active_row = _make_db_contract(contract_id="a-1", status="active")
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             # Track the chain so we can verify filter calls
             user_eq_mock = Mock()
             status_eq_mock = Mock()
@@ -951,7 +951,7 @@ class Test409ResponseShape:
             created_at="2026-01-15T10:30:00Z",
         )
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[existing])
 
@@ -985,7 +985,7 @@ class Test409ResponseShape:
         )
         existing["created_at"] = "2026-02-19T08:15:00Z"
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             mock_supabase.table.return_value.select.return_value \
                 .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[existing])
 

@@ -62,7 +62,7 @@ class TestExtractEndpointWithStorage:
         mock_file.filename = "test_contract.pdf"
         mock_file.read = AsyncMock(return_value=pdf_content)
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             self._mock_no_duplicate(mock_supabase)
             self._mock_draft_insert(mock_supabase)
 
@@ -109,7 +109,7 @@ class TestExtractEndpointWithStorage:
         mock_file.filename = "test_contract.pdf"
         mock_file.read = AsyncMock(return_value=pdf_content)
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             self._mock_no_duplicate(mock_supabase)
             self._mock_draft_insert(mock_supabase)
 
@@ -147,7 +147,7 @@ class TestExtractEndpointWithStorage:
         mock_file.filename = "test_contract.pdf"
         mock_file.read = AsyncMock(return_value=pdf_content)
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             self._mock_no_duplicate(mock_supabase)
 
             with patch('app.routers.contracts.extract_contract') as mock_extract:
@@ -196,7 +196,7 @@ class TestCreateContractWithStorage:
             reporting_frequency="quarterly"
         )
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             # Mock database insert
             mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock(
                 data=[{
@@ -244,7 +244,7 @@ class TestDeleteContractWithStorage:
         pdf_url = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/contract.pdf?token=abc"
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
                     # Mock ownership verification (async)
                     mock_verify.return_value = None
@@ -284,7 +284,7 @@ class TestDeleteContractWithStorage:
         pdf_url = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/contract.pdf?token=abc"
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
                     mock_verify.return_value = None
 
@@ -319,7 +319,7 @@ class TestDeleteContractWithStorage:
         pdf_url = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/contract.pdf?token=abc"
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
                     mock_verify.return_value = None
 

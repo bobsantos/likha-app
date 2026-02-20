@@ -18,7 +18,7 @@ from app.models.contract import (
 from app.services.extractor import extract_contract
 from app.services.normalizer import normalize_extracted_terms
 from app.services.storage import upload_contract_pdf, get_signed_url, delete_contract_pdf
-from app.db import supabase
+from app.db import supabase, supabase_admin
 from app.auth import get_current_user, verify_contract_ownership
 
 router = APIRouter()
@@ -53,7 +53,7 @@ async def extract_contract_terms(
     # Step 1: Duplicate filename check (before any upload or extraction)
     # -------------------------------------------------------------------------
     dup_result = (
-        supabase.table("contracts")
+        supabase_admin.table("contracts")
         .select("id, filename, licensee_name, created_at, status")
         .eq("user_id", user_id)
         .ilike("filename", file.filename)
@@ -141,7 +141,15 @@ async def extract_contract_terms(
             "status": ContractStatus.DRAFT,
         }
 
-        insert_result = supabase.table("contracts").insert(draft_insert_data).execute()
+        # Use the admin client (service role key) so the server-side insert
+        # bypasses RLS. The anon client has no JWT, so auth.uid() would be NULL
+        # and the RLS INSERT policy (auth.uid() = user_id) would reject the row.
+        if supabase_admin is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Server misconfiguration: SUPABASE_SERVICE_KEY is not set",
+            )
+        insert_result = supabase_admin.table("contracts").insert(draft_insert_data).execute()
 
         if not insert_result.data:
             raise HTTPException(status_code=500, detail="Failed to persist draft contract")
@@ -195,7 +203,7 @@ async def confirm_contract(
     await verify_contract_ownership(contract_id, user_id)
 
     # Fetch the current contract to check its status
-    result = supabase.table("contracts").select("*").eq("id", contract_id).execute()
+    result = supabase_admin.table("contracts").select("*").eq("id", contract_id).execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Contract not found")
@@ -226,7 +234,7 @@ async def confirm_contract(
     }
 
     update_result = (
-        supabase.table("contracts")
+        supabase_admin.table("contracts")
         .update(update_data)
         .eq("id", contract_id)
         .execute()
@@ -252,7 +260,7 @@ async def create_contract(
     Requires authentication.
     """
     # Insert into database using the PDF URL from storage
-    result = supabase.table("contracts").insert({
+    result = supabase_admin.table("contracts").insert({
         "user_id": user_id,
         "licensee_name": contract.licensee_name,
         "pdf_url": contract.pdf_url,
@@ -289,7 +297,7 @@ async def list_contracts(
 
     Requires authentication.
     """
-    query = supabase.table("contracts").select("*").eq("user_id", user_id)
+    query = supabase_admin.table("contracts").select("*").eq("user_id", user_id)
 
     if not include_drafts:
         query = query.eq("status", "active")
@@ -312,7 +320,7 @@ async def get_contract(
     # Verify user owns this contract
     await verify_contract_ownership(contract_id, user_id)
 
-    result = supabase.table("contracts").select("*").eq("id", contract_id).execute()
+    result = supabase_admin.table("contracts").select("*").eq("id", contract_id).execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Contract not found")
@@ -336,7 +344,7 @@ async def delete_contract(
     await verify_contract_ownership(contract_id, user_id)
 
     # Get contract to retrieve PDF URL
-    contract_result = supabase.table("contracts").select("*").eq("id", contract_id).execute()
+    contract_result = supabase_admin.table("contracts").select("*").eq("id", contract_id).execute()
 
     if not contract_result.data:
         raise HTTPException(status_code=404, detail="Contract not found")
@@ -356,7 +364,7 @@ async def delete_contract(
     # TODO: Delete associated sales periods (will be handled by cascade delete in DB)
 
     # Delete contract from database
-    result = supabase.table("contracts").delete().eq("id", contract_id).execute()
+    result = supabase_admin.table("contracts").delete().eq("id", contract_id).execute()
 
     if not result.data:
         raise HTTPException(status_code=404, detail="Contract not found")

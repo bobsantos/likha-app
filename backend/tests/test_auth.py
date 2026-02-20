@@ -107,7 +107,7 @@ class TestVerifyContractOwnership:
         contract_id = "contract-123"
         user_id = "user-123"
 
-        with patch('app.auth.supabase') as mock_supabase:
+        with patch('app.auth.supabase_admin') as mock_supabase:
             # Mock database query returning contract owned by user
             mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = Mock(
                 data=[{"id": contract_id, "user_id": user_id}]
@@ -125,7 +125,7 @@ class TestVerifyContractOwnership:
         contract_id = "nonexistent-contract"
         user_id = "user-123"
 
-        with patch('app.auth.supabase') as mock_supabase:
+        with patch('app.auth.supabase_admin') as mock_supabase:
             # Mock database query returning empty result
             mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = Mock(
                 data=[]
@@ -144,7 +144,7 @@ class TestVerifyContractOwnership:
         user_id = "user-123"
         other_user_id = "user-456"
 
-        with patch('app.auth.supabase') as mock_supabase:
+        with patch('app.auth.supabase_admin') as mock_supabase:
             # Mock database query returning contract owned by different user
             mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = Mock(
                 data=[{"id": contract_id, "user_id": other_user_id}]
@@ -162,7 +162,7 @@ class TestVerifyContractOwnership:
         contract_id = "contract-123"
         user_id = "user-123"
 
-        with patch('app.auth.supabase') as mock_supabase:
+        with patch('app.auth.supabase_admin') as mock_supabase:
             # Mock database query raising exception
             mock_supabase.table.return_value.select.return_value.eq.return_value.execute.side_effect = Exception("Database error")
 
