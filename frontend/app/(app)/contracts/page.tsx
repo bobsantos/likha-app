@@ -21,7 +21,7 @@ export default function ContractsPage() {
     try {
       setLoading(true)
       setError(null)
-      const data = await getContracts()
+      const data = await getContracts({ include_drafts: true })
       setContracts(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load contracts')
@@ -88,14 +88,35 @@ export default function ContractsPage() {
         />
       )}
 
-      {/* Contracts Grid */}
-      {!loading && !error && contracts.length > 0 && (
+      {/* Draft / Needs Review Section */}
+      {!loading && !error && contracts.some((c) => c.status === 'draft') && (
+        <div className="mb-10 animate-fade-in">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <span className="badge-warning">Needs Review</span>
+            <span>Drafts waiting for your review</span>
+          </h2>
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {contracts
+              .filter((c) => c.status === 'draft')
+              .map((contract) => (
+                <div key={contract.id} className="animate-fade-in">
+                  <ContractCard contract={contract} />
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Active Contracts Grid */}
+      {!loading && !error && contracts.some((c) => c.status === 'active') && (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 animate-fade-in">
-          {contracts.map((contract) => (
-            <div key={contract.id} className="animate-fade-in">
-              <ContractCard contract={contract} />
-            </div>
-          ))}
+          {contracts
+            .filter((c) => c.status === 'active')
+            .map((contract) => (
+              <div key={contract.id} className="animate-fade-in">
+                <ContractCard contract={contract} />
+              </div>
+            ))}
         </div>
       )}
     </div>

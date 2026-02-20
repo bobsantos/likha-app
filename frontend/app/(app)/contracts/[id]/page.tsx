@@ -81,7 +81,7 @@ export default function ContractDetailPage() {
       return `${(rate * 100).toFixed(0)}%`
     }
 
-    if (typeof rate === 'object' && 'type' in rate) {
+    if (rate !== null && typeof rate === 'object' && 'type' in rate) {
       if (rate.type === 'tiered') {
         const tierRate = rate as TieredRate
         const rates = tierRate.tiers.map((t) => t.rate * 100)
@@ -148,18 +148,43 @@ export default function ContractDetailPage() {
           Dashboard
         </Link>
         <span>/</span>
-        <span className="text-gray-900 font-medium">{contract.licensee_name}</span>
+        <span className="text-gray-900 font-medium">
+          {contract.licensee_name ?? contract.filename ?? 'Untitled Draft'}
+        </span>
       </div>
+
+      {/* Draft Review Banner */}
+      {contract.status === 'draft' && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg mb-6 animate-fade-in">
+          <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-amber-900">This contract is a draft</p>
+            <p className="text-sm text-amber-700 mt-0.5">
+              Review and confirm the extracted terms to activate this contract.
+            </p>
+          </div>
+          <Link
+            href={`/contracts/upload?draft=${contract.id}`}
+            className="btn-primary text-sm whitespace-nowrap"
+          >
+            Complete review
+          </Link>
+        </div>
+      )}
 
       {/* Header */}
       <div className="card mb-6 animate-fade-in">
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
-              {contract.licensee_name}
+              {contract.licensee_name ?? contract.filename ?? 'Untitled Draft'}
             </h1>
             <div className="flex items-center gap-3">
-              <span className="badge-success">Active</span>
+              {contract.status === 'draft' ? (
+                <span className="badge-warning">Draft</span>
+              ) : (
+                <span className="badge-success">Active</span>
+              )}
               <span className="text-2xl font-bold text-primary-600">
                 {formatRoyaltyRate(contract.royalty_rate)}
               </span>
@@ -205,15 +230,17 @@ export default function ContractDetailPage() {
                 </div>
               )}
 
-              <div className="flex items-start gap-3">
-                <DollarSign className="w-5 h-5 text-gray-400 mt-0.5" />
-                <div>
-                  <p className="text-sm text-gray-600">Royalty Base</p>
-                  <p className="font-medium text-gray-900 capitalize">
-                    {contract.royalty_base.replace('_', ' ')}
-                  </p>
+              {contract.royalty_base && (
+                <div className="flex items-start gap-3">
+                  <DollarSign className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-gray-600">Royalty Base</p>
+                    <p className="font-medium text-gray-900 capitalize">
+                      {contract.royalty_base.replace('_', ' ')}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="flex items-start gap-3">
                 <Calendar className="w-5 h-5 text-gray-400 mt-0.5" />
@@ -276,15 +303,17 @@ export default function ContractDetailPage() {
                 </div>
               )}
 
-              <div className="flex items-start gap-3">
-                <Calendar className="w-5 h-5 text-gray-400 mt-0.5" />
-                <div>
-                  <p className="text-sm text-gray-600">Reporting Frequency</p>
-                  <p className="font-medium text-gray-900 capitalize">
-                    {contract.reporting_frequency.replace('_', ' ')}
-                  </p>
+              {contract.reporting_frequency && (
+                <div className="flex items-start gap-3">
+                  <Calendar className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-gray-600">Reporting Frequency</p>
+                    <p className="font-medium text-gray-900 capitalize">
+                      {contract.reporting_frequency.replace('_', ' ')}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         </div>
@@ -312,7 +341,9 @@ export default function ContractDetailPage() {
           </h2>
           <button
             onClick={() => setIsModalOpen(true)}
-            className="btn-primary flex items-center gap-2"
+            disabled={contract.status === 'draft'}
+            title={contract.status === 'draft' ? 'Complete the contract review before entering sales periods' : undefined}
+            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />
             Enter Sales Period
@@ -326,7 +357,9 @@ export default function ContractDetailPage() {
             <p className="text-gray-600 mb-4">Enter your first sales period to start tracking royalties</p>
             <button
               onClick={() => setIsModalOpen(true)}
-              className="btn-primary inline-flex items-center gap-2"
+              disabled={contract.status === 'draft'}
+              title={contract.status === 'draft' ? 'Complete the contract review before entering sales periods' : undefined}
+              className="btn-primary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus className="w-4 h-4" />
               Enter Sales Period

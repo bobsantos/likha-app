@@ -21,6 +21,8 @@ describe('SalesPeriodModal Component', () => {
   const mockContract: Contract = {
     id: 'contract-1',
     user_id: 'user-1',
+    status: 'active',
+    filename: 'acme-contract.pdf',
     licensee_name: 'Acme Corp',
     licensor_name: 'John Doe',
     contract_start: '2024-01-01',

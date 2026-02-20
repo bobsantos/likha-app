@@ -53,6 +53,8 @@ describe('Dashboard Page', () => {
       {
         id: 'contract-1',
         user_id: 'user-1',
+        status: 'active',
+        filename: 'acme-contract.pdf',
         licensee_name: 'Acme Corp',
         licensor_name: 'John Doe',
         contract_start: '2024-01-01',
@@ -72,6 +74,8 @@ describe('Dashboard Page', () => {
       {
         id: 'contract-2',
         user_id: 'user-1',
+        status: 'active',
+        filename: 'beta-contract.pdf',
         licensee_name: 'Beta Inc',
         licensor_name: 'Jane Smith',
         contract_start: '2024-02-01',
@@ -127,6 +131,8 @@ describe('Dashboard Page', () => {
       {
         id: 'contract-1',
         user_id: 'user-1',
+        status: 'active',
+        filename: 'acme-contract.pdf',
         licensee_name: 'Acme Corp',
         licensor_name: 'John Doe',
         contract_start: '2024-01-01',

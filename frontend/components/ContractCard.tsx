@@ -17,7 +17,7 @@ export default function ContractCard({ contract }: ContractCardProps) {
       return `${(rate * 100).toFixed(0)}%`
     }
 
-    if (typeof rate === 'object' && 'type' in rate) {
+    if (rate !== null && typeof rate === 'object' && 'type' in rate) {
       if (rate.type === 'tiered') {
         const tierRate = rate as TieredRate
         const rates = tierRate.tiers.map(t => t.rate * 100)
@@ -53,16 +53,25 @@ export default function ContractCard({ contract }: ContractCardProps) {
     }).format(amount)
   }
 
+  const isDraft = contract.status === 'draft'
+  const href = isDraft
+    ? `/contracts/upload?draft=${contract.id}`
+    : `/contracts/${contract.id}`
+
   return (
-    <Link href={`/contracts/${contract.id}`}>
+    <Link href={href}>
       <div className="card-interactive">
         <div className="flex justify-between items-start mb-4">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
               <h3 className="text-lg font-semibold text-gray-900">
-                {contract.licensee_name}
+                {contract.licensee_name ?? contract.filename ?? 'Untitled Draft'}
               </h3>
-              <span className="badge-success">Active</span>
+              {isDraft ? (
+                <span className="badge-warning">Draft</span>
+              ) : (
+                <span className="badge-success">Active</span>
+              )}
             </div>
           </div>
           <span className="text-2xl font-bold text-primary-600">
@@ -103,19 +112,25 @@ export default function ContractCard({ contract }: ContractCardProps) {
             </div>
           )}
 
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-4 h-4 text-gray-400 flex-shrink-0" />
-            <div className="flex justify-between w-full">
-              <span>Reporting:</span>
-              <span className="text-gray-900 font-medium capitalize">
-                {contract.reporting_frequency.replace('_', ' ')}
-              </span>
+          {contract.reporting_frequency && (
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <div className="flex justify-between w-full">
+                <span>Reporting:</span>
+                <span className="text-gray-900 font-medium capitalize">
+                  {contract.reporting_frequency.replace('_', ' ')}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div className="mt-4 pt-4 border-t border-gray-100 flex items-center justify-between text-sm text-primary-600 font-medium">
-          <span>View details</span>
+          {isDraft ? (
+            <span>Resume review</span>
+          ) : (
+            <span>View details</span>
+          )}
           <ArrowRight className="w-4 h-4" />
         </div>
       </div>

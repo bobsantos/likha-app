@@ -40,6 +40,8 @@ describe('Contract Detail Page', () => {
   const mockContract: Contract = {
     id: 'contract-1',
     user_id: 'user-1',
+    status: 'active',
+    filename: 'acme-contract.pdf',
     licensee_name: 'Acme Corp',
     licensor_name: 'John Doe',
     contract_start: '2024-01-01',
@@ -210,6 +212,108 @@ describe('Contract Detail Page', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Total Royalties (YTD)')).toBeInTheDocument()
+    })
+  })
+
+  // Phase 3: status-aware badge and draft UI tests
+  it('shows "Active" badge for active contracts', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Active')).toBeInTheDocument()
+    })
+  })
+
+  it('shows "Draft" badge for draft contracts', async () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+    }
+    mockGetContract.mockResolvedValue(draftContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Draft')).toBeInTheDocument()
+      expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows review banner for draft contracts', async () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+    }
+    mockGetContract.mockResolvedValue(draftContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/complete review/i)).toBeInTheDocument()
+    })
+  })
+
+  it('does not show review banner for active contracts', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+    })
+
+    expect(screen.queryByText(/complete review/i)).not.toBeInTheDocument()
+  })
+
+  it('disables "Enter Sales Period" button for draft contracts', async () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+    }
+    mockGetContract.mockResolvedValue(draftContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button', { name: /enter sales period/i })
+      expect(buttons.length).toBeGreaterThanOrEqual(1)
+      buttons.forEach(btn => {
+        expect(btn).toBeDisabled()
+      })
+    })
+  })
+
+  it('enables "Enter Sales Period" button for active contracts', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      const buttons = screen.getAllByRole('button', { name: /enter sales period/i })
+      expect(buttons.length).toBeGreaterThanOrEqual(1)
+      buttons.forEach(btn => {
+        expect(btn).not.toBeDisabled()
+      })
     })
   })
 })

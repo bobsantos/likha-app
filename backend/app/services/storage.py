@@ -18,6 +18,9 @@ def upload_contract_pdf(
     """
     Upload a contract PDF to Supabase Storage.
 
+    Storage path is deterministic: contracts/{user_id}/{sanitized_filename}
+    Using upsert=true so re-uploads overwrite orphaned files from failed sessions.
+
     Args:
         file_content: Binary content of the PDF file
         user_id: User ID for organizing storage by user
@@ -35,23 +38,21 @@ def upload_contract_pdf(
     # Generate filename if not provided
     if not filename:
         filename = f"{uuid4().hex}.pdf"
+        storage_path = f"contracts/{user_id}/{filename}"
     else:
-        # Sanitize filename: replace spaces and special chars with underscores,
-        # then prepend a short UUID to prevent 409 Conflict on duplicate names.
+        # Sanitize filename: replace spaces and special chars with underscores.
+        # No UUID prefix — path is deterministic for duplicate detection purposes.
         sanitized_filename = re.sub(r'[^\w\-.]', '_', filename)
-        filename = f"{uuid4().hex[:8]}_{sanitized_filename}"
+        storage_path = f"contracts/{user_id}/{sanitized_filename}"
 
-    # Construct storage path
-    storage_path = f"contracts/{user_id}/{filename}"
-
-    # Upload to Supabase Storage
+    # Upload to Supabase Storage with upsert so re-uploads overwrite orphaned files
     try:
         result = supabase_admin.storage.from_("contracts").upload(
             storage_path,
             file_content,
             {
                 "content-type": "application/pdf",
-                "upsert": "false"  # Don't overwrite existing files
+                "upsert": "true"  # Overwrite existing files (deterministic paths)
             }
         )
 
