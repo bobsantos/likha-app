@@ -5,13 +5,14 @@ Pydantic models for contracts.
 from datetime import date
 from decimal import Decimal
 from enum import Enum
-from typing import Optional, Union, List, Dict
+from typing import Optional, Union, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
 class ReportingFrequency(str, Enum):
     MONTHLY = "monthly"
     QUARTERLY = "quarterly"
+    SEMI_ANNUALLY = "semi_annually"
     ANNUALLY = "annually"
 
 
@@ -50,9 +51,31 @@ class ExtractedTerms(BaseModel):
     extraction_notes: Optional[List[str]] = None
 
 
+class FormValues(BaseModel):
+    """
+    Normalized, form-ready values derived from ExtractedTerms.
+
+    These values are pre-processed so the frontend can bind them directly
+    to form inputs without any client-side parsing logic.
+    """
+    licensee_name: str = ""
+    licensor_name: str = ""
+    # For flat rates: the numeric value only, e.g. 8.0 (not "8% of net sales")
+    # For tiered/category rates: the structured data passed through as-is
+    royalty_rate: Any = ""
+    royalty_base: str = "net_sales"  # "net_sales" or "gross_sales"
+    minimum_guarantee: Optional[float] = None
+    advance_payment: Optional[float] = None
+    contract_start_date: str = ""  # ISO format YYYY-MM-DD or empty
+    contract_end_date: str = ""    # ISO format YYYY-MM-DD or empty
+    reporting_frequency: str = "quarterly"  # one of monthly/quarterly/semi_annually/annually
+    territories: List[str] = []
+
+
 class ContractCreate(BaseModel):
     """Request to create a new contract."""
     licensee_name: str
+    pdf_url: str  # From storage upload during extraction
     extracted_terms: ExtractedTerms
     # Normalized/validated fields (from extraction review)
     royalty_rate: RoyaltyRate
