@@ -2,13 +2,19 @@
 Contract management API endpoints.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from typing import List
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
+from typing import List, Optional
 import tempfile
 import os
 import logging
 
-from app.models.contract import Contract, ContractCreate, ExtractedTerms
+from app.models.contract import (
+    Contract,
+    ContractCreate,
+    ContractConfirm,
+    ContractStatus,
+    ExtractedTerms,
+)
 from app.services.extractor import extract_contract
 from app.services.normalizer import normalize_extracted_terms
 from app.services.storage import upload_contract_pdf, get_signed_url, delete_contract_pdf
@@ -27,8 +33,13 @@ async def extract_contract_terms(
     """
     Upload a contract PDF and extract licensing terms using AI.
 
-    Returns extraction results including extracted terms, confidence score,
-    token usage, storage path, and signed PDF URL.
+    Before uploading, checks for an existing contract with the same filename
+    (case-insensitive) for the current user:
+    - Active contract → 409 DUPLICATE_FILENAME
+    - Draft contract  → 409 INCOMPLETE_DRAFT
+
+    On success, persists a draft DB row immediately and returns contract_id
+    so the frontend can resume even if the tab is closed.
 
     Requires authentication.
     """
@@ -38,28 +49,112 @@ async def extract_contract_terms(
     # Read file content
     content = await file.read()
 
-    # Save uploaded file temporarily for extraction
+    # -------------------------------------------------------------------------
+    # Step 1: Duplicate filename check (before any upload or extraction)
+    # -------------------------------------------------------------------------
+    dup_result = (
+        supabase.table("contracts")
+        .select("id, filename, licensee_name, created_at, status")
+        .eq("user_id", user_id)
+        .ilike("filename", file.filename)
+        .execute()
+    )
+
+    if dup_result.data:
+        existing = dup_result.data[0]
+        status = existing.get("status", "active")
+
+        if status == ContractStatus.ACTIVE:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "DUPLICATE_FILENAME",
+                    "message": "A contract with this filename already exists.",
+                    "existing_contract": {
+                        "id": existing["id"],
+                        "filename": existing.get("filename"),
+                        "licensee_name": existing.get("licensee_name"),
+                        "created_at": existing.get("created_at"),
+                        "status": status,
+                    },
+                },
+            )
+        else:
+            # Draft exists — prompt user to resume
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "INCOMPLETE_DRAFT",
+                    "message": "You have an incomplete upload for this file.",
+                    "existing_contract": {
+                        "id": existing["id"],
+                        "filename": existing.get("filename"),
+                        "created_at": existing.get("created_at"),
+                        "status": status,
+                    },
+                },
+            )
+
+    # -------------------------------------------------------------------------
+    # Step 2: Save uploaded file temporarily for extraction
+    # -------------------------------------------------------------------------
     with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
         tmp_file.write(content)
         tmp_path = tmp_file.name
 
+    storage_path = None
+
     try:
-        # Upload PDF to storage
+        # Step 3: Upload PDF to storage (deterministic path, upsert)
         logger.info(f"Uploading PDF to storage for user {user_id}: {file.filename}")
         storage_path = upload_contract_pdf(content, user_id, file.filename)
 
-        # Generate signed URL for frontend access
+        # Step 4: Generate signed URL for frontend access
         pdf_url = get_signed_url(storage_path)
 
-        # Extract terms
+        # Step 5: Extract terms (best-effort cleanup on failure)
         logger.info(f"Extracting terms from PDF: {file.filename}")
-        extracted_terms, token_usage = await extract_contract(tmp_path)
+        try:
+            extracted_terms, token_usage = await extract_contract(tmp_path)
+        except Exception as extraction_err:
+            # Best-effort: delete the uploaded PDF since we couldn't extract
+            if storage_path:
+                try:
+                    delete_contract_pdf(storage_path)
+                    logger.info(f"Cleaned up storage file after extraction failure: {storage_path}")
+                except Exception as cleanup_err:
+                    logger.warning(f"Failed to clean up storage file {storage_path}: {cleanup_err}")
+            raise extraction_err
 
         # Normalise raw extraction into form-ready values
         form_values = normalize_extracted_terms(extracted_terms)
 
-        logger.info(f"Extraction complete for {file.filename}, tokens used: {token_usage.get('total_tokens', 'N/A')}")
+        # -----------------------------------------------------------------------
+        # Step 6: Persist draft row to DB so work survives tab close
+        # -----------------------------------------------------------------------
+        draft_insert_data = {
+            "user_id": user_id,
+            "filename": file.filename,
+            "pdf_url": pdf_url,
+            "storage_path": storage_path,
+            "extracted_terms": extracted_terms.model_dump(),
+            "status": ContractStatus.DRAFT,
+        }
+
+        insert_result = supabase.table("contracts").insert(draft_insert_data).execute()
+
+        if not insert_result.data:
+            raise HTTPException(status_code=500, detail="Failed to persist draft contract")
+
+        draft_id = insert_result.data[0]["id"]
+
+        logger.info(
+            f"Draft contract {draft_id} created for {file.filename}, "
+            f"tokens used: {token_usage.get('total_tokens', 'N/A')}"
+        )
+
         return {
+            "contract_id": draft_id,
             "extracted_terms": extracted_terms.model_dump(),
             "form_values": form_values.model_dump(),
             "token_usage": token_usage,
@@ -67,6 +162,7 @@ async def extract_contract_terms(
             "storage_path": storage_path,
             "pdf_url": pdf_url,
         }
+
     except HTTPException:
         raise
     except Exception as e:
@@ -77,6 +173,71 @@ async def extract_contract_terms(
         os.unlink(tmp_path)
 
 
+@router.put("/{contract_id}/confirm", response_model=Contract)
+async def confirm_contract(
+    contract_id: str,
+    confirm_data: ContractConfirm,
+    user_id: str = Depends(get_current_user),
+):
+    """
+    Promote a draft contract to active after user review.
+
+    Receives the user-reviewed fields and updates the draft row:
+    - Populates all contract fields from ContractConfirm
+    - Sets status from 'draft' → 'active'
+
+    Returns 409 if the contract is already active.
+    Returns 404 if the contract does not exist.
+
+    Requires authentication. User must own the contract.
+    """
+    # Verify ownership first (raises 404 or 403 as appropriate)
+    await verify_contract_ownership(contract_id, user_id)
+
+    # Fetch the current contract to check its status
+    result = supabase.table("contracts").select("*").eq("id", contract_id).execute()
+
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    current = result.data[0]
+    current_status = current.get("status", "active")
+
+    if current_status == ContractStatus.ACTIVE:
+        raise HTTPException(
+            status_code=409,
+            detail="Contract is already active and cannot be confirmed again.",
+        )
+
+    # Build update payload from confirmed fields
+    update_data = {
+        "status": ContractStatus.ACTIVE,
+        "licensee_name": confirm_data.licensee_name,
+        "royalty_rate": confirm_data.royalty_rate,
+        "royalty_base": confirm_data.royalty_base,
+        "territories": confirm_data.territories,
+        "product_categories": confirm_data.product_categories,
+        "contract_start_date": str(confirm_data.contract_start_date),
+        "contract_end_date": str(confirm_data.contract_end_date),
+        "minimum_guarantee": str(confirm_data.minimum_guarantee),
+        "minimum_guarantee_period": confirm_data.minimum_guarantee_period,
+        "advance_payment": str(confirm_data.advance_payment) if confirm_data.advance_payment else None,
+        "reporting_frequency": confirm_data.reporting_frequency,
+    }
+
+    update_result = (
+        supabase.table("contracts")
+        .update(update_data)
+        .eq("id", contract_id)
+        .execute()
+    )
+
+    if not update_result.data:
+        raise HTTPException(status_code=500, detail="Failed to confirm contract")
+
+    return Contract(**update_result.data[0])
+
+
 @router.post("/", response_model=Contract)
 async def create_contract(
     contract: ContractCreate,
@@ -85,8 +246,8 @@ async def create_contract(
     """
     Create a new contract after user has reviewed and corrected extraction.
 
-    The PDF should have been uploaded during the /extract step, and the
-    pdf_url should be included in the ContractCreate data.
+    Legacy endpoint kept for compatibility. The preferred flow is:
+    POST /extract (creates draft) → PUT /{id}/confirm (promotes to active).
 
     Requires authentication.
     """
@@ -106,6 +267,7 @@ async def create_contract(
         "minimum_guarantee_period": contract.minimum_guarantee_period,
         "advance_payment": str(contract.advance_payment) if contract.advance_payment else None,
         "reporting_frequency": contract.reporting_frequency,
+        "status": ContractStatus.ACTIVE,
     }).execute()
 
     if not result.data:
@@ -116,15 +278,23 @@ async def create_contract(
 
 @router.get("/", response_model=List[Contract])
 async def list_contracts(
+    include_drafts: bool = Query(default=False),
     user_id: str = Depends(get_current_user),
 ):
     """
-    List all contracts for the authenticated user.
+    List contracts for the authenticated user.
+
+    By default returns only active contracts (status='active').
+    Pass include_drafts=true to include draft contracts as well.
 
     Requires authentication.
     """
+    query = supabase.table("contracts").select("*").eq("user_id", user_id)
 
-    result = supabase.table("contracts").select("*").eq("user_id", user_id).execute()
+    if not include_drafts:
+        query = query.eq("status", "active")
+
+    result = query.execute()
 
     return [Contract(**row) for row in result.data]
 
@@ -157,6 +327,8 @@ async def delete_contract(
 ):
     """
     Delete a contract and its associated PDF from storage.
+
+    Works for both draft and active contracts.
 
     Requires authentication. User must own the contract.
     """

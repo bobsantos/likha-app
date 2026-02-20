@@ -14,22 +14,27 @@ export interface AuthError {
   status?: number
 }
 
+// Contract status — draft is persisted at extraction time, active after user confirms
+export type ContractStatus = 'draft' | 'active'
+
 // Contract types
 export interface Contract {
   id: string
   user_id: string
-  licensee_name: string
+  status: ContractStatus
+  filename: string | null
+  licensee_name: string | null      // nullable for drafts (not yet reviewed)
   licensor_name: string | null
   contract_start: string | null
   contract_end: string | null
-  royalty_rate: RoyaltyRate
-  royalty_base: 'net_sales' | 'gross_sales'
+  royalty_rate: RoyaltyRate | null  // nullable for drafts
+  royalty_base: 'net_sales' | 'gross_sales' | null  // nullable for drafts
   territories: string[]
   product_categories: string[] | null
   minimum_guarantee: number | null
   mg_period: 'monthly' | 'quarterly' | 'annually' | null
   advance_payment: number | null
-  reporting_frequency: 'monthly' | 'quarterly' | 'semi_annually' | 'annually'
+  reporting_frequency: 'monthly' | 'quarterly' | 'semi_annually' | 'annually' | null  // nullable for drafts
   pdf_url: string | null
   created_at: string
   updated_at: string
@@ -110,6 +115,7 @@ export interface FormValues {
 }
 
 export interface ExtractionResponse {
+  contract_id: string   // draft contract ID created by backend at extraction time
   extracted_terms: ExtractedTerms
   form_values: FormValues
   token_usage: {
@@ -120,4 +126,12 @@ export interface ExtractionResponse {
   filename: string
   storage_path: string
   pdf_url: string
+}
+
+export interface DuplicateContractInfo {
+  id: string
+  filename: string
+  licensee_name?: string   // present for active contracts, absent for drafts
+  created_at: string
+  status: ContractStatus
 }

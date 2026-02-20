@@ -38,6 +38,8 @@ describe('Contracts List Page', () => {
     {
       id: 'contract-1',
       user_id: 'user-1',
+      status: 'active',
+      filename: 'acme-contract.pdf',
       licensee_name: 'Acme Corp',
       licensor_name: 'John Doe',
       contract_start: '2024-01-01',
@@ -57,6 +59,8 @@ describe('Contracts List Page', () => {
     {
       id: 'contract-2',
       user_id: 'user-1',
+      status: 'active',
+      filename: 'beta-contract.pdf',
       licensee_name: 'Beta Inc',
       licensor_name: 'Jane Smith',
       contract_start: '2024-02-01',
@@ -127,5 +131,90 @@ describe('Contracts List Page', () => {
 
     const uploadLink = screen.getByText('Upload Contract').closest('a')
     expect(uploadLink).toHaveAttribute('href', '/contracts/upload')
+  })
+
+  // Phase 3: draft section tests
+  it('calls getContracts with include_drafts=true', async () => {
+    mockGetContracts.mockResolvedValue(mockContracts)
+    render(<ContractsPage />)
+
+    await waitFor(() => {
+      expect(mockGetContracts).toHaveBeenCalledWith({ include_drafts: true })
+    })
+  })
+
+  it('shows "Needs Review" section when drafts exist', async () => {
+    const draftContract: Contract = {
+      id: 'draft-1',
+      user_id: 'user-1',
+      status: 'draft',
+      filename: 'pending-contract.pdf',
+      licensee_name: null,
+      licensor_name: null,
+      contract_start: null,
+      contract_end: null,
+      royalty_rate: null,
+      royalty_base: null,
+      territories: [],
+      product_categories: null,
+      minimum_guarantee: null,
+      mg_period: null,
+      advance_payment: null,
+      reporting_frequency: null,
+      pdf_url: 'https://example.com/pending.pdf',
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+    }
+
+    mockGetContracts.mockResolvedValue([...mockContracts, draftContract])
+    render(<ContractsPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/needs review/i)).toBeInTheDocument()
+    })
+  })
+
+  it('does not show "Needs Review" section when no drafts exist', async () => {
+    mockGetContracts.mockResolvedValue(mockContracts) // all active
+    render(<ContractsPage />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+    })
+
+    expect(screen.queryByText(/needs review/i)).not.toBeInTheDocument()
+  })
+
+  it('shows draft contracts in the Needs Review section', async () => {
+    const draftContract: Contract = {
+      id: 'draft-1',
+      user_id: 'user-1',
+      status: 'draft',
+      filename: 'pending-contract.pdf',
+      licensee_name: null,
+      licensor_name: null,
+      contract_start: null,
+      contract_end: null,
+      royalty_rate: null,
+      royalty_base: null,
+      territories: [],
+      product_categories: null,
+      minimum_guarantee: null,
+      mg_period: null,
+      advance_payment: null,
+      reporting_frequency: null,
+      pdf_url: 'https://example.com/pending.pdf',
+      created_at: '2024-01-01T00:00:00Z',
+      updated_at: '2024-01-01T00:00:00Z',
+    }
+
+    mockGetContracts.mockResolvedValue([...mockContracts, draftContract])
+    render(<ContractsPage />)
+
+    await waitFor(() => {
+      // The mock ContractCard renders contract.licensee_name — for draft it's null
+      // but we can check the section header exists
+      expect(screen.getByText(/needs review/i)).toBeInTheDocument()
+    })
   })
 })

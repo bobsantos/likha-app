@@ -19,7 +19,7 @@ class TestUploadContractPdf:
     """Test PDF upload to Supabase Storage."""
 
     def test_successful_upload_returns_storage_path(self):
-        """Uploading a PDF should return the storage path."""
+        """Uploading a PDF should return the deterministic storage path (no UUID prefix)."""
         file_content = b"fake pdf content"
         user_id = "user-123"
         filename = "contract.pdf"
@@ -32,10 +32,8 @@ class TestUploadContractPdf:
 
             result = upload_contract_pdf(file_content, user_id, filename)
 
-            # Result includes a short UUID prefix to avoid 409 Conflict on duplicate names,
-            # so match the directory prefix and the sanitized base filename instead of exact path.
-            assert result.startswith(f"contracts/{user_id}/")
-            assert result.endswith(f"_{filename}")
+            # Path is deterministic: contracts/{user_id}/{sanitized_filename}
+            assert result == f"contracts/{user_id}/{filename}"
             mock_supabase.storage.from_.assert_called_once_with("contracts")
 
     def test_upload_generates_unique_filename_if_not_provided(self):

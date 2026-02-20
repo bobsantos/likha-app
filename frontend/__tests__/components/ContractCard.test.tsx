@@ -10,6 +10,8 @@ describe('ContractCard Component', () => {
   const mockContract: Contract = {
     id: 'contract-1',
     user_id: 'user-1',
+    status: 'active',
+    filename: 'acme-contract.pdf',
     licensee_name: 'Acme Corp',
     licensor_name: 'John Doe',
     contract_start: '2024-01-01',
@@ -89,5 +91,68 @@ describe('ContractCard Component', () => {
     render(<ContractCard contract={mockContract} />)
     const link = screen.getByRole('link')
     expect(link).toHaveAttribute('href', '/contracts/contract-1')
+  })
+
+  // Phase 3: status-aware badge tests
+  it('shows "Active" badge for active contracts', () => {
+    render(<ContractCard contract={mockContract} />)
+    expect(screen.getByText('Active')).toBeInTheDocument()
+  })
+
+  it('shows "Draft" badge for draft contracts', () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      id: 'draft-1',
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+      contract_start: null,
+      contract_end: null,
+    }
+    render(<ContractCard contract={draftContract} />)
+    expect(screen.getByText('Draft')).toBeInTheDocument()
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+  })
+
+  it('shows "Resume review" CTA for draft contracts', () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      id: 'draft-1',
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+      contract_start: null,
+      contract_end: null,
+    }
+    render(<ContractCard contract={draftContract} />)
+    expect(screen.getByText(/resume review/i)).toBeInTheDocument()
+    expect(screen.queryByText(/view details/i)).not.toBeInTheDocument()
+  })
+
+  it('shows "View details" CTA for active contracts', () => {
+    render(<ContractCard contract={mockContract} />)
+    expect(screen.getByText(/view details/i)).toBeInTheDocument()
+    expect(screen.queryByText(/resume review/i)).not.toBeInTheDocument()
+  })
+
+  it('draft card links to upload resume URL', () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      id: 'draft-1',
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+      contract_start: null,
+      contract_end: null,
+    }
+    render(<ContractCard contract={draftContract} />)
+    const link = screen.getByRole('link')
+    expect(link).toHaveAttribute('href', '/contracts/upload?draft=draft-1')
   })
 })
