@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import {
@@ -19,7 +19,7 @@ import {
   FolderOpen,
   ExternalLink,
 } from 'lucide-react'
-import { uploadContract, confirmDraft, ApiError } from '@/lib/api'
+import { uploadContract, confirmDraft, getContract, ApiError } from '@/lib/api'
 import type { ExtractedTerms, ExtractionResponse, DuplicateContractInfo } from '@/types'
 
 type Step = 'upload' | 'extracting' | 'review' | 'saving'
@@ -104,6 +104,7 @@ function formatDate(dateString: string) {
 
 export default function UploadContractPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const retryFileInputRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('upload')
   const [file, setFile] = useState<File | null>(null)
@@ -117,6 +118,62 @@ export default function UploadContractPage() {
   const [draftContractId, setDraftContractId] = useState<string | null>(null)
   const [hasSavedDraft, setHasSavedDraft] = useState(false)
   const [savedDraftData, setSavedDraftData] = useState<{ draftContractId: string; formData: any } | null>(null)
+  const [loadingDraft, setLoadingDraft] = useState(false)
+
+  // On mount: if ?draft=<id> is in the URL, fetch that draft and populate the review form
+  useEffect(() => {
+    const draftId = searchParams.get('draft')
+    if (!draftId) return
+
+    let cancelled = false
+    setLoadingDraft(true)
+
+    getContract(draftId)
+      .then((contract: any) => {
+        if (cancelled) return
+
+        // Convert the stored Contract back into form field values
+        let royaltyRateStr = ''
+        if (typeof contract.royalty_rate === 'number') {
+          // Stored as decimal (e.g. 0.15) — convert to percentage string ("15")
+          royaltyRateStr = String(contract.royalty_rate * 100)
+        } else if (contract.royalty_rate != null) {
+          royaltyRateStr = JSON.stringify(contract.royalty_rate)
+        }
+
+        const populated = {
+          licensee_name: contract.licensee_name || '',
+          licensor_name: contract.licensor_name || '',
+          contract_start: contract.contract_start || '',
+          contract_end: contract.contract_end || '',
+          royalty_rate: royaltyRateStr,
+          royalty_base: contract.royalty_base || 'net_sales',
+          territories: Array.isArray(contract.territories)
+            ? contract.territories.join(', ')
+            : '',
+          reporting_frequency: contract.reporting_frequency || 'quarterly',
+          minimum_guarantee: contract.minimum_guarantee != null ? String(contract.minimum_guarantee) : '',
+          advance_payment: contract.advance_payment != null ? String(contract.advance_payment) : '',
+        }
+
+        setDraftContractId(draftId)
+        setFormData(populated)
+        setLoadingDraft(false)
+        setStep('review')
+      })
+      .catch(() => {
+        if (cancelled) return
+        setLoadingDraft(false)
+        setError('Could not load draft. Please try uploading again.')
+        setErrorType('upload')
+        setErrorTitle('Could not load draft')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // On mount: check sessionStorage for a saved draft
   useEffect(() => {
@@ -374,8 +431,17 @@ export default function UploadContractPage() {
         <p className="mt-2 text-gray-600">Upload a PDF contract to extract licensing terms</p>
       </div>
 
+      {/* Loading Draft (from ?draft= query param) */}
+      {loadingDraft && (
+        <div className="card text-center py-12 animate-fade-in">
+          <Loader2 className="w-16 h-16 text-primary-600 animate-spin mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Loading draft...</h2>
+          <p className="text-gray-600">Please wait</p>
+        </div>
+      )}
+
       {/* Restore Draft Banner */}
-      {hasSavedDraft && step === 'upload' && (
+      {!loadingDraft && hasSavedDraft && step === 'upload' && (
         <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg mb-6 animate-fade-in">
           <FileText className="w-5 h-5 text-blue-600 flex-shrink-0" />
           <div className="flex-1">
@@ -402,7 +468,7 @@ export default function UploadContractPage() {
       )}
 
       {/* Step 1: Upload */}
-      {step === 'upload' && (
+      {!loadingDraft && step === 'upload' && (
         <div className="card animate-fade-in">
           {showDropzoneError ? (
             /* Error state dropzone */
@@ -589,7 +655,7 @@ export default function UploadContractPage() {
       )}
 
       {/* Step 2: Extracting */}
-      {step === 'extracting' && (
+      {!loadingDraft && step === 'extracting' && (
         <div className="card text-center py-12 animate-fade-in">
           <Loader2 className="w-16 h-16 text-primary-600 animate-spin mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">
@@ -600,7 +666,7 @@ export default function UploadContractPage() {
       )}
 
       {/* Step 3: Review */}
-      {step === 'review' && (
+      {!loadingDraft && step === 'review' && (
         <div className="card animate-fade-in">
           <div className="flex items-center gap-2 mb-6">
             <CheckCircle2 className="w-6 h-6 text-green-600" />
@@ -786,7 +852,7 @@ export default function UploadContractPage() {
       )}
 
       {/* Step 4: Saving */}
-      {step === 'saving' && (
+      {!loadingDraft && step === 'saving' && (
         <div className="card text-center py-12 animate-fade-in">
           <Loader2 className="w-16 h-16 text-primary-600 animate-spin mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Saving contract...</h2>

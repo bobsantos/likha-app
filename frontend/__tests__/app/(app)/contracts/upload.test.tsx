@@ -4,19 +4,21 @@
 
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import UploadContractPage from '@/app/(app)/contracts/upload/page'
-import { uploadContract, confirmDraft, ApiError } from '@/lib/api'
+import { uploadContract, confirmDraft, getContract, ApiError } from '@/lib/api'
 
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
   useRouter: jest.fn(),
+  useSearchParams: jest.fn(),
 }))
 
 // Mock API — Phase 2: confirmDraft replaces createContract
 jest.mock('@/lib/api', () => ({
   uploadContract: jest.fn(),
   confirmDraft: jest.fn(),
+  getContract: jest.fn(),
   ApiError: class ApiError extends Error {
     status: number
     data?: unknown
@@ -33,6 +35,7 @@ describe('Upload Contract Page', () => {
   const mockPush = jest.fn()
   const mockUploadContract = uploadContract as jest.MockedFunction<typeof uploadContract>
   const mockConfirmDraft = confirmDraft as jest.MockedFunction<typeof confirmDraft>
+  const mockGetContract = getContract as jest.MockedFunction<typeof getContract>
 
   // Base extraction response — includes contract_id from Phase 2
   const baseExtractionResponse = {
@@ -98,6 +101,10 @@ describe('Upload Contract Page', () => {
     jest.clearAllMocks()
     ;(useRouter as jest.Mock).mockReturnValue({
       push: mockPush,
+    })
+    // Default: no ?draft= query param
+    ;(useSearchParams as jest.Mock).mockReturnValue({
+      get: jest.fn().mockReturnValue(null),
     })
   })
 
@@ -707,6 +714,162 @@ describe('Upload Contract Page', () => {
       fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
 
       expect(sessionStorage.getItem('upload_draft')).toBeNull()
+    })
+  })
+
+  // ============================================================
+  // ?draft= query param: resume review from URL
+  // ============================================================
+
+  describe('?draft= query param loading', () => {
+    const draftContract = {
+      id: 'draft-contract-id',
+      user_id: 'user-1',
+      status: 'draft' as const,
+      filename: 'nike-contract.pdf',
+      licensee_name: null,
+      licensor_name: null,
+      contract_start: null,
+      contract_end: null,
+      royalty_rate: null,
+      royalty_base: null,
+      territories: [],
+      product_categories: null,
+      minimum_guarantee: null,
+      mg_period: null,
+      advance_payment: null,
+      reporting_frequency: null,
+      pdf_url: null,
+      created_at: '2026-02-19T08:15:00Z',
+      updated_at: '2026-02-19T08:15:00Z',
+    }
+
+    const draftContractWithData = {
+      ...draftContract,
+      licensee_name: 'Nike Inc.',
+      licensor_name: 'Brand Owner',
+      contract_start: '2024-01-01',
+      contract_end: '2025-12-31',
+      royalty_rate: 0.15,
+      royalty_base: 'net_sales' as const,
+      territories: ['US', 'Canada'],
+      reporting_frequency: 'quarterly' as const,
+      minimum_guarantee: 5000,
+      advance_payment: 1000,
+    }
+
+    it('calls getContract with the draft ID from the URL on mount', async () => {
+      mockGetContract.mockResolvedValue(draftContract)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(mockGetContract).toHaveBeenCalledWith('draft-contract-id')
+      })
+    })
+
+    it('shows loading state while fetching the draft', async () => {
+      // Never resolves so we can observe the loading state
+      mockGetContract.mockImplementation(() => new Promise(() => {}))
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/loading draft/i)).toBeInTheDocument()
+      })
+    })
+
+    it('shows the review form after successfully loading the draft', async () => {
+      mockGetContract.mockResolvedValue(draftContract)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/review extracted terms/i)).toBeInTheDocument()
+      })
+    })
+
+    it('populates form fields with data from the fetched draft contract', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('Nike Inc.')).toBeInTheDocument()
+        expect(screen.getByDisplayValue('Brand Owner')).toBeInTheDocument()
+        expect(screen.getByDisplayValue('US, Canada')).toBeInTheDocument()
+      })
+    })
+
+    it('converts decimal royalty rate to percentage string in form field', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        // 0.15 decimal -> "15" percentage string
+        expect(screen.getByDisplayValue('15')).toBeInTheDocument()
+      })
+    })
+
+    it('sets draftContractId so confirmDraft is called with correct ID', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      mockConfirmDraft.mockResolvedValue(mockSavedContract)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm and save/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
+
+      await waitFor(() => {
+        expect(mockConfirmDraft).toHaveBeenCalledWith(
+          'draft-contract-id',
+          expect.any(Object)
+        )
+      })
+    })
+
+    it('shows an error message if getContract fails', async () => {
+      mockGetContract.mockRejectedValue(new Error('Failed to fetch contract'))
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        // Use getAllByText since React StrictMode may render the error state twice
+        const matches = screen.getAllByText(/could not load draft/i)
+        expect(matches.length).toBeGreaterThan(0)
+      })
+    })
+
+    it('does not call getContract when no draft query param is present', () => {
+      // useSearchParams returns null for 'draft' (set in beforeEach)
+      render(<UploadContractPage />)
+
+      expect(mockGetContract).not.toHaveBeenCalled()
     })
   })
 })
