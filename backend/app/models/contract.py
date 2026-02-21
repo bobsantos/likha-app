@@ -6,7 +6,7 @@ from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import Optional, Union, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ReportingFrequency(str, Enum):
@@ -127,6 +127,25 @@ class ContractConfirm(BaseModel):
     minimum_guarantee_period: MinimumGuaranteePeriod = MinimumGuaranteePeriod.ANNUALLY
     advance_payment: Optional[Decimal] = None
     reporting_frequency: ReportingFrequency = ReportingFrequency.QUARTERLY
+
+    @field_validator("royalty_rate", mode="before")
+    @classmethod
+    def coerce_numeric_royalty_rate(cls, v: Any) -> Any:
+        """
+        Coerce numeric royalty_rate values to strings.
+
+        The frontend form sends the royalty rate as a plain number (e.g. 0.10
+        or 10.0) when the user types a percentage into a numeric input.  The
+        canonical DB representation is always a string (e.g. "10%"), so we
+        convert here rather than storing a bare float.
+
+        - int/float → "<value>%" (e.g. 0.10 → "0.1%", 10.0 → "10.0%")
+        - Everything else (str, list, dict) passes through unchanged for the
+          union validator to handle normally.
+        """
+        if isinstance(v, (int, float)):
+            return f"{v}%"
+        return v
 
 
 class Contract(BaseModel):

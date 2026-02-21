@@ -348,25 +348,46 @@ export default function UploadContractPage() {
   const handleSaveContract = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    // Validate required fields before submitting
+    if (!formData.licensee_name?.trim()) {
+      setError('Licensee name is required.')
+      setErrorType('validation')
+      setErrorTitle('Required fields missing')
+      return
+    }
+    if (!formData.contract_start_date?.trim()) {
+      setError('Contract start date is required.')
+      setErrorType('validation')
+      setErrorTitle('Required fields missing')
+      return
+    }
+    if (!formData.contract_end_date?.trim()) {
+      setError('Contract end date is required.')
+      setErrorType('validation')
+      setErrorTitle('Required fields missing')
+      return
+    }
+
     try {
       setStep('saving')
       setError(null)
       setErrorType(null)
       setErrorTitle('')
 
-      // Parse royalty rate from percentage string to decimal
-      let royaltyRate: number | object
+      // Determine the royalty_rate value to send to the backend.
+      // The backend ContractConfirm model expects str | list | dict — NOT a plain float.
+      // Send JSON-parsed objects for tiered/structured rates, or the raw trimmed string
+      // for simple percentage values (e.g. "10%" or "10").
+      let royaltyRate: string | object
       try {
         const rateValue = formData.royalty_rate.trim()
-        if (rateValue.includes('%')) {
-          royaltyRate = parseFloat(rateValue.replace('%', '')) / 100
-        } else if (rateValue.startsWith('{') || rateValue.startsWith('[')) {
+        if (rateValue.startsWith('{') || rateValue.startsWith('[')) {
           royaltyRate = JSON.parse(rateValue)
         } else {
-          royaltyRate = parseFloat(rateValue) / 100
+          royaltyRate = rateValue
         }
       } catch {
-        royaltyRate = 0
+        royaltyRate = formData.royalty_rate.trim()
       }
 
       if (!draftContractId) {
@@ -380,10 +401,9 @@ export default function UploadContractPage() {
       const contractData = {
         licensee_name: formData.licensee_name,
         // contract_start_date / contract_end_date match the backend ContractConfirm field names.
-        // The old names (contract_start / contract_end) were incorrect and would be silently
-        // ignored by the backend, leaving dates unset on the saved contract.
-        contract_start_date: formData.contract_start_date || null,
-        contract_end_date: formData.contract_end_date || null,
+        // Both are validated as non-empty above before reaching this point.
+        contract_start_date: formData.contract_start_date,
+        contract_end_date: formData.contract_end_date,
         royalty_rate: royaltyRate,
         royalty_base: formData.royalty_base,
         territories: formData.territories
@@ -682,8 +702,8 @@ export default function UploadContractPage() {
             <h2 className="text-xl font-semibold text-gray-900">Review Extracted Terms</h2>
           </div>
 
-          {/* Inline save error */}
-          {errorType === 'save' && error && (
+          {/* Inline save/validation error */}
+          {(errorType === 'save' || errorType === 'validation') && error && (
             <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg mb-6 animate-slide-up">
               <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
               <div>
@@ -722,7 +742,7 @@ export default function UploadContractPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Contract Start Date
+                  Contract Start Date *
                 </label>
                 <input
                   type="date"
@@ -734,7 +754,7 @@ export default function UploadContractPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Contract End Date
+                  Contract End Date *
                 </label>
                 <input
                   type="date"

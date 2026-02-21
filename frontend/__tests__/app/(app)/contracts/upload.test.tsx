@@ -267,6 +267,32 @@ describe('Upload Contract Page', () => {
     })
   })
 
+  it('sends royalty_rate as a string (not a number) to confirmDraft', async () => {
+    mockUploadContract.mockResolvedValue(baseExtractionResponse)
+    mockConfirmDraft.mockResolvedValue(mockSavedContract)
+
+    render(<UploadContractPage />)
+
+    const file = new File(['test'], 'contract.pdf', { type: 'application/pdf' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(screen.getByText(/upload & extract/i)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(/upload & extract/i))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /confirm and save/i })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
+
+    await waitFor(() => {
+      const [, payload] = mockConfirmDraft.mock.calls[0]
+      // The backend expects str | list | dict — a plain number causes a 422 error.
+      expect(typeof payload.royalty_rate).toBe('string')
+    })
+  })
+
   it('does not call confirmDraft if no draftContractId is available', async () => {
     // Extraction response without contract_id (legacy shape or error case)
     mockUploadContract.mockResolvedValue({
@@ -725,6 +751,95 @@ describe('Upload Contract Page', () => {
   })
 
   // ============================================================
+  // Form validation before submission
+  // ============================================================
+
+  describe('form validation', () => {
+    // Helper: reach the review step
+    const reachReviewStep = async (overrideFormValues?: Partial<typeof baseExtractionResponse['form_values']>) => {
+      const response = {
+        ...baseExtractionResponse,
+        form_values: {
+          ...baseExtractionResponse.form_values,
+          ...overrideFormValues,
+        },
+      }
+      mockUploadContract.mockResolvedValue(response)
+
+      render(<UploadContractPage />)
+
+      const file = new File(['test'], 'contract.pdf', { type: 'application/pdf' })
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      fireEvent.change(input, { target: { files: [file] } })
+
+      await waitFor(() => expect(screen.getByText(/upload & extract/i)).toBeInTheDocument())
+      fireEvent.click(screen.getByText(/upload & extract/i))
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm and save/i })).toBeInTheDocument()
+      })
+    }
+
+    it('shows error and does not call confirmDraft when contract_start_date is empty', async () => {
+      // Start with an empty contract_start_date so the form initializes with the field blank
+      await reachReviewStep({ contract_start_date: '' })
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/contract start date is required/i)).toBeInTheDocument()
+      })
+      expect(mockConfirmDraft).not.toHaveBeenCalled()
+    })
+
+    it('shows error and does not call confirmDraft when contract_end_date is empty', async () => {
+      // Provide start date but no end date so the form initializes with end date blank
+      await reachReviewStep({ contract_start_date: '2024-01-01', contract_end_date: '' })
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/contract end date is required/i)).toBeInTheDocument()
+      })
+      expect(mockConfirmDraft).not.toHaveBeenCalled()
+    })
+
+    it('shows error and does not call confirmDraft when licensee_name is empty', async () => {
+      // Start with an empty licensee_name so the form initializes with the field blank
+      await reachReviewStep({ licensee_name: '' })
+
+      // Use fireEvent.submit on the form directly to bypass HTML5 constraint validation
+      // (the licensee_name input has `required` which would block the onSubmit handler in jsdom)
+      const form = document.querySelector('form') as HTMLFormElement
+      fireEvent.submit(form)
+
+      await waitFor(() => {
+        expect(screen.getByText(/licensee name is required/i)).toBeInTheDocument()
+      })
+      expect(mockConfirmDraft).not.toHaveBeenCalled()
+    })
+
+    it('does not show a validation error banner before the form is submitted', async () => {
+      await reachReviewStep({ contract_start_date: '' })
+
+      // Should not show the specific error message yet — user has not tried to submit
+      expect(screen.queryByText(/contract start date is required/i)).not.toBeInTheDocument()
+    })
+
+    it('calls confirmDraft when all required fields are present', async () => {
+      mockConfirmDraft.mockResolvedValue(mockSavedContract)
+      // baseExtractionResponse already has all required fields populated
+      await reachReviewStep()
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
+
+      await waitFor(() => {
+        expect(mockConfirmDraft).toHaveBeenCalled()
+      })
+    })
+  })
+
+  // ============================================================
   // Phase 3: sessionStorage draft restoration
   // ============================================================
 
@@ -1087,6 +1202,28 @@ describe('Upload Contract Page', () => {
         expect(payload).toHaveProperty('contract_end_date', '2025-12-31')
         expect(payload).not.toHaveProperty('contract_start')
         expect(payload).not.toHaveProperty('contract_end')
+      })
+    })
+
+    it('sends royalty_rate as a string after resuming a draft', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      mockConfirmDraft.mockResolvedValue(mockSavedContract)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm and save/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
+
+      await waitFor(() => {
+        const [, payload] = mockConfirmDraft.mock.calls[0]
+        // The backend expects str | list | dict — a plain number causes a 422 error.
+        expect(typeof payload.royalty_rate).toBe('string')
       })
     })
 

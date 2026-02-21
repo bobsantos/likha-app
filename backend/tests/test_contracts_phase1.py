@@ -155,6 +155,73 @@ class TestContractConfirm:
         assert confirm.advance_payment is None
         assert confirm.reporting_frequency == ReportingFrequency.QUARTERLY
 
+    def test_royalty_rate_coerces_float_to_string(self):
+        """A plain float royalty_rate (e.g. 0.10) is coerced to a '0.1%' string."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate=0.10,
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "0.1%"
+
+    def test_royalty_rate_coerces_int_to_string(self):
+        """A plain integer royalty_rate (e.g. 10) is coerced to '10%'."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate=10,
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "10%"
+
+    def test_royalty_rate_string_passes_through_unchanged(self):
+        """A pre-formatted string royalty_rate is not modified by the validator."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate="8% of Net Sales",
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "8% of Net Sales"
+
+    def test_royalty_rate_large_float_coerced(self):
+        """A percentage-style float (e.g. 10.5) is coerced to '10.5%'."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate=10.5,
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "10.5%"
+
+    def test_dates_are_required(self):
+        """contract_start_date and contract_end_date must be provided."""
+        from app.models.contract import ContractConfirm
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError) as exc_info:
+            ContractConfirm(
+                licensee_name="Nike Inc.",
+                royalty_rate="8%",
+            )
+        errors = exc_info.value.errors()
+        missing_fields = {e["loc"][0] for e in errors if e["type"] == "missing"}
+        assert "contract_start_date" in missing_fields
+        assert "contract_end_date" in missing_fields
+
 
 class TestContractModelNullableFields:
     """Contract response model accommodates nullable fields for drafts."""
