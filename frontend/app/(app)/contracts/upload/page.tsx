@@ -120,18 +120,14 @@ export default function UploadContractPage() {
   const [savedDraftData, setSavedDraftData] = useState<{ draftContractId: string; formData: any } | null>(null)
   const [loadingDraft, setLoadingDraft] = useState(false)
 
-  // On mount: if ?draft=<id> is in the URL, fetch that draft and populate the review form
-  useEffect(() => {
-    const draftId = searchParams.get('draft')
-    if (!draftId) return
-
-    let cancelled = false
+  // Load a draft contract by ID and populate the review form.
+  // Used both by the ?draft= query param effect and by the "Resume review" button
+  // when a 409 INCOMPLETE_DRAFT is returned (same-page flow — no navigation needed).
+  const loadDraft = useCallback((draftId: string): Promise<void> => {
     setLoadingDraft(true)
 
-    getContract(draftId)
+    return getContract(draftId)
       .then((contract: any) => {
-        if (cancelled) return
-
         // The backend runs normalize_extracted_terms for draft contracts and returns
         // the result as form_values — use it directly, just like the fresh-upload path.
         const fv = contract.form_values
@@ -161,16 +157,23 @@ export default function UploadContractPage() {
         setStep('review')
       })
       .catch(() => {
-        if (cancelled) return
         setLoadingDraft(false)
         setError('Could not load draft. Please try uploading again.')
         setErrorType('upload')
         setErrorTitle('Could not load draft')
       })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-    return () => {
-      cancelled = true
-    }
+  // On mount: if ?draft=<id> is in the URL, fetch that draft and populate the review form.
+  // Note: loadDraft is also called directly by the "Resume review" button when a 409
+  // INCOMPLETE_DRAFT is returned, avoiding a same-page navigation that would not
+  // re-trigger this effect.
+  useEffect(() => {
+    const draftId = searchParams.get('draft')
+    if (!draftId) return
+
+    loadDraft(draftId)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -526,13 +529,17 @@ export default function UploadContractPage() {
                     <p className="text-base font-semibold text-gray-900 mb-2">{errorTitle}</p>
                     <p className="text-sm text-gray-500 mb-6 text-center max-w-xs">{error}</p>
                     <div className="flex items-center gap-3 flex-wrap justify-center">
-                      <Link
-                        href={`/contracts/upload?draft=${duplicateInfo.id}`}
+                      {/* Use a button (not a Link) so we load the draft without navigating away.
+                          A Link to the same page won't re-mount the component, so the useEffect
+                          that reads ?draft= would not re-run. */}
+                      <button
+                        type="button"
+                        onClick={() => loadDraft(duplicateInfo.id)}
                         className="btn-primary flex items-center gap-2"
                       >
                         <CheckCircle2 className="w-4 h-4" />
                         Resume review
-                      </Link>
+                      </button>
                       <label className="cursor-pointer">
                         <input
                           type="file"

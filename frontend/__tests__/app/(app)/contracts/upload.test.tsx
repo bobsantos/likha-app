@@ -572,7 +572,10 @@ describe('Upload Contract Page', () => {
       })
     })
 
-    it('shows "Resume review" link for INCOMPLETE_DRAFT', async () => {
+    it('shows "Resume review" button for INCOMPLETE_DRAFT', async () => {
+      // The "Resume review" control is a <button>, not a <Link>.
+      // Using a Link would navigate to the same page without re-mounting, so the
+      // ?draft= useEffect would not re-run. A button calls loadDraft() directly.
       const MockApiError6 = (jest.requireMock('@/lib/api') as any).ApiError
       const draftError = new MockApiError6('Conflict', 409, {
         detail: {
@@ -598,9 +601,95 @@ describe('Upload Contract Page', () => {
       fireEvent.click(screen.getByText(/upload & extract/i))
 
       await waitFor(() => {
-        const link = screen.getByRole('link', { name: /resume review/i })
-        expect(link).toBeInTheDocument()
-        expect(link).toHaveAttribute('href', '/contracts/upload?draft=draft-contract-id')
+        const btn = screen.getByRole('button', { name: /resume review/i })
+        expect(btn).toBeInTheDocument()
+      })
+    })
+
+    it('clicking "Resume review" calls getContract and shows the review form', async () => {
+      // This is the critical end-to-end test for the bug fix.
+      // Previously, "Resume review" was a <Link> to the same page. Since the component
+      // was already mounted, the navigation would NOT re-trigger the ?draft= useEffect,
+      // so nothing happened. Now it's a button that calls loadDraft() directly.
+      const MockApiError6b = (jest.requireMock('@/lib/api') as any).ApiError
+      const draftError = new MockApiError6b('Conflict', 409, {
+        detail: {
+          code: 'INCOMPLETE_DRAFT',
+          message: 'You have an incomplete upload for this file.',
+          existing_contract: {
+            id: 'draft-contract-id',
+            filename: 'nike-contract.pdf',
+            created_at: '2026-02-19T08:15:00Z',
+            status: 'draft',
+          },
+        },
+      })
+      mockUploadContract.mockRejectedValue(draftError)
+
+      // getContract returns a minimal draft with form_values so the review form populates
+      const resumedDraft = {
+        id: 'draft-contract-id',
+        user_id: 'user-1',
+        status: 'draft' as const,
+        filename: 'nike-contract.pdf',
+        licensee_name: null,
+        contract_start_date: null,
+        contract_end_date: null,
+        royalty_rate: null,
+        royalty_base: null,
+        territories: [],
+        product_categories: null,
+        minimum_guarantee: null,
+        minimum_guarantee_period: null,
+        advance_payment: null,
+        reporting_frequency: null,
+        pdf_url: null,
+        extracted_terms: {},
+        storage_path: null,
+        created_at: '2026-02-19T08:15:00Z',
+        updated_at: '2026-02-19T08:15:00Z',
+        form_values: {
+          licensee_name: 'Nike Inc.',
+          licensor_name: 'Brand Owner',
+          contract_start_date: '2024-01-01',
+          contract_end_date: '2025-12-31',
+          royalty_rate: 15,
+          royalty_base: 'net_sales' as const,
+          territories: ['US'],
+          reporting_frequency: 'quarterly' as const,
+          minimum_guarantee: null,
+          advance_payment: null,
+        },
+      }
+      mockGetContract.mockResolvedValue(resumedDraft)
+
+      render(<UploadContractPage />)
+
+      // Trigger the 409 error by uploading the file
+      const file = new File(['test'], 'nike-contract.pdf', { type: 'application/pdf' })
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      fireEvent.change(input, { target: { files: [file] } })
+
+      await waitFor(() => expect(screen.getByText(/upload & extract/i)).toBeInTheDocument())
+      fireEvent.click(screen.getByText(/upload & extract/i))
+
+      // Wait for the INCOMPLETE_DRAFT error UI
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /resume review/i })).toBeInTheDocument()
+      })
+
+      // Click "Resume review" — should load the draft directly (no navigation)
+      fireEvent.click(screen.getByRole('button', { name: /resume review/i }))
+
+      // getContract must have been called with the draft ID from the 409 error
+      await waitFor(() => {
+        expect(mockGetContract).toHaveBeenCalledWith('draft-contract-id')
+      })
+
+      // Review form should now be visible with data from the draft
+      await waitFor(() => {
+        expect(screen.getByText(/review extracted terms/i)).toBeInTheDocument()
+        expect(screen.getByDisplayValue('Nike Inc.')).toBeInTheDocument()
       })
     })
 
