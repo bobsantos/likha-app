@@ -12,6 +12,8 @@ services:
       - ./backend/.env.local
     environment:
       - SUPABASE_URL=http://host.docker.internal:54321  # Override for Docker networking
+      - HOST_PORT=8001  # Mapped host port — used in startup log so the correct URL is shown
+      - HOST_IP=${HOST_IP:-}  # Host LAN IP for startup log and CORS (auto-detected by default)
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -28,6 +30,11 @@ services:
       - NEXT_PUBLIC_SUPABASE_URL=http://localhost:54321
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${SUPABASE_KEY:-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0}
       - NEXT_PUBLIC_API_URL=http://localhost:8001
+      - HOST_PORT=3001  # Host-side mapped port; used by show-network.js banner
+      - HOST_IP=${HOST_IP:-}  # Host LAN IP for startup banner
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Lets show-network.js resolve the host LAN IP
+    command: sh -c "node scripts/show-network.js && npx next dev --hostname 0.0.0.0"
     depends_on:
       - backend
     restart: unless-stopped

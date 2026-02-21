@@ -66,6 +66,211 @@ class TestCorsConfiguration:
         origins = get_cors_origins()
         assert "http://localhost:3001" in origins
 
+    def test_cors_includes_local_ip_port_3000_when_ip_detected(self):
+        """When a local IP is detected, http://<ip>:3000 is in allowed origins."""
+        with patch("app.main.get_local_ip", return_value="192.168.1.100"):
+            from app.main import get_cors_origins
+            origins = get_cors_origins()
+        assert "http://192.168.1.100:3000" in origins
+
+    def test_cors_includes_local_ip_port_3001_when_ip_detected(self):
+        """When a local IP is detected, http://<ip>:3001 is in allowed origins."""
+        with patch("app.main.get_local_ip", return_value="192.168.1.100"):
+            from app.main import get_cors_origins
+            origins = get_cors_origins()
+        assert "http://192.168.1.100:3001" in origins
+
+    def test_cors_excludes_local_ip_when_detection_fails(self):
+        """When get_local_ip() returns None, no IP-based origins are added."""
+        with patch("app.main.get_local_ip", return_value=None):
+            from app.main import get_cors_origins
+            origins = get_cors_origins()
+        # localhost entries must still be present
+        assert "http://localhost:3000" in origins
+        assert "http://localhost:3001" in origins
+        # No origins should look like a raw IP address
+        ip_origins = [o for o in origins if "192.168" in o or "10." in o or "172." in o]
+        assert ip_origins == []
+
+    def test_cors_local_ip_deduped_if_matches_existing(self):
+        """If the detected IP somehow duplicates an existing origin, it appears only once."""
+        # Simulate local_ip returning something that happens to already be in the list
+        with patch("app.main.get_local_ip", return_value="192.168.1.50"):
+            from app.main import get_cors_origins
+            origins = get_cors_origins()
+        assert origins.count("http://192.168.1.50:3000") == 1
+        assert origins.count("http://192.168.1.50:3001") == 1
+
+
+# ---------------------------------------------------------------------------
+# get_local_ip() helper tests
+# ---------------------------------------------------------------------------
+
+class TestGetLocalIp:
+    """Unit tests for the get_local_ip() helper."""
+
+    def test_returns_string_or_none(self):
+        """get_local_ip() always returns a string or None — never raises."""
+        from app.main import get_local_ip
+        result = get_local_ip()
+        assert result is None or isinstance(result, str)
+
+    def test_returns_none_when_socket_connect_fails(self):
+        """Falls back gracefully when the UDP connect trick raises OSError."""
+        import socket as _socket
+        with patch("app.main.socket.socket") as mock_sock_cls:
+            mock_sock_cls.return_value.__enter__.return_value.connect.side_effect = OSError("Network unreachable")
+            # Also patch gethostbyname to raise so both paths fail
+            with patch("app.main.socket.gethostname", return_value="testhost"):
+                with patch("app.main.socket.gethostbyname", side_effect=OSError("lookup failed")):
+                    from app.main import get_local_ip
+                    result = get_local_ip()
+        assert result is None
+
+    def test_falls_back_to_gethostbyname_when_udp_fails(self):
+        """When UDP connect fails, gethostbyname fallback is used."""
+        with patch("app.main.socket.socket") as mock_sock_cls:
+            mock_sock_cls.return_value.__enter__.return_value.connect.side_effect = OSError("unreachable")
+            with patch("app.main.socket.gethostname", return_value="myhost"):
+                with patch("app.main.socket.gethostbyname", return_value="10.0.0.5"):
+                    from app.main import get_local_ip
+                    result = get_local_ip()
+        assert result == "10.0.0.5"
+
+    def test_ignores_loopback_from_gethostbyname(self):
+        """If gethostbyname returns 127.0.0.1, it is not returned (not useful for LAN)."""
+        with patch("app.main.socket.socket") as mock_sock_cls:
+            mock_sock_cls.return_value.__enter__.return_value.connect.side_effect = OSError("unreachable")
+            with patch("app.main.socket.gethostname", return_value="myhost"):
+                with patch("app.main.socket.gethostbyname", return_value="127.0.0.1"):
+                    from app.main import get_local_ip
+                    result = get_local_ip()
+        assert result is None
+
+    def test_returns_ip_from_udp_connect(self):
+        """Happy path: returns the IP reported by the UDP connect trick."""
+        mock_sock = MagicMock()
+        mock_sock.getsockname.return_value = ("192.168.1.42", 0)
+
+        with patch("app.main.socket.socket") as mock_sock_cls:
+            mock_sock_cls.return_value.__enter__.return_value = mock_sock
+            from app.main import get_local_ip
+            result = get_local_ip()
+        assert result == "192.168.1.42"
+
+    def test_host_ip_env_var_takes_priority(self):
+        """HOST_IP env var is used when set, skipping all detection."""
+        with patch.dict(os.environ, {"HOST_IP": "192.168.1.191"}):
+            from app.main import get_local_ip
+            result = get_local_ip()
+        assert result == "192.168.1.191"
+
+    def test_host_ip_env_var_empty_falls_through(self):
+        """Empty HOST_IP falls through to UDP detection."""
+        mock_sock = MagicMock()
+        mock_sock.getsockname.return_value = ("192.168.1.42", 0)
+
+        with patch.dict(os.environ, {"HOST_IP": ""}):
+            with patch("app.main.socket.socket") as mock_sock_cls:
+                mock_sock_cls.return_value.__enter__.return_value = mock_sock
+                from app.main import get_local_ip
+                result = get_local_ip()
+        assert result == "192.168.1.42"
+
+    def test_skips_docker_bridge_ip_from_udp_connect(self):
+        """172.x.x.x IPs from the UDP connect trick are filtered out."""
+        mock_sock = MagicMock()
+        mock_sock.getsockname.return_value = ("172.24.0.2", 0)
+
+        with patch.dict(os.environ, {"HOST_IP": ""}):
+            with patch("app.main.socket.socket") as mock_sock_cls:
+                mock_sock_cls.return_value.__enter__.return_value = mock_sock
+                with patch("app.main.socket.gethostname", return_value="myhost"):
+                    with patch("app.main.socket.gethostbyname", return_value="192.168.0.5"):
+                        from app.main import get_local_ip
+                        result = get_local_ip()
+        assert result == "192.168.0.5"
+
+    def test_skips_docker_desktop_gateway_ip(self):
+        """192.168.65.x (Docker Desktop gateway) is filtered out."""
+        mock_sock = MagicMock()
+        mock_sock.getsockname.return_value = ("192.168.65.254", 0)
+
+        with patch.dict(os.environ, {"HOST_IP": ""}):
+            with patch("app.main.socket.socket") as mock_sock_cls:
+                mock_sock_cls.return_value.__enter__.return_value = mock_sock
+                with patch("app.main.socket.gethostname", return_value="myhost"):
+                    with patch("app.main.socket.gethostbyname", return_value="192.168.1.100"):
+                        from app.main import get_local_ip
+                        result = get_local_ip()
+        assert result == "192.168.1.100"
+
+    def test_returns_none_when_all_methods_fail(self):
+        """Returns None when no usable IP can be detected."""
+        mock_sock = MagicMock()
+        mock_sock.getsockname.return_value = ("172.24.0.2", 0)
+
+        with patch.dict(os.environ, {"HOST_IP": ""}):
+            with patch("app.main.socket.socket") as mock_sock_cls:
+                mock_sock_cls.return_value.__enter__.return_value = mock_sock
+                with patch("app.main.socket.gethostname", return_value="myhost"):
+                    with patch("app.main.socket.gethostbyname", return_value="172.17.0.1"):
+                        from app.main import get_local_ip
+                        result = get_local_ip()
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# HOST_PORT env var / startup log tests
+# ---------------------------------------------------------------------------
+
+class TestStartupLog:
+    """log_startup_urls() uses HOST_PORT env var for the displayed port."""
+
+    @pytest.mark.asyncio
+    async def test_startup_log_uses_host_port_env(self, caplog):
+        """When HOST_PORT=8001, the log line shows port 8001."""
+        with patch.dict(os.environ, {"HOST_PORT": "8001"}):
+            with patch("app.main.get_local_ip", return_value=None):
+                import logging
+                with caplog.at_level(logging.INFO, logger="app.main"):
+                    from app.main import log_startup_urls
+                    await log_startup_urls()
+        assert "8001" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_startup_log_defaults_to_8000(self, caplog):
+        """When HOST_PORT is not set, port 8000 is used."""
+        env = {k: v for k, v in os.environ.items() if k != "HOST_PORT"}
+        with patch.dict(os.environ, env, clear=True):
+            with patch("app.main.get_local_ip", return_value=None):
+                import logging
+                with caplog.at_level(logging.INFO, logger="app.main"):
+                    from app.main import log_startup_urls
+                    await log_startup_urls()
+        assert "8000" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_startup_log_shows_network_ip_with_host_port(self, caplog):
+        """When an IP is detected, it appears alongside HOST_PORT in the log."""
+        with patch.dict(os.environ, {"HOST_PORT": "8001"}):
+            with patch("app.main.get_local_ip", return_value="192.168.1.55"):
+                import logging
+                with caplog.at_level(logging.INFO, logger="app.main"):
+                    from app.main import log_startup_urls
+                    await log_startup_urls()
+        assert "192.168.1.55:8001" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_startup_log_shows_unavailable_when_no_ip(self, caplog):
+        """When get_local_ip() returns None, the log says '(unavailable)'."""
+        with patch("app.main.get_local_ip", return_value=None):
+            import logging
+            with caplog.at_level(logging.INFO, logger="app.main"):
+                from app.main import log_startup_urls
+                await log_startup_urls()
+        assert "unavailable" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # Computed field tests — is_expired
