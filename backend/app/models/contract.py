@@ -6,7 +6,8 @@ from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import Optional, Union, List, Dict, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, computed_field
+import calendar
 
 
 class ReportingFrequency(str, Enum):
@@ -157,6 +158,19 @@ class ContractConfirm(BaseModel):
         return v
 
 
+def _add_months(d: date, months: int) -> date:
+    """
+    Add a number of months to a date, clamping to the last day of the month
+    when the original day doesn't exist in the target month (e.g. Jan 31 + 1 month
+    → Feb 28/29).
+    """
+    month = d.month - 1 + months
+    year = d.year + month // 12
+    month = month % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
 class Contract(BaseModel):
     """Full contract record from database. Accommodates both draft and active rows."""
     id: str
@@ -183,6 +197,65 @@ class Contract(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def is_expired(self) -> Optional[bool]:
+        """
+        True if the contract has passed its end date, False if still active,
+        None if no end date is set (e.g. draft contracts).
+
+        A contract is considered expired when contract_end_date < today.
+        A contract ending today is NOT expired (it expires at end of that day).
+        """
+        if self.contract_end_date is None:
+            return None
+        return self.contract_end_date < date.today()
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def days_until_report_due(self) -> Optional[int]:
+        """
+        Days until the next royalty report is due, based on reporting_frequency
+        and contract_start_date.
+
+        Due dates are computed as recurring intervals from contract_start_date:
+        - monthly      → every 1 month
+        - quarterly    → every 3 months
+        - semi_annually → every 6 months
+        - annually     → every 12 months
+
+        Returns None if reporting_frequency or contract_start_date is not set.
+        Returns a negative int if the next report is already overdue.
+        """
+        if self.reporting_frequency is None or self.contract_start_date is None:
+            return None
+
+        frequency_months: Dict[str, int] = {
+            ReportingFrequency.MONTHLY: 1,
+            ReportingFrequency.QUARTERLY: 3,
+            ReportingFrequency.SEMI_ANNUALLY: 6,
+            ReportingFrequency.ANNUALLY: 12,
+        }
+        period_months = frequency_months.get(self.reporting_frequency)
+        if period_months is None:
+            return None
+
+        today = date.today()
+        start = self.contract_start_date
+
+        # Walk forward from start_date in period_months increments until we
+        # find the first due date that is >= today.
+        # Cap iterations at 10 years worth of periods to avoid infinite loops.
+        max_iterations = (12 // period_months) * 10 + 1
+        due = _add_months(start, period_months)
+        for _ in range(max_iterations):
+            if due >= today:
+                return (due - today).days
+            due = _add_months(due, period_months)
+
+        # Fallback: next period after max iterations
+        return (due - today).days
 
 
 class ContractWithFormValues(Contract):

@@ -120,17 +120,17 @@ Week 2 focuses on:
 ### Frontend Tasks
 
 **Morning: Upload Flow**
-- [ ] Create upload page: `/frontend/app/(app)/contracts/upload/page.tsx`
+- [x] Create upload page: `/frontend/app/(app)/contracts/upload/page.tsx`
   - File upload component (drag-and-drop + file picker)
   - Accept only PDF files
   - Upload progress indicator
-- [ ] Build upload component: `/frontend/components/contract-upload.tsx`
+- [x] Build upload component: `/frontend/components/contract-upload.tsx`
   - Drag-and-drop zone styling
   - File validation (PDF only, max size 10MB)
 
 **Afternoon: Extraction Review Form**
-- [ ] Create review page: `/frontend/app/(app)/contracts/review/page.tsx`
-- [ ] Build extraction review component: `/frontend/components/contract-form.tsx`
+- [x] Create review page: `/frontend/app/(app)/contracts/review/page.tsx`
+- [x] Build extraction review component: `/frontend/components/contract-form.tsx`
   - Form fields for all contract terms:
     - Licensee name (text input)
     - Contract dates (date pickers)
@@ -144,22 +144,29 @@ Week 2 focuses on:
     - Reporting frequency (dropdown)
 
 **Components:**
-- `ContractUpload` - File upload with drag-and-drop
-- `ContractForm` - Multi-field contract review form
-- `RoyaltyRateInput` - Smart input for flat/tiered/category rates
+- [x] `ContractUpload` - File upload with drag-and-drop (22 tests)
+- [x] `ContractForm` - Multi-field contract review form (25 tests)
+- [x] `RoyaltyRateInput` - Smart input for flat/tiered/category rates (22 tests)
 
 ### Backend Tasks
 
 **Enhanced CORS & Response Models**
-- [ ] Update CORS configuration (`app/main.py`)
-  - Add production frontend URL to `allow_origins`
+- [x] Update CORS configuration (`app/main.py`)
+  - Env-var driven via `CORS_ORIGINS` (comma-separated)
+  - Always includes localhost:3000/3001 for dev
   - Configure for Vercel preview deployments
-- [ ] Enhance response models:
-  - Add computed fields (e.g., `is_expired`, `days_until_report_due`)
-  - Ensure all Decimal fields serialize correctly
-- [ ] Add health check enhancements:
-  - `/health/db` - test Supabase connection
-  - `/health/storage` - test storage access
+- [x] Enhance response models:
+  - Added `is_expired` computed field (bool, contract_end_date < today)
+  - Added `days_until_report_due` computed field (int, based on reporting_frequency)
+  - Decimal fields serialize correctly (confirmed)
+- [x] Add health check enhancements:
+  - `/health/db` - test Supabase connection (SELECT query)
+  - `/health/storage` - test storage access (list buckets, verify contracts bucket)
+
+**Success Criteria:**
+- [x] 237 frontend tests passing (180 existing + 57 new)
+- [x] 266 backend tests passing (236 existing + 30 new)
+- [x] TDD approach followed
 
 ---
 

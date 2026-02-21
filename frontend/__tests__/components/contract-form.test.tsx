@@ -1,0 +1,323 @@
+/**
+ * Tests for ContractForm component
+ */
+
+import { render, screen, fireEvent } from '@testing-library/react'
+import ContractForm, { ContractFormData } from '@/components/contract-form'
+
+const emptyData: ContractFormData = {
+  licensee_name: '',
+  licensor_name: '',
+  contract_start_date: '',
+  contract_end_date: '',
+  royalty_rate: '',
+  royalty_base: 'net_sales',
+  territories: '',
+  reporting_frequency: 'quarterly',
+  minimum_guarantee: '',
+  advance_payment: '',
+}
+
+const populatedData: ContractFormData = {
+  licensee_name: 'Acme Corp',
+  licensor_name: 'Brand Owner',
+  contract_start_date: '2024-01-01',
+  contract_end_date: '2025-12-31',
+  royalty_rate: '10',
+  royalty_base: 'net_sales',
+  territories: 'USA, Canada',
+  reporting_frequency: 'quarterly',
+  minimum_guarantee: '5000',
+  advance_payment: '1000',
+}
+
+describe('ContractForm component', () => {
+  describe('rendering', () => {
+    it('renders the form element', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      expect(screen.getByTestId('contract-form')).toBeInTheDocument()
+    })
+
+    it('renders all required field labels', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      expect(screen.getByLabelText(/licensee name/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/licensor name/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/contract start date/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/contract end date/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/royalty rate/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/royalty base/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/reporting frequency/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/territories/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/minimum guarantee/i)).toBeInTheDocument()
+      expect(screen.getByLabelText(/advance payment/i)).toBeInTheDocument()
+    })
+
+    it('renders Confirm and Save and Cancel buttons', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      expect(screen.getByRole('button', { name: /confirm and save/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
+    })
+
+    it('populates inputs with provided data', () => {
+      render(
+        <ContractForm
+          data={populatedData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      expect(screen.getByDisplayValue('Acme Corp')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('Brand Owner')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('2024-01-01')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('2025-12-31')).toBeInTheDocument()
+      expect(screen.getByDisplayValue('USA, Canada')).toBeInTheDocument()
+    })
+  })
+
+  describe('royalty base dropdown options', () => {
+    it('shows Net Sales and Gross Sales options', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      expect(screen.getByRole('option', { name: /net sales/i })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: /gross sales/i })).toBeInTheDocument()
+    })
+
+    it('selects the correct royalty base from data', () => {
+      render(
+        <ContractForm
+          data={{ ...emptyData, royalty_base: 'gross_sales' }}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      const select = screen.getByTestId('royalty-base-select') as HTMLSelectElement
+      expect(select.value).toBe('gross_sales')
+    })
+  })
+
+  describe('reporting frequency dropdown options', () => {
+    it('shows Monthly, Quarterly, Semi-Annually, Annually options', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      expect(screen.getByRole('option', { name: /monthly/i })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: /quarterly/i })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: /semi-annually/i })).toBeInTheDocument()
+      // Use exact match for "Annually" to avoid ambiguity with "Semi-Annually"
+      expect(screen.getByRole('option', { name: 'Annually' })).toBeInTheDocument()
+    })
+  })
+
+  describe('error display', () => {
+    it('does not render the error banner when error is null', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+          error={null}
+        />
+      )
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('renders the error banner when error is provided', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+          error="Something went wrong"
+        />
+      )
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+      expect(screen.getByText('Something went wrong')).toBeInTheDocument()
+    })
+
+    it('renders the errorTitle in bold inside the error banner', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+          error="Contract could not be saved"
+          errorTitle="Save failed"
+        />
+      )
+      expect(screen.getByText('Save failed')).toBeInTheDocument()
+      expect(screen.getByText('Contract could not be saved')).toBeInTheDocument()
+    })
+  })
+
+  describe('submitting state', () => {
+    it('disables the submit button when submitting is true', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+          submitting={true}
+        />
+      )
+      expect(screen.getByTestId('submit-button')).toBeDisabled()
+    })
+
+    it('shows "Saving..." text on the submit button when submitting', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+          submitting={true}
+        />
+      )
+      expect(screen.getByTestId('submit-button')).toHaveTextContent('Saving...')
+    })
+
+    it('shows "Confirm and Save" when not submitting', () => {
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+          submitting={false}
+        />
+      )
+      expect(screen.getByTestId('submit-button')).toHaveTextContent('Confirm and Save')
+    })
+  })
+
+  describe('callbacks', () => {
+    it('calls onCancel when the Cancel button is clicked', () => {
+      const onCancel = jest.fn()
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={jest.fn()}
+          onCancel={onCancel}
+        />
+      )
+      fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
+      expect(onCancel).toHaveBeenCalledTimes(1)
+    })
+
+    it('calls onSubmit when the form is submitted', () => {
+      const onSubmit = jest.fn((e: React.FormEvent) => e.preventDefault())
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={jest.fn()}
+          onSubmit={onSubmit}
+          onCancel={jest.fn()}
+        />
+      )
+      fireEvent.submit(screen.getByTestId('contract-form'))
+      expect(onSubmit).toHaveBeenCalledTimes(1)
+    })
+
+    it('calls onChange with the correct field and value when licensee_name changes', () => {
+      const onChange = jest.fn()
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={onChange}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      fireEvent.change(screen.getByTestId('licensee-name-input'), {
+        target: { value: 'New Corp' },
+      })
+      expect(onChange).toHaveBeenCalledWith('licensee_name', 'New Corp')
+    })
+
+    it('calls onChange with the correct field and value when royalty_base changes', () => {
+      const onChange = jest.fn()
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={onChange}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      fireEvent.change(screen.getByTestId('royalty-base-select'), {
+        target: { value: 'gross_sales' },
+      })
+      expect(onChange).toHaveBeenCalledWith('royalty_base', 'gross_sales')
+    })
+
+    it('calls onChange with the correct field and value when territories changes', () => {
+      const onChange = jest.fn()
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={onChange}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      fireEvent.change(screen.getByTestId('territories-input'), {
+        target: { value: 'UK, France' },
+      })
+      expect(onChange).toHaveBeenCalledWith('territories', 'UK, France')
+    })
+
+    it('calls onChange with the correct field and value when minimum_guarantee changes', () => {
+      const onChange = jest.fn()
+      render(
+        <ContractForm
+          data={emptyData}
+          onChange={onChange}
+          onSubmit={jest.fn()}
+          onCancel={jest.fn()}
+        />
+      )
+      fireEvent.change(screen.getByTestId('minimum-guarantee-input'), {
+        target: { value: '2500' },
+      })
+      expect(onChange).toHaveBeenCalledWith('minimum_guarantee', '2500')
+    })
+  })
+})
