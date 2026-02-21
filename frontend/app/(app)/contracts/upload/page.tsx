@@ -132,28 +132,27 @@ export default function UploadContractPage() {
       .then((contract: any) => {
         if (cancelled) return
 
-        // Convert the stored Contract back into form field values
-        let royaltyRateStr = ''
-        if (typeof contract.royalty_rate === 'number') {
-          // Stored as decimal (e.g. 0.15) — convert to percentage string ("15")
-          royaltyRateStr = String(contract.royalty_rate * 100)
-        } else if (contract.royalty_rate != null) {
-          royaltyRateStr = JSON.stringify(contract.royalty_rate)
-        }
+        // The backend runs normalize_extracted_terms for draft contracts and returns
+        // the result as form_values — use it directly, just like the fresh-upload path.
+        const fv = contract.form_values
 
         const populated = {
-          licensee_name: contract.licensee_name || '',
-          licensor_name: contract.licensor_name || '',
-          contract_start: contract.contract_start || '',
-          contract_end: contract.contract_end || '',
-          royalty_rate: royaltyRateStr,
-          royalty_base: contract.royalty_base || 'net_sales',
-          territories: Array.isArray(contract.territories)
-            ? contract.territories.join(', ')
+          licensee_name: fv?.licensee_name || '',
+          licensor_name: fv?.licensor_name || '',
+          contract_start_date: fv?.contract_start_date || '',
+          contract_end_date: fv?.contract_end_date || '',
+          royalty_rate: typeof fv?.royalty_rate === 'number'
+            ? String(fv.royalty_rate)
+            : typeof fv?.royalty_rate === 'object' && fv?.royalty_rate !== null
+              ? JSON.stringify(fv.royalty_rate)
+              : fv?.royalty_rate || '',
+          royalty_base: fv?.royalty_base || 'net_sales',
+          territories: Array.isArray(fv?.territories)
+            ? fv.territories.join(', ')
             : '',
-          reporting_frequency: contract.reporting_frequency || 'quarterly',
-          minimum_guarantee: contract.minimum_guarantee != null ? String(contract.minimum_guarantee) : '',
-          advance_payment: contract.advance_payment != null ? String(contract.advance_payment) : '',
+          reporting_frequency: fv?.reporting_frequency || 'quarterly',
+          minimum_guarantee: fv?.minimum_guarantee != null ? String(fv.minimum_guarantee) : '',
+          advance_payment: fv?.advance_payment != null ? String(fv.advance_payment) : '',
         }
 
         setDraftContractId(draftId)
@@ -282,8 +281,9 @@ export default function UploadContractPage() {
       const newFormData = {
         licensee_name: fv.licensee_name || '',
         licensor_name: fv.licensor_name || '',
-        contract_start: fv.contract_start_date || '',
-        contract_end: fv.contract_end_date || '',
+        // Use the same date key names as the backend ContractConfirm model expects.
+        contract_start_date: fv.contract_start_date || '',
+        contract_end_date: fv.contract_end_date || '',
         royalty_rate: typeof fv.royalty_rate === 'number'
           ? String(fv.royalty_rate)
           : typeof fv.royalty_rate === 'object'
@@ -376,9 +376,11 @@ export default function UploadContractPage() {
 
       const contractData = {
         licensee_name: formData.licensee_name,
-        licensor_name: formData.licensor_name || null,
-        contract_start: formData.contract_start || null,
-        contract_end: formData.contract_end || null,
+        // contract_start_date / contract_end_date match the backend ContractConfirm field names.
+        // The old names (contract_start / contract_end) were incorrect and would be silently
+        // ignored by the backend, leaving dates unset on the saved contract.
+        contract_start_date: formData.contract_start_date || null,
+        contract_end_date: formData.contract_end_date || null,
         royalty_rate: royaltyRate,
         royalty_base: formData.royalty_base,
         territories: formData.territories
@@ -717,8 +719,8 @@ export default function UploadContractPage() {
                 </label>
                 <input
                   type="date"
-                  value={formData.contract_start}
-                  onChange={(e) => handleInputChange('contract_start', e.target.value)}
+                  value={formData.contract_start_date}
+                  onChange={(e) => handleInputChange('contract_start_date', e.target.value)}
                   className="input"
                 />
               </div>
@@ -729,8 +731,8 @@ export default function UploadContractPage() {
                 </label>
                 <input
                   type="date"
-                  value={formData.contract_end}
-                  onChange={(e) => handleInputChange('contract_end', e.target.value)}
+                  value={formData.contract_end_date}
+                  onChange={(e) => handleInputChange('contract_end_date', e.target.value)}
                   className="input"
                 />
               </div>

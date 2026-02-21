@@ -13,18 +13,19 @@ describe('ContractCard Component', () => {
     status: 'active',
     filename: 'acme-contract.pdf',
     licensee_name: 'Acme Corp',
-    licensor_name: 'John Doe',
-    contract_start: '2024-01-01',
-    contract_end: '2025-12-31',
+    contract_start_date: '2024-01-01',
+    contract_end_date: '2025-12-31',
     royalty_rate: 0.15,
     royalty_base: 'net_sales',
     territories: ['US', 'Canada'],
     product_categories: null,
     minimum_guarantee: 5000,
-    mg_period: 'quarterly',
+    minimum_guarantee_period: 'quarterly',
     advance_payment: null,
     reporting_frequency: 'quarterly',
     pdf_url: 'https://example.com/contract.pdf',
+    extracted_terms: null,
+    storage_path: null,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   }
@@ -108,8 +109,8 @@ describe('ContractCard Component', () => {
       royalty_rate: null,
       royalty_base: null,
       reporting_frequency: null,
-      contract_start: null,
-      contract_end: null,
+      contract_start_date: null,
+      contract_end_date: null,
     }
     render(<ContractCard contract={draftContract} />)
     expect(screen.getByText('Draft')).toBeInTheDocument()
@@ -125,8 +126,8 @@ describe('ContractCard Component', () => {
       royalty_rate: null,
       royalty_base: null,
       reporting_frequency: null,
-      contract_start: null,
-      contract_end: null,
+      contract_start_date: null,
+      contract_end_date: null,
     }
     render(<ContractCard contract={draftContract} />)
     expect(screen.getByText(/resume review/i)).toBeInTheDocument()
@@ -148,11 +149,183 @@ describe('ContractCard Component', () => {
       royalty_rate: null,
       royalty_base: null,
       reporting_frequency: null,
-      contract_start: null,
-      contract_end: null,
+      contract_start_date: null,
+      contract_end_date: null,
     }
     render(<ContractCard contract={draftContract} />)
     const link = screen.getByRole('link')
     expect(link).toHaveAttribute('href', '/contracts/upload?draft=draft-1')
+  })
+
+  // extracted_terms fallback for draft title
+  it('falls back to extracted_terms.licensee_name when licensee_name is null', () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      id: 'draft-1',
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+      contract_start_date: null,
+      contract_end_date: null,
+      extracted_terms: { licensee_name: 'Extracted Corp' },
+    }
+    render(<ContractCard contract={draftContract} />)
+    expect(screen.getByText('Extracted Corp')).toBeInTheDocument()
+  })
+
+  it('falls back to filename when both licensee_name and extracted_terms.licensee_name are null', () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      id: 'draft-1',
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+      contract_start_date: null,
+      contract_end_date: null,
+      extracted_terms: { licensee_name: null },
+      filename: 'my-draft.pdf',
+    }
+    render(<ContractCard contract={draftContract} />)
+    expect(screen.getByText('my-draft.pdf')).toBeInTheDocument()
+  })
+
+  it('shows "Untitled Draft" when licensee_name, extracted_terms.licensee_name, and filename are all null', () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      id: 'draft-1',
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+      contract_start_date: null,
+      contract_end_date: null,
+      extracted_terms: null,
+      filename: null,
+    }
+    render(<ContractCard contract={draftContract} />)
+    expect(screen.getByText('Untitled Draft')).toBeInTheDocument()
+  })
+
+  it('active contract licensee_name takes precedence over extracted_terms.licensee_name', () => {
+    const contractWithBoth: Contract = {
+      ...mockContract,
+      licensee_name: 'Acme Corp',
+      extracted_terms: { licensee_name: 'Should Not Show' },
+    }
+    render(<ContractCard contract={contractWithBoth} />)
+    expect(screen.getByText('Acme Corp')).toBeInTheDocument()
+    expect(screen.queryByText('Should Not Show')).not.toBeInTheDocument()
+  })
+
+  // "Uploaded on" date shown for draft contracts
+  it('shows "Uploaded on" date for draft contracts', () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      id: 'draft-1',
+      status: 'draft',
+      licensee_name: null,
+      royalty_rate: null,
+      royalty_base: null,
+      reporting_frequency: null,
+      contract_start_date: null,
+      contract_end_date: null,
+      created_at: '2026-02-15T10:30:00Z',
+    }
+    render(<ContractCard contract={draftContract} />)
+    expect(screen.getByText(/Uploaded on/i)).toBeInTheDocument()
+    expect(screen.getByText(/Feb 15, 2026/)).toBeInTheDocument()
+  })
+
+  it('does not show "Uploaded on" for active contracts', () => {
+    render(<ContractCard contract={mockContract} />)
+    expect(screen.queryByText(/Uploaded on/i)).not.toBeInTheDocument()
+  })
+
+  // Draft card metadata suppression
+  describe('draft card hides metadata fields', () => {
+    const draftContract: Contract = {
+      ...mockContract,
+      id: 'draft-1',
+      status: 'draft',
+      licensee_name: 'Draft Licensee',
+      royalty_rate: 0.15,
+      royalty_base: null,
+      reporting_frequency: 'quarterly',
+      contract_start_date: '2023-03-15',
+      contract_end_date: '2026-06-30',
+      territories: ['US'],
+      minimum_guarantee: 5000,
+      created_at: '2024-01-01T00:00:00Z',
+    }
+
+    it('does not show royalty rate percentage on draft cards', () => {
+      render(<ContractCard contract={draftContract} />)
+      expect(screen.queryByText('15%')).not.toBeInTheDocument()
+    })
+
+    it('does not show contract period row on draft cards', () => {
+      render(<ContractCard contract={draftContract} />)
+      expect(screen.queryByText('Contract Period:')).not.toBeInTheDocument()
+      expect(screen.queryByText(/Mar 15, 2023/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/Jun 30, 2026/)).not.toBeInTheDocument()
+    })
+
+    it('does not show territories row on draft cards', () => {
+      render(<ContractCard contract={draftContract} />)
+      expect(screen.queryByText('Territories:')).not.toBeInTheDocument()
+      expect(screen.queryByText('US')).not.toBeInTheDocument()
+    })
+
+    it('does not show minimum guarantee row on draft cards', () => {
+      render(<ContractCard contract={draftContract} />)
+      expect(screen.queryByText('Minimum Guarantee:')).not.toBeInTheDocument()
+      expect(screen.queryByText('$5,000')).not.toBeInTheDocument()
+    })
+
+    it('does not show reporting frequency row on draft cards', () => {
+      render(<ContractCard contract={draftContract} />)
+      expect(screen.queryByText('Reporting:')).not.toBeInTheDocument()
+      expect(screen.queryByText(/quarterly/i)).not.toBeInTheDocument()
+    })
+
+    it('still shows licensee name, Draft badge, and Resume review CTA', () => {
+      render(<ContractCard contract={draftContract} />)
+      expect(screen.getByText('Draft Licensee')).toBeInTheDocument()
+      expect(screen.getByText('Draft')).toBeInTheDocument()
+      expect(screen.getByText(/resume review/i)).toBeInTheDocument()
+    })
+  })
+
+  // Active card metadata presence
+  describe('active card shows all metadata fields', () => {
+    it('shows royalty rate percentage on active cards', () => {
+      render(<ContractCard contract={mockContract} />)
+      expect(screen.getByText('15%')).toBeInTheDocument()
+    })
+
+    it('shows contract period row on active cards', () => {
+      render(<ContractCard contract={mockContract} />)
+      expect(screen.getByText('Contract Period:')).toBeInTheDocument()
+    })
+
+    it('shows territories row on active cards', () => {
+      render(<ContractCard contract={mockContract} />)
+      expect(screen.getByText('Territories:')).toBeInTheDocument()
+    })
+
+    it('shows minimum guarantee row on active cards', () => {
+      render(<ContractCard contract={mockContract} />)
+      expect(screen.getByText('Minimum Guarantee:')).toBeInTheDocument()
+    })
+
+    it('shows reporting frequency row on active cards', () => {
+      render(<ContractCard contract={mockContract} />)
+      expect(screen.getByText('Reporting:')).toBeInTheDocument()
+    })
   })
 })

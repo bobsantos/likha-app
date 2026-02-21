@@ -13,6 +13,7 @@ from app.models.contract import (
     ContractCreate,
     ContractConfirm,
     ContractStatus,
+    ContractWithFormValues,
     ExtractedTerms,
 )
 from app.services.extractor import extract_contract
@@ -307,13 +308,20 @@ async def list_contracts(
     return [Contract(**row) for row in result.data]
 
 
-@router.get("/{contract_id}", response_model=Contract)
+@router.get("/{contract_id}", response_model=ContractWithFormValues)
 async def get_contract(
     contract_id: str,
     user_id: str = Depends(get_current_user),
 ):
     """
     Get a single contract by ID.
+
+    For draft contracts, also returns a ``form_values`` field containing
+    normalized, form-ready values derived from the stored ``extracted_terms``.
+    This allows the frontend review form to be pre-populated without any
+    client-side parsing of raw extracted text.
+
+    For active contracts ``form_values`` is omitted (None).
 
     Requires authentication. User must own the contract.
     """
@@ -325,7 +333,21 @@ async def get_contract(
     if not result.data:
         raise HTTPException(status_code=404, detail="Contract not found")
 
-    return Contract(**result.data[0])
+    row = result.data[0]
+    contract = Contract(**row)
+
+    form_values = None
+    if contract.status == ContractStatus.DRAFT and contract.extracted_terms:
+        try:
+            raw_terms = ExtractedTerms(**contract.extracted_terms)
+            form_values = normalize_extracted_terms(raw_terms)
+        except Exception:
+            logger.warning(
+                f"Could not normalize extracted_terms for draft {contract_id}; "
+                "form_values will be None"
+            )
+
+    return ContractWithFormValues(**contract.model_dump(), form_values=form_values)
 
 
 @router.delete("/{contract_id}")

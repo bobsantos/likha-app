@@ -1002,3 +1002,206 @@ class Test409ResponseShape:
         assert ec["status"] == "draft"
         # Draft has no licensee_name in existing_contract
         assert "licensee_name" not in ec or ec.get("licensee_name") is None
+
+
+# ---------------------------------------------------------------------------
+# GET /{id} — form_values for draft contracts
+# ---------------------------------------------------------------------------
+
+class TestGetContractFormValues:
+    """GET /api/contracts/{id} returns form_values for draft contracts."""
+
+    @pytest.mark.asyncio
+    async def test_get_draft_includes_form_values(self):
+        """Draft contract response includes a non-None form_values field."""
+        from app.routers.contracts import get_contract
+        from app.models.contract import ContractWithFormValues
+
+        draft_row = _make_draft_db_contract(
+            contract_id="draft-fv-1",
+            filename="test.pdf",
+        )
+        # Provide rich extracted_terms so normalization has something to work with
+        draft_row["extracted_terms"] = {
+            "licensor_name": "Brand Owner",
+            "licensee_name": "Nike Inc.",
+            "royalty_rate": "8% of net sales",
+            "royalty_base": "net sales",
+            "territories": ["US", "Canada"],
+            "reporting_frequency": "quarterly",
+            "contract_start_date": "2024-01-01",
+            "contract_end_date": "2025-12-31",
+            "minimum_guarantee": "$50,000",
+            "advance_payment": None,
+        }
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+
+                result = await get_contract("draft-fv-1", user_id="user-123")
+
+                assert isinstance(result, ContractWithFormValues)
+                assert result.form_values is not None
+
+    @pytest.mark.asyncio
+    async def test_get_draft_form_values_has_correct_licensee_name(self):
+        """form_values.licensee_name is populated from extracted_terms."""
+        from app.routers.contracts import get_contract
+
+        draft_row = _make_draft_db_contract(contract_id="draft-fv-2", filename="test.pdf")
+        draft_row["extracted_terms"] = {
+            "licensee_name": "Nike Inc.",
+            "licensor_name": "Brand Owner",
+            "royalty_rate": "8%",
+            "royalty_base": "net sales",
+            "territories": [],
+            "reporting_frequency": "quarterly",
+            "contract_start_date": "2024-01-01",
+            "contract_end_date": "2025-12-31",
+            "minimum_guarantee": None,
+            "advance_payment": None,
+        }
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+
+                result = await get_contract("draft-fv-2", user_id="user-123")
+
+                assert result.form_values.licensee_name == "Nike Inc."
+                assert result.form_values.licensor_name == "Brand Owner"
+
+    @pytest.mark.asyncio
+    async def test_get_draft_form_values_normalizes_royalty_rate(self):
+        """form_values.royalty_rate is a normalized float, not a raw string."""
+        from app.routers.contracts import get_contract
+
+        draft_row = _make_draft_db_contract(contract_id="draft-fv-3", filename="test.pdf")
+        draft_row["extracted_terms"] = {
+            "licensee_name": "Test Corp",
+            "licensor_name": None,
+            "royalty_rate": "15% of net sales",
+            "royalty_base": None,
+            "territories": [],
+            "reporting_frequency": None,
+            "contract_start_date": None,
+            "contract_end_date": None,
+            "minimum_guarantee": None,
+            "advance_payment": None,
+        }
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+
+                result = await get_contract("draft-fv-3", user_id="user-123")
+
+                # "15% of net sales" -> 15.0 (float, not the raw string)
+                assert result.form_values.royalty_rate == 15.0
+
+    @pytest.mark.asyncio
+    async def test_get_draft_form_values_normalizes_monetary_values(self):
+        """form_values.minimum_guarantee is a float parsed from the raw string."""
+        from app.routers.contracts import get_contract
+
+        draft_row = _make_draft_db_contract(contract_id="draft-fv-4", filename="test.pdf")
+        draft_row["extracted_terms"] = {
+            "licensee_name": "Test Corp",
+            "licensor_name": None,
+            "royalty_rate": None,
+            "royalty_base": None,
+            "territories": [],
+            "reporting_frequency": None,
+            "contract_start_date": None,
+            "contract_end_date": None,
+            "minimum_guarantee": "$50,000 USD",
+            "advance_payment": "$10,000",
+        }
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+
+                result = await get_contract("draft-fv-4", user_id="user-123")
+
+                assert result.form_values.minimum_guarantee == 50000.0
+                assert result.form_values.advance_payment == 10000.0
+
+    @pytest.mark.asyncio
+    async def test_get_active_contract_has_no_form_values(self):
+        """Active contracts do not include form_values (it is None)."""
+        from app.routers.contracts import get_contract
+        from app.models.contract import ContractWithFormValues
+
+        active_row = _make_db_contract(contract_id="active-1", status="active")
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[active_row])
+
+                result = await get_contract("active-1", user_id="user-123")
+
+                assert isinstance(result, ContractWithFormValues)
+                assert result.form_values is None
+
+    @pytest.mark.asyncio
+    async def test_get_draft_form_values_none_when_extracted_terms_empty(self):
+        """form_values is None when extracted_terms is empty/missing."""
+        from app.routers.contracts import get_contract
+
+        draft_row = _make_draft_db_contract(contract_id="draft-fv-5", filename="test.pdf")
+        draft_row["extracted_terms"] = {}  # Empty
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+
+                result = await get_contract("draft-fv-5", user_id="user-123")
+
+                # Empty extracted_terms is falsy — form_values should be None
+                assert result.form_values is None
+
+    @pytest.mark.asyncio
+    async def test_get_contract_returns_404_if_not_found(self):
+        """GET /{id} returns 404 if the contract does not exist."""
+        from app.routers.contracts import get_contract
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[])
+
+                with pytest.raises(HTTPException) as exc_info:
+                    await get_contract("nonexistent-id", user_id="user-123")
+
+                assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_contract_verifies_ownership(self):
+        """GET /{id} calls verify_contract_ownership and propagates 403."""
+        from app.routers.contracts import get_contract
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            mock_verify.side_effect = HTTPException(
+                status_code=403, detail="You are not authorized to access this contract"
+            )
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_contract("contract-xyz", user_id="user-456")
+
+            assert exc_info.value.status_code == 403
+            mock_verify.assert_called_once_with("contract-xyz", "user-456")

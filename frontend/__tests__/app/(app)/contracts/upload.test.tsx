@@ -75,24 +75,28 @@ describe('Upload Contract Page', () => {
     pdf_url: 'https://example.com/signed-url',
   }
 
+  // Mock saved contract — reflects actual backend API response field names.
+  // The backend Contract Pydantic model uses contract_start_date / contract_end_date
+  // and does NOT have a top-level licensor_name column.
   const mockSavedContract = {
     id: 'new-contract-123',
     user_id: 'user-1',
     status: 'active' as const,
     filename: 'contract.pdf',
     licensee_name: 'Test Corp',
-    licensor_name: null,
-    contract_start: null,
-    contract_end: null,
+    contract_start_date: null,
+    contract_end_date: null,
     royalty_rate: 0.10,
     royalty_base: 'net_sales' as const,
     territories: [],
     product_categories: null,
     minimum_guarantee: null,
-    mg_period: null,
+    minimum_guarantee_period: null,
     advance_payment: null,
     reporting_frequency: 'quarterly' as const,
     pdf_url: 'https://example.com/contract.pdf',
+    extracted_terms: {},
+    storage_path: null,
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   }
@@ -230,6 +234,36 @@ describe('Upload Contract Page', () => {
         'draft-contract-abc',
         expect.objectContaining({ licensee_name: 'Test Corp' })
       )
+    })
+  })
+
+  it('sends contract_start_date and contract_end_date (not contract_start/contract_end) to confirmDraft', async () => {
+    mockUploadContract.mockResolvedValue(baseExtractionResponse)
+    mockConfirmDraft.mockResolvedValue(mockSavedContract)
+
+    render(<UploadContractPage />)
+
+    const file = new File(['test'], 'contract.pdf', { type: 'application/pdf' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => expect(screen.getByText(/upload & extract/i)).toBeInTheDocument())
+    fireEvent.click(screen.getByText(/upload & extract/i))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /confirm and save/i })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
+
+    await waitFor(() => {
+      const [, payload] = mockConfirmDraft.mock.calls[0]
+      // Backend ContractConfirm model expects contract_start_date / contract_end_date
+      expect(payload).toHaveProperty('contract_start_date')
+      expect(payload).toHaveProperty('contract_end_date')
+      // Must NOT use the old wrong field names
+      expect(payload).not.toHaveProperty('contract_start')
+      expect(payload).not.toHaveProperty('contract_end')
     })
   })
 
@@ -722,40 +756,81 @@ describe('Upload Contract Page', () => {
   // ============================================================
 
   describe('?draft= query param loading', () => {
+    // Minimal draft contract reflecting real backend API response shape:
+    // - dates use contract_start_date / contract_end_date (not contract_start / contract_end)
+    // - licensor_name lives in extracted_terms, not as a top-level field
     const draftContract = {
       id: 'draft-contract-id',
       user_id: 'user-1',
       status: 'draft' as const,
       filename: 'nike-contract.pdf',
       licensee_name: null,
-      licensor_name: null,
-      contract_start: null,
-      contract_end: null,
+      contract_start_date: null,
+      contract_end_date: null,
       royalty_rate: null,
       royalty_base: null,
       territories: [],
       product_categories: null,
       minimum_guarantee: null,
-      mg_period: null,
+      minimum_guarantee_period: null,
       advance_payment: null,
       reporting_frequency: null,
-      pdf_url: null,
+      pdf_url: 'https://example.com/nike-contract.pdf',
+      extracted_terms: {
+        licensor_name: null,
+        licensee_name: null,
+      },
+      storage_path: null,
       created_at: '2026-02-19T08:15:00Z',
       updated_at: '2026-02-19T08:15:00Z',
     }
 
+    // Populated draft: all reviewable fields present.
+    // The backend now returns form_values (normalized values from extracted_terms)
+    // on draft contracts from GET /contracts/{id}. The frontend reads form_values
+    // directly — the same path as a fresh upload.
     const draftContractWithData = {
       ...draftContract,
-      licensee_name: 'Nike Inc.',
-      licensor_name: 'Brand Owner',
-      contract_start: '2024-01-01',
-      contract_end: '2025-12-31',
-      royalty_rate: 0.15,
-      royalty_base: 'net_sales' as const,
-      territories: ['US', 'Canada'],
-      reporting_frequency: 'quarterly' as const,
-      minimum_guarantee: 5000,
-      advance_payment: 1000,
+      // Top-level columns are still null for drafts (confirmed after PUT /confirm)
+      licensee_name: null,
+      contract_start_date: null,
+      contract_end_date: null,
+      royalty_rate: null,
+      royalty_base: null,
+      territories: [],
+      reporting_frequency: null,
+      minimum_guarantee: null,
+      advance_payment: null,
+      extracted_terms: {
+        licensor_name: 'Brand Owner',
+        licensee_name: 'Nike Inc.',
+        contract_start_date: '2024-01-01',
+        contract_end_date: '2025-12-31',
+        royalty_rate: '15%',
+        royalty_base: 'net sales',
+        territories: ['US', 'Canada'],
+        reporting_frequency: 'quarterly',
+        minimum_guarantee: '$5,000',
+        advance_payment: '$1,000',
+        product_categories: null,
+        payment_terms: null,
+        exclusivity: null,
+        confidence_score: null,
+        extraction_notes: null,
+      },
+      // Backend-normalized form_values (what normalize_extracted_terms produces)
+      form_values: {
+        licensee_name: 'Nike Inc.',
+        licensor_name: 'Brand Owner',
+        contract_start_date: '2024-01-01',
+        contract_end_date: '2025-12-31',
+        royalty_rate: 15,
+        royalty_base: 'net_sales' as const,
+        territories: ['US', 'Canada'],
+        reporting_frequency: 'quarterly' as const,
+        minimum_guarantee: 5000,
+        advance_payment: 1000,
+      },
     }
 
     it('calls getContract with the draft ID from the URL on mount', async () => {
@@ -798,7 +873,7 @@ describe('Upload Contract Page', () => {
       })
     })
 
-    it('populates form fields with data from the fetched draft contract', async () => {
+    it('populates licensee_name field from contract.form_values.licensee_name', async () => {
       mockGetContract.mockResolvedValue(draftContractWithData)
       ;(useSearchParams as jest.Mock).mockReturnValue({
         get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
@@ -808,12 +883,10 @@ describe('Upload Contract Page', () => {
 
       await waitFor(() => {
         expect(screen.getByDisplayValue('Nike Inc.')).toBeInTheDocument()
-        expect(screen.getByDisplayValue('Brand Owner')).toBeInTheDocument()
-        expect(screen.getByDisplayValue('US, Canada')).toBeInTheDocument()
       })
     })
 
-    it('converts decimal royalty rate to percentage string in form field', async () => {
+    it('populates licensor_name field from contract.form_values.licensor_name', async () => {
       mockGetContract.mockResolvedValue(draftContractWithData)
       ;(useSearchParams as jest.Mock).mockReturnValue({
         get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
@@ -822,7 +895,61 @@ describe('Upload Contract Page', () => {
       render(<UploadContractPage />)
 
       await waitFor(() => {
-        // 0.15 decimal -> "15" percentage string
+        // licensor_name is sourced from form_values (normalized by the backend)
+        expect(screen.getByDisplayValue('Brand Owner')).toBeInTheDocument()
+      })
+    })
+
+    it('populates territories as comma-separated string', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('US, Canada')).toBeInTheDocument()
+      })
+    })
+
+    it('populates contract_start_date field from contract.form_values.contract_start_date', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        // The date input for contract start should be populated
+        expect(screen.getByDisplayValue('2024-01-01')).toBeInTheDocument()
+      })
+    })
+
+    it('populates contract_end_date field from contract.form_values.contract_end_date', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(screen.getByDisplayValue('2025-12-31')).toBeInTheDocument()
+      })
+    })
+
+    it('converts numeric royalty_rate from form_values to string in form field', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        // form_values.royalty_rate = 15 (number) -> "15" string in the input
         expect(screen.getByDisplayValue('15')).toBeInTheDocument()
       })
     })
@@ -847,6 +974,30 @@ describe('Upload Contract Page', () => {
           'draft-contract-id',
           expect.any(Object)
         )
+      })
+    })
+
+    it('sends contract_start_date and contract_end_date after resuming a draft', async () => {
+      mockGetContract.mockResolvedValue(draftContractWithData)
+      mockConfirmDraft.mockResolvedValue(mockSavedContract)
+      ;(useSearchParams as jest.Mock).mockReturnValue({
+        get: jest.fn((key: string) => (key === 'draft' ? 'draft-contract-id' : null)),
+      })
+
+      render(<UploadContractPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm and save/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
+
+      await waitFor(() => {
+        const [, payload] = mockConfirmDraft.mock.calls[0]
+        expect(payload).toHaveProperty('contract_start_date', '2024-01-01')
+        expect(payload).toHaveProperty('contract_end_date', '2025-12-31')
+        expect(payload).not.toHaveProperty('contract_start')
+        expect(payload).not.toHaveProperty('contract_end')
       })
     })
 

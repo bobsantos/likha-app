@@ -155,3 +155,14 @@ class Contract(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ContractWithFormValues(Contract):
+    """
+    Contract response model that includes an optional form_values field.
+
+    Returned by GET /{id} for draft contracts so the frontend review form can
+    be pre-populated without any client-side parsing of raw extracted_terms.
+    For active contracts form_values is None.
+    """
+    form_values: Optional[FormValues] = None
