@@ -15,7 +15,7 @@
  *   - Env var not set                   → falls back to default
  */
 
-import { getApiUrl, getSupabaseUrl } from '@/lib/url-utils'
+import { getApiUrl, getSupabaseUrl, resolveUrl } from '@/lib/url-utils'
 
 // ---------------------------------------------------------------------------
 // getApiUrl
@@ -104,5 +104,50 @@ describe('getSupabaseUrl', () => {
   it('returns production URL unchanged regardless of browser hostname', () => {
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co'
     expect(getSupabaseUrl({ hostname: '192.168.1.191', port: '3001' })).toBe('https://abcdefgh.supabase.co')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveUrl — rewrites any URL containing localhost or host.docker.internal
+// ---------------------------------------------------------------------------
+
+describe('resolveUrl', () => {
+  it('rewrites localhost URL when browser is on LAN', () => {
+    const url = 'http://localhost:54321/storage/v1/object/sign/contracts/user-123/file.pdf?token=abc'
+    const result = resolveUrl(url, { hostname: '192.168.1.191', port: '3001' })
+    expect(result).toBe('http://192.168.1.191:54321/storage/v1/object/sign/contracts/user-123/file.pdf?token=abc')
+  })
+
+  it('rewrites host.docker.internal URL when browser is on LAN', () => {
+    const url = 'http://host.docker.internal:54321/storage/v1/object/sign/contracts/user-123/file.pdf?token=abc'
+    const result = resolveUrl(url, { hostname: '192.168.1.191', port: '3001' })
+    expect(result).toBe('http://192.168.1.191:54321/storage/v1/object/sign/contracts/user-123/file.pdf?token=abc')
+  })
+
+  it('returns URL unchanged when browser is on localhost', () => {
+    const url = 'http://localhost:54321/storage/v1/object/sign/contracts/user-123/file.pdf?token=abc'
+    expect(resolveUrl(url, { hostname: 'localhost', port: '3001' })).toBe(url)
+  })
+
+  it('returns URL unchanged when browser is on 127.0.0.1', () => {
+    const url = 'http://host.docker.internal:54321/storage/v1/file.pdf'
+    expect(resolveUrl(url, { hostname: '127.0.0.1', port: '3001' })).toBe(url)
+  })
+
+  it('returns production URL unchanged', () => {
+    const url = 'https://abcdefgh.supabase.co/storage/v1/object/sign/contracts/file.pdf?token=xyz'
+    expect(resolveUrl(url, { hostname: '192.168.1.191', port: '3001' })).toBe(url)
+  })
+
+  it('returns empty string for empty input', () => {
+    expect(resolveUrl('', { hostname: '192.168.1.191', port: '3001' })).toBe('')
+  })
+
+  it('preserves port and query params when rewriting', () => {
+    const url = 'http://host.docker.internal:54321/path?token=abc&expires=123'
+    const result = resolveUrl(url, { hostname: '10.0.0.5', port: '3001' })
+    expect(result).toContain('10.0.0.5:54321')
+    expect(result).toContain('token=abc')
+    expect(result).toContain('expires=123')
   })
 })

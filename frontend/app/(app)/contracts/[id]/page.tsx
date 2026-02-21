@@ -21,6 +21,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { getContract, getSalesPeriods } from '@/lib/api'
+import { resolveUrl } from '@/lib/url-utils'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate } from '@/types'
 import SalesPeriodModal from '@/components/SalesPeriodModal'
 
@@ -198,7 +199,7 @@ export default function ContractDetailPage() {
           <div className="flex gap-3">
             {contract.pdf_url && (
               <a
-                href={contract.pdf_url}
+                href={resolveUrl(contract.pdf_url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-secondary flex items-center gap-2"

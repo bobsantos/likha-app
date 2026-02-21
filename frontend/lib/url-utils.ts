@@ -88,6 +88,46 @@ export function getApiUrl(location?: BrowserLocation): string {
 }
 
 /**
+ * Rewrite any URL that contains "localhost" or "host.docker.internal" so it
+ * uses the browser's actual hostname instead.  This handles signed storage
+ * URLs, PDF links, etc. that the backend returns with its own hostname.
+ *
+ * Returns the URL unchanged when:
+ * - Called server-side (SSR)
+ * - The browser is on localhost (desktop — no rewrite needed)
+ * - The URL doesn't contain a local hostname
+ *
+ * @param url - the URL to potentially rewrite
+ * @param location - override for testing
+ */
+export function resolveUrl(url: string, location?: BrowserLocation): string {
+  if (!url) return url
+
+  if (typeof window === 'undefined' && !location) {
+    return url
+  }
+
+  const needsRewrite =
+    url.includes('localhost') || url.includes('host.docker.internal')
+
+  if (!needsRewrite) return url
+
+  const { hostname: browserHostname } = location ?? getBrowserLocation()
+
+  if (browserHostname === 'localhost' || browserHostname === '127.0.0.1') {
+    return url
+  }
+
+  try {
+    const parsed = new URL(url)
+    parsed.hostname = browserHostname
+    return parsed.toString().replace(/\/$/, '')
+  } catch {
+    return url
+  }
+}
+
+/**
  * Return the Supabase base URL.
  *
  * Same logic as getApiUrl but Supabase always listens on its own fixed port
