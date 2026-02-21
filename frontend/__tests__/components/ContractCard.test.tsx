@@ -61,6 +61,25 @@ describe('ContractCard Component', () => {
     expect(screen.getByText('10.0% of Net Sales')).toBeInTheDocument()
   })
 
+  // Bug fix: bare number strings (no "%") should have "%" appended
+  it('appends "%" to bare integer string royalty_rate (e.g. "8"), with base context', () => {
+    render(<ContractCard contract={{ ...mockContract, royalty_rate: '8' }} />)
+    // royalty_base is 'net_sales' from mockContract
+    expect(screen.getByText('8% of Net Sales')).toBeInTheDocument()
+  })
+
+  it('appends "%" to bare decimal string royalty_rate (e.g. "10.5"), with base context', () => {
+    render(<ContractCard contract={{ ...mockContract, royalty_rate: '10.5' }} />)
+    // royalty_base is 'net_sales' from mockContract
+    expect(screen.getByText('10.5% of Net Sales')).toBeInTheDocument()
+  })
+
+  it('does not double-append "%" to string royalty_rate that already contains "%"', () => {
+    render(<ContractCard contract={{ ...mockContract, royalty_rate: '8%' }} />)
+    expect(screen.getByText('8% of Net Sales')).toBeInTheDocument()
+    expect(screen.queryByText('8%% of Net Sales')).not.toBeInTheDocument()
+  })
+
   it('shows contract period dates', () => {
     render(<ContractCard contract={mockContract} />)
     expect(screen.getByText(/Jan 1, 2024/)).toBeInTheDocument()

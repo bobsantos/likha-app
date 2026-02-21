@@ -207,6 +207,71 @@ class TestContractConfirm:
         )
         assert confirm.royalty_rate == "10.5%"
 
+    def test_royalty_rate_bare_integer_string_coerced(self):
+        """A bare integer string (e.g. '8') is coerced to '8%'."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate="8",
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "8%"
+
+    def test_royalty_rate_bare_decimal_string_coerced(self):
+        """A bare decimal string (e.g. '10.5') is coerced to '10.5%'."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate="10.5",
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "10.5%"
+
+    def test_royalty_rate_bare_fraction_string_coerced(self):
+        """A bare fractional string (e.g. '0.1') is coerced to '0.1%'."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate="0.1",
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "0.1%"
+
+    def test_royalty_rate_string_with_percent_unchanged(self):
+        """A string already containing '%' is not double-suffixed."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate="8%",
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "8%"
+
+    def test_royalty_rate_descriptive_string_unchanged(self):
+        """A descriptive string without a bare number is returned unchanged."""
+        from app.models.contract import ContractConfirm
+        from datetime import date
+
+        confirm = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate="8% of Net Sales",
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+        assert confirm.royalty_rate == "8% of Net Sales"
+
     def test_dates_are_required(self):
         """contract_start_date and contract_end_date must be provided."""
         from app.models.contract import ContractConfirm

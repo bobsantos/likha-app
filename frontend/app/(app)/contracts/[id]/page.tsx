@@ -78,6 +78,10 @@ export default function ContractDetailPage() {
 
   const formatRoyaltyRate = (rate: Contract['royalty_rate']): string => {
     if (typeof rate === 'string') {
+      // Bare number string (e.g. "8", "10.5") — append "%" defensively
+      if (/^\d+(\.\d+)?$/.test(rate)) {
+        return `${rate}%`
+      }
       return rate
     }
 

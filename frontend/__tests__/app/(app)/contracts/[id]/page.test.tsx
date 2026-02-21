@@ -294,6 +294,41 @@ describe('Contract Detail Page', () => {
     })
   })
 
+  // Bug fix: bare number strings (no "%") should have "%" appended
+  it('appends "%" to bare integer string royalty_rate (e.g. "8")', async () => {
+    mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: '8' })
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('8%')).toBeInTheDocument()
+    })
+  })
+
+  it('appends "%" to bare decimal string royalty_rate (e.g. "10.5")', async () => {
+    mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: '10.5' })
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('10.5%')).toBeInTheDocument()
+    })
+  })
+
+  it('does not double-append "%" to string royalty_rate that already contains "%"', async () => {
+    mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: '8%' })
+    mockGetSalesPeriods.mockResolvedValue([])
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('8%')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('8%%')).not.toBeInTheDocument()
+  })
+
   it('displays numeric royalty_rate as percentage', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: 0.15 })
     mockGetSalesPeriods.mockResolvedValue([])

@@ -132,19 +132,28 @@ class ContractConfirm(BaseModel):
     @classmethod
     def coerce_numeric_royalty_rate(cls, v: Any) -> Any:
         """
-        Coerce numeric royalty_rate values to strings.
+        Coerce numeric royalty_rate values to properly formatted percentage strings.
 
-        The frontend form sends the royalty rate as a plain number (e.g. 0.10
-        or 10.0) when the user types a percentage into a numeric input.  The
-        canonical DB representation is always a string (e.g. "10%"), so we
-        convert here rather than storing a bare float.
+        The frontend normalizer strips "8% of Net Sales" down to the bare number
+        8.0 for form display, then converts it to the string "8" before sending it
+        back on confirm.  The canonical DB representation is always a string with a
+        "%" suffix (e.g. "8%"), so we normalise here to avoid storing bare values.
 
-        - int/float → "<value>%" (e.g. 0.10 → "0.1%", 10.0 → "10.0%")
-        - Everything else (str, list, dict) passes through unchanged for the
-          union validator to handle normally.
+        - int/float    → "<value>%"  (e.g. 0.10 → "0.1%", 10.0 → "10.0%")
+        - str bare num → "<value>%"  (e.g. "8" → "8%", "10.5" → "10.5%")
+        - str with "%"              → unchanged  (e.g. "8%" or "8% of Net Sales")
+        - list / dict               → unchanged (tiered / category rates)
         """
         if isinstance(v, (int, float)):
             return f"{v}%"
+        if isinstance(v, str) and "%" not in v:
+            stripped = v.strip()
+            try:
+                # Only coerce if the entire string is a valid number (bare numeric)
+                float(stripped)
+                return f"{stripped}%"
+            except ValueError:
+                pass
         return v
 
 
