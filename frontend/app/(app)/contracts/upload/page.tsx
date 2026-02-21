@@ -211,9 +211,15 @@ export default function UploadContractPage() {
     }
   }, [])
 
-  // File validation
+  // File validation.
+  // Mobile browsers (Android Chrome, Samsung Internet) sometimes report
+  // file.type as '' even for valid PDFs picked from a file manager or
+  // content URI.  Accept the file when either the MIME type is correct OR
+  // the filename ends with .pdf (case-insensitive).
   const validateFile = (file: File): string | null => {
-    if (file.type !== 'application/pdf') {
+    const isPdfByType = file.type === 'application/pdf'
+    const isPdfByName = file.name.toLowerCase().endsWith('.pdf')
+    if (!isPdfByType && !isPdfByName) {
       return 'Please upload a PDF file'
     }
     if (file.size > 10 * 1024 * 1024) {

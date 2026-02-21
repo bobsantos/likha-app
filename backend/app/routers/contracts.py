@@ -6,6 +6,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from typing import List, Optional
 import tempfile
 import os
+import time
 import logging
 
 from app.models.contract import (
@@ -23,7 +24,18 @@ from app.db import supabase, supabase_admin
 from app.auth import get_current_user, verify_contract_ownership
 
 router = APIRouter()
+
 logger = logging.getLogger(__name__)
+
+
+def _refresh_pdf_url(contract: Contract) -> Contract:
+    """Regenerate the signed PDF URL from storage_path if available."""
+    if contract.storage_path:
+        try:
+            contract.pdf_url = get_signed_url(contract.storage_path)
+        except Exception:
+            pass  # Keep the existing (possibly expired) URL
+    return contract
 
 
 @router.post("/extract", response_model=dict)
@@ -44,8 +56,34 @@ async def extract_contract_terms(
 
     Requires authentication.
     """
-    if not file.filename.endswith('.pdf'):
+    logger.info(
+        f"Extract request received — filename={file.filename!r}, "
+        f"content_type={file.content_type!r}"
+    )
+
+    filename_lower = (file.filename or "").lower()
+    content_type = (file.content_type or "").lower()
+    is_pdf_by_name = filename_lower.endswith(".pdf")
+    is_pdf_by_type = content_type == "application/pdf"
+
+    if not is_pdf_by_name and not is_pdf_by_type:
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    # Normalise the filename: mobile browsers (e.g. Android Chrome) sometimes
+    # send None or a content URI instead of a real filename.  Fall back to a
+    # timestamped default so the rest of the pipeline has a usable string.
+    effective_filename: str
+    if file.filename and filename_lower.endswith(".pdf"):
+        effective_filename = file.filename
+    elif file.filename:
+        # Has a name but not .pdf extension — it passed the content-type check,
+        # so we keep the name and ensure the stored path has the right extension.
+        effective_filename = file.filename + ".pdf"
+    else:
+        effective_filename = f"contract_{int(time.time())}.pdf"
+        logger.info(
+            f"No filename from client; using generated fallback: {effective_filename}"
+        )
 
     # Read file content
     content = await file.read()
@@ -57,7 +95,7 @@ async def extract_contract_terms(
         supabase_admin.table("contracts")
         .select("id, filename, licensee_name, created_at, status")
         .eq("user_id", user_id)
-        .ilike("filename", file.filename)
+        .ilike("filename", effective_filename)
         .execute()
     )
 
@@ -107,14 +145,14 @@ async def extract_contract_terms(
 
     try:
         # Step 3: Upload PDF to storage (deterministic path, upsert)
-        logger.info(f"Uploading PDF to storage for user {user_id}: {file.filename}")
-        storage_path = upload_contract_pdf(content, user_id, file.filename)
+        logger.info(f"Uploading PDF to storage for user {user_id}: {effective_filename}")
+        storage_path = upload_contract_pdf(content, user_id, effective_filename)
 
         # Step 4: Generate signed URL for frontend access
         pdf_url = get_signed_url(storage_path)
 
         # Step 5: Extract terms (best-effort cleanup on failure)
-        logger.info(f"Extracting terms from PDF: {file.filename}")
+        logger.info(f"Extracting terms from PDF: {effective_filename}")
         try:
             extracted_terms, token_usage = await extract_contract(tmp_path)
         except Exception as extraction_err:
@@ -135,7 +173,7 @@ async def extract_contract_terms(
         # -----------------------------------------------------------------------
         draft_insert_data = {
             "user_id": user_id,
-            "filename": file.filename,
+            "filename": effective_filename,
             "pdf_url": pdf_url,
             "storage_path": storage_path,
             "extracted_terms": extracted_terms.model_dump(),
@@ -158,7 +196,7 @@ async def extract_contract_terms(
         draft_id = insert_result.data[0]["id"]
 
         logger.info(
-            f"Draft contract {draft_id} created for {file.filename}, "
+            f"Draft contract {draft_id} created for {effective_filename}, "
             f"tokens used: {token_usage.get('total_tokens', 'N/A')}"
         )
 
@@ -167,7 +205,7 @@ async def extract_contract_terms(
             "extracted_terms": extracted_terms.model_dump(),
             "form_values": form_values.model_dump(),
             "token_usage": token_usage,
-            "filename": file.filename,
+            "filename": effective_filename,
             "storage_path": storage_path,
             "pdf_url": pdf_url,
         }
@@ -175,7 +213,7 @@ async def extract_contract_terms(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Extraction failed for {file.filename}: {str(e)}", exc_info=True)
+        logger.error(f"Extraction failed for {effective_filename}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
     finally:
         # Clean up temp file
@@ -310,7 +348,8 @@ async def list_contracts(
 
     result = query.execute()
 
-    return [Contract(**row) for row in result.data]
+    contracts = [Contract(**row) for row in result.data]
+    return [_refresh_pdf_url(c) for c in contracts]
 
 
 @router.get("/{contract_id}", response_model=ContractWithFormValues)
@@ -339,7 +378,7 @@ async def get_contract(
         raise HTTPException(status_code=404, detail="Contract not found")
 
     row = result.data[0]
-    contract = Contract(**row)
+    contract = _refresh_pdf_url(Contract(**row))
 
     form_values = None
     if contract.status == ContractStatus.DRAFT and contract.extracted_terms:

@@ -9,7 +9,12 @@ import type { Contract } from '@/types'
 // Re-export so existing imports of getApiUrl from '@/lib/api' keep working.
 export { getApiUrl } from './url-utils'
 
-const API_URL = getApiUrl()
+// Lazy — resolved on first use so window.location is available (not during SSR).
+let _apiUrl: string | null = null
+function getResolvedApiUrl(): string {
+  if (!_apiUrl) _apiUrl = getApiUrl()
+  return _apiUrl
+}
 
 export class ApiError extends Error {
   status: number
@@ -50,7 +55,7 @@ export async function uploadContract(file: File) {
     headers['Authorization'] = `Bearer ${session.access_token}`
   }
 
-  const response = await fetch(`${API_URL}/api/contracts/extract`, {
+  const response = await fetch(`${getResolvedApiUrl()}/api/contracts/extract`, {
     method: 'POST',
     headers,
     body: formData,
@@ -71,7 +76,7 @@ export async function uploadContract(file: File) {
 export async function createContract(data: any) {
   const headers = await getAuthHeaders()
 
-  const response = await fetch(`${API_URL}/api/contracts`, {
+  const response = await fetch(`${getResolvedApiUrl()}/api/contracts`, {
     method: 'POST',
     headers,
     body: JSON.stringify(data),
@@ -88,7 +93,7 @@ export async function createContract(data: any) {
 export async function confirmDraft(contractId: string, data: any): Promise<Contract> {
   const headers = await getAuthHeaders()
 
-  const response = await fetch(`${API_URL}/api/contracts/${contractId}/confirm`, {
+  const response = await fetch(`${getResolvedApiUrl()}/api/contracts/${contractId}/confirm`, {
     method: 'PUT',
     headers,
     body: JSON.stringify(data),
@@ -109,7 +114,7 @@ export async function confirmDraft(contractId: string, data: any): Promise<Contr
 export async function getContracts(options?: { include_drafts?: boolean }) {
   const headers = await getAuthHeaders()
 
-  const url = new URL(`${API_URL}/api/contracts`)
+  const url = new URL(`${getResolvedApiUrl()}/api/contracts`)
   if (options?.include_drafts) {
     url.searchParams.set('include_drafts', 'true')
   }
@@ -128,7 +133,7 @@ export async function getContracts(options?: { include_drafts?: boolean }) {
 export async function getContract(id: string) {
   const headers = await getAuthHeaders()
 
-  const response = await fetch(`${API_URL}/api/contracts/${id}`, {
+  const response = await fetch(`${getResolvedApiUrl()}/api/contracts/${id}`, {
     headers,
   })
 
@@ -142,7 +147,7 @@ export async function getContract(id: string) {
 export async function createSalesPeriod(data: any) {
   const headers = await getAuthHeaders()
 
-  const response = await fetch(`${API_URL}/api/sales`, {
+  const response = await fetch(`${getResolvedApiUrl()}/api/sales`, {
     method: 'POST',
     headers,
     body: JSON.stringify(data),
@@ -158,7 +163,7 @@ export async function createSalesPeriod(data: any) {
 export async function getSalesPeriods(contractId: string) {
   const headers = await getAuthHeaders()
 
-  const response = await fetch(`${API_URL}/api/sales/contract/${contractId}`, {
+  const response = await fetch(`${getResolvedApiUrl()}/api/sales/contract/${contractId}`, {
     headers,
   })
 

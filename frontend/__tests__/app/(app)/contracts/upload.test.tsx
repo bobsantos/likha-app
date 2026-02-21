@@ -149,6 +149,53 @@ describe('Upload Contract Page', () => {
     })
   })
 
+  it('accepts a PDF with empty file.type (Android file manager behaviour)', async () => {
+    // Android Chrome and Samsung Internet often report file.type = '' when a
+    // PDF is selected from a content URI / file manager.  The fix accepts the
+    // file when the filename ends with .pdf even if the MIME type is blank.
+    render(<UploadContractPage />)
+
+    // Simulate a file object whose type is empty but name ends in .pdf
+    const file = new File(['%PDF-1.4 fake'], 'contract.pdf', { type: '' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      // The file name should appear in the dropzone — no error shown
+      expect(screen.getByText('contract.pdf')).toBeInTheDocument()
+      expect(screen.queryByText(/please upload a pdf file/i)).not.toBeInTheDocument()
+    })
+  })
+
+  it('accepts a PDF with uppercase .PDF extension and empty type', async () => {
+    render(<UploadContractPage />)
+
+    const file = new File(['%PDF-1.4 fake'], 'CONTRACT.PDF', { type: '' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText('CONTRACT.PDF')).toBeInTheDocument()
+      expect(screen.queryByText(/please upload a pdf file/i)).not.toBeInTheDocument()
+    })
+  })
+
+  it('rejects a non-PDF file even when file.type is empty', async () => {
+    render(<UploadContractPage />)
+
+    // A .txt file with empty type should still be rejected
+    const file = new File(['hello'], 'notes.txt', { type: '' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/please upload a pdf file/i)).toBeInTheDocument()
+    })
+  })
+
   it('shows extraction loading state on upload', async () => {
     mockUploadContract.mockImplementation(() => new Promise(() => {}))
     render(<UploadContractPage />)

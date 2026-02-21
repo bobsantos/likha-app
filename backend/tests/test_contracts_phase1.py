@@ -1441,3 +1441,199 @@ class TestGetContractFormValues:
 
             assert exc_info.value.status_code == 403
             mock_verify.assert_called_once_with("contract-xyz", "user-456")
+
+
+# ---------------------------------------------------------------------------
+# POST /extract — mobile browser filename robustness
+# ---------------------------------------------------------------------------
+
+class TestExtractMobileFilenameRobustness:
+    """
+    POST /extract must handle edge cases that mobile browsers produce:
+
+    1. filename=None, content_type='application/pdf'   → passes validation, gets generated name
+    2. filename='contract.PDF' (uppercase extension)   → passes validation (case-insensitive)
+    3. filename=None, content_type='text/plain'        → rejected with 400
+    4. filename='document_123' (no extension), content_type='application/pdf' → passes, .pdf appended
+    """
+
+    @pytest.mark.asyncio
+    async def test_none_filename_with_pdf_content_type_passes(self):
+        """filename=None + content_type='application/pdf' → accepted, fallback name generated."""
+        from app.routers.contracts import extract_contract_terms
+        from fastapi import UploadFile
+
+        pdf_content = b"%PDF-1.4 fake pdf content"
+        mock_file = Mock(spec=UploadFile)
+        mock_file.filename = None
+        mock_file.content_type = "application/pdf"
+        mock_file.read = AsyncMock(return_value=pdf_content)
+
+        draft_row = _make_draft_db_contract(contract_id="draft-mobile-1")
+        draft_row["filename"] = None  # Will be overwritten by effective_filename
+
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+            # No duplicates found for whatever generated filename is used
+            mock_supabase.table.return_value.select.return_value \
+                .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
+            mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock(
+                data=[{**draft_row, "id": "draft-mobile-1"}]
+            )
+
+            with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
+                with patch('app.routers.contracts.get_signed_url') as mock_signed_url:
+                    with patch('app.routers.contracts.extract_contract') as mock_extract:
+                        with patch('app.routers.contracts.normalize_extracted_terms') as mock_norm:
+                            mock_upload.return_value = "contracts/user-123/contract_fallback.pdf"
+                            mock_signed_url.return_value = "https://test.supabase.co/signed/contract_fallback.pdf"
+                            mock_extract.return_value = (
+                                Mock(model_dump=lambda: {}),
+                                {"total_tokens": 100}
+                            )
+                            mock_norm.return_value = Mock(model_dump=lambda: {})
+
+                            result = await extract_contract_terms(mock_file, user_id="user-123")
+
+            # Upload should have been called — request was not rejected
+            mock_upload.assert_called_once()
+            # The filename passed to upload must end in .pdf
+            upload_filename_arg = mock_upload.call_args[0][2]
+            assert upload_filename_arg.endswith(".pdf"), (
+                f"Expected fallback filename to end with .pdf, got: {upload_filename_arg!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_uppercase_pdf_extension_passes(self):
+        """filename='contract.PDF' (uppercase) → accepted (case-insensitive check)."""
+        from app.routers.contracts import extract_contract_terms
+        from fastapi import UploadFile
+
+        pdf_content = b"%PDF-1.4 fake pdf content"
+        mock_file = Mock(spec=UploadFile)
+        mock_file.filename = "contract.PDF"
+        mock_file.content_type = "application/octet-stream"
+        mock_file.read = AsyncMock(return_value=pdf_content)
+
+        draft_row = _make_draft_db_contract(contract_id="draft-mobile-2", filename="contract.PDF")
+
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+            mock_supabase.table.return_value.select.return_value \
+                .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
+            mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock(
+                data=[{**draft_row, "id": "draft-mobile-2"}]
+            )
+
+            with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
+                with patch('app.routers.contracts.get_signed_url') as mock_signed_url:
+                    with patch('app.routers.contracts.extract_contract') as mock_extract:
+                        with patch('app.routers.contracts.normalize_extracted_terms') as mock_norm:
+                            mock_upload.return_value = "contracts/user-123/contract.PDF"
+                            mock_signed_url.return_value = "https://test.supabase.co/signed/contract.PDF"
+                            mock_extract.return_value = (
+                                Mock(model_dump=lambda: {}),
+                                {"total_tokens": 100}
+                            )
+                            mock_norm.return_value = Mock(model_dump=lambda: {})
+
+                            # Must NOT raise an HTTPException
+                            result = await extract_contract_terms(mock_file, user_id="user-123")
+
+            mock_upload.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_none_filename_with_non_pdf_content_type_raises_400(self):
+        """filename=None + content_type='text/plain' → rejected with 400."""
+        from app.routers.contracts import extract_contract_terms
+        from fastapi import UploadFile
+
+        mock_file = Mock(spec=UploadFile)
+        mock_file.filename = None
+        mock_file.content_type = "text/plain"
+        mock_file.read = AsyncMock(return_value=b"not a pdf")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await extract_contract_terms(mock_file, user_id="user-123")
+
+        assert exc_info.value.status_code == 400
+        assert "PDF" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_no_extension_with_pdf_content_type_appends_pdf(self):
+        """filename='document_123' (no .pdf) + content_type='application/pdf' → .pdf appended."""
+        from app.routers.contracts import extract_contract_terms
+        from fastapi import UploadFile
+
+        pdf_content = b"%PDF-1.4 fake pdf content"
+        mock_file = Mock(spec=UploadFile)
+        mock_file.filename = "document_123"
+        mock_file.content_type = "application/pdf"
+        mock_file.read = AsyncMock(return_value=pdf_content)
+
+        draft_row = _make_draft_db_contract(contract_id="draft-mobile-3", filename="document_123.pdf")
+
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+            mock_supabase.table.return_value.select.return_value \
+                .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
+            mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock(
+                data=[{**draft_row, "id": "draft-mobile-3"}]
+            )
+
+            with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
+                with patch('app.routers.contracts.get_signed_url') as mock_signed_url:
+                    with patch('app.routers.contracts.extract_contract') as mock_extract:
+                        with patch('app.routers.contracts.normalize_extracted_terms') as mock_norm:
+                            mock_upload.return_value = "contracts/user-123/document_123.pdf"
+                            mock_signed_url.return_value = "https://test.supabase.co/signed/document_123.pdf"
+                            mock_extract.return_value = (
+                                Mock(model_dump=lambda: {}),
+                                {"total_tokens": 100}
+                            )
+                            mock_norm.return_value = Mock(model_dump=lambda: {})
+
+                            result = await extract_contract_terms(mock_file, user_id="user-123")
+
+            # The filename stored and passed upstream must end in .pdf
+            upload_filename_arg = mock_upload.call_args[0][2]
+            assert upload_filename_arg.endswith(".pdf"), (
+                f"Expected .pdf extension appended, got: {upload_filename_arg!r}"
+            )
+            assert result["filename"].endswith(".pdf")
+
+    @pytest.mark.asyncio
+    async def test_empty_filename_string_treated_as_none(self):
+        """filename='' (empty string) with PDF content_type → accepted, fallback name used."""
+        from app.routers.contracts import extract_contract_terms
+        from fastapi import UploadFile
+
+        pdf_content = b"%PDF-1.4 fake pdf content"
+        mock_file = Mock(spec=UploadFile)
+        mock_file.filename = ""
+        mock_file.content_type = "application/pdf"
+        mock_file.read = AsyncMock(return_value=pdf_content)
+
+        draft_row = _make_draft_db_contract(contract_id="draft-mobile-4")
+
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+            mock_supabase.table.return_value.select.return_value \
+                .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
+            mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock(
+                data=[{**draft_row, "id": "draft-mobile-4"}]
+            )
+
+            with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
+                with patch('app.routers.contracts.get_signed_url') as mock_signed_url:
+                    with patch('app.routers.contracts.extract_contract') as mock_extract:
+                        with patch('app.routers.contracts.normalize_extracted_terms') as mock_norm:
+                            mock_upload.return_value = "contracts/user-123/contract_fallback.pdf"
+                            mock_signed_url.return_value = "https://test.supabase.co/signed/contract_fallback.pdf"
+                            mock_extract.return_value = (
+                                Mock(model_dump=lambda: {}),
+                                {"total_tokens": 100}
+                            )
+                            mock_norm.return_value = Mock(model_dump=lambda: {})
+
+                            result = await extract_contract_terms(mock_file, user_id="user-123")
+
+            # Should succeed and the stored filename must end in .pdf
+            upload_filename_arg = mock_upload.call_args[0][2]
+            assert upload_filename_arg.endswith(".pdf")
