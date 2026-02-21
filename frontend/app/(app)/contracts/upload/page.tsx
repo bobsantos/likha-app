@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { uploadContract, confirmDraft, getContract, ApiError } from '@/lib/api'
 import type { ExtractedTerms, ExtractionResponse, DuplicateContractInfo } from '@/types'
+import RoyaltyRateInput from '@/components/RoyaltyRateInput'
 
 type Step = 'upload' | 'extracting' | 'review' | 'saving'
 type ErrorType = 'validation' | 'upload' | 'extraction' | 'save' | 'auth' | 'duplicate' | 'incomplete_draft' | null
@@ -770,17 +771,14 @@ export default function UploadContractPage() {
                 />
               </div>
 
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Royalty Rate (%) *
+                  Royalty Rate *
                 </label>
-                <input
-                  type="text"
-                  value={formData.royalty_rate}
-                  onChange={(e) => handleInputChange('royalty_rate', e.target.value)}
+                <RoyaltyRateInput
+                  value={formData.royalty_rate ?? ''}
+                  onChange={(value) => handleInputChange('royalty_rate', value)}
                   required
-                  placeholder="e.g., 10 or 10%"
-                  className="input"
                 />
               </div>
 
