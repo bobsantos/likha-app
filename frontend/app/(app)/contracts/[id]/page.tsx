@@ -77,6 +77,10 @@ export default function ContractDetailPage() {
   }
 
   const formatRoyaltyRate = (rate: Contract['royalty_rate']): string => {
+    if (typeof rate === 'string') {
+      return rate
+    }
+
     if (typeof rate === 'number') {
       return `${(rate * 100).toFixed(0)}%`
     }
@@ -185,9 +189,6 @@ export default function ContractDetailPage() {
               ) : (
                 <span className="badge-success">Active</span>
               )}
-              <span className="text-2xl font-bold text-primary-600">
-                {formatRoyaltyRate(contract.royalty_rate)}
-              </span>
             </div>
           </div>
           <div className="flex gap-3">
@@ -243,11 +244,21 @@ export default function ContractDetailPage() {
               )}
 
               <div className="flex items-start gap-3">
+                <BarChart3 className="w-5 h-5 text-gray-400 mt-0.5" />
+                <div>
+                  <p className="text-sm text-gray-600">Royalty Rate</p>
+                  <p className="font-medium text-gray-900">
+                    {formatRoyaltyRate(contract.royalty_rate)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3">
                 <Calendar className="w-5 h-5 text-gray-400 mt-0.5" />
                 <div>
                   <p className="text-sm text-gray-600">Contract Period</p>
                   <p className="font-medium text-gray-900">
-                    {formatDate(contract.contract_start)} - {formatDate(contract.contract_end)}
+                    {formatDate(contract.contract_start_date)} - {formatDate(contract.contract_end_date)}
                   </p>
                 </div>
               </div>

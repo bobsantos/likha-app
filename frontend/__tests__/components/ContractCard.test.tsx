@@ -35,9 +35,30 @@ describe('ContractCard Component', () => {
     expect(screen.getByText('Acme Corp')).toBeInTheDocument()
   })
 
-  it('displays royalty rate as percentage', () => {
+  it('displays royalty rate as percentage when numeric, with base context', () => {
     render(<ContractCard contract={mockContract} />)
-    expect(screen.getByText('15%')).toBeInTheDocument()
+    // mockContract has royalty_rate: 0.15, royalty_base: 'net_sales'
+    expect(screen.getByText('15% of Net Sales')).toBeInTheDocument()
+    expect(screen.getByText('Royalty Rate:')).toBeInTheDocument()
+  })
+
+  // Bug fix: royalty_rate is stored as a string in the DB (e.g. "8%", "10.0%")
+  // and the backend returns it as-is. formatRoyaltyRate must handle strings directly.
+  it('displays string royalty_rate directly (e.g. "8%"), with base context', () => {
+    render(<ContractCard contract={{ ...mockContract, royalty_rate: '8%' }} />)
+    // royalty_base is 'net_sales' from mockContract
+    expect(screen.getByText('8% of Net Sales')).toBeInTheDocument()
+  })
+
+  it('displays string royalty_rate with descriptor (e.g. "15% of net sales") without appending base when base is null', () => {
+    render(<ContractCard contract={{ ...mockContract, royalty_rate: '15% of net sales', royalty_base: null }} />)
+    expect(screen.getByText('15% of net sales')).toBeInTheDocument()
+  })
+
+  it('displays string royalty_rate with decimal (e.g. "10.0%"), with base context', () => {
+    render(<ContractCard contract={{ ...mockContract, royalty_rate: '10.0%' }} />)
+    // royalty_base is 'net_sales' from mockContract
+    expect(screen.getByText('10.0% of Net Sales')).toBeInTheDocument()
   })
 
   it('shows contract period dates', () => {
@@ -56,7 +77,7 @@ describe('ContractCard Component', () => {
     expect(screen.getByText('$5,000')).toBeInTheDocument()
   })
 
-  it('handles tiered royalty rate', () => {
+  it('handles tiered royalty rate, with base context', () => {
     const tierContract = {
       ...mockContract,
       royalty_rate: {
@@ -66,13 +87,14 @@ describe('ContractCard Component', () => {
           { min: 10000, max: null, rate: 0.15 },
         ],
       },
+      // royalty_base: 'net_sales' from mockContract
     }
 
     render(<ContractCard contract={tierContract} />)
-    expect(screen.getByText('10-15%')).toBeInTheDocument()
+    expect(screen.getByText('10-15% of Net Sales')).toBeInTheDocument()
   })
 
-  it('handles category-specific rates', () => {
+  it('handles category-specific rates, with base context', () => {
     const categoryContract = {
       ...mockContract,
       royalty_rate: {
@@ -82,10 +104,11 @@ describe('ContractCard Component', () => {
           'Merchandise': 0.10,
         },
       },
+      // royalty_base: 'net_sales' from mockContract
     }
 
     render(<ContractCard contract={categoryContract} />)
-    expect(screen.getByText('Category Rates')).toBeInTheDocument()
+    expect(screen.getByText('Category Rates of Net Sales')).toBeInTheDocument()
   })
 
   it('links to contract detail page', () => {
@@ -263,8 +286,10 @@ describe('ContractCard Component', () => {
       created_at: '2024-01-01T00:00:00Z',
     }
 
-    it('does not show royalty rate percentage on draft cards', () => {
+    it('does not show royalty rate row on draft cards', () => {
       render(<ContractCard contract={draftContract} />)
+      expect(screen.queryByText('Royalty Rate:')).not.toBeInTheDocument()
+      // The draft contract has royalty_rate 0.15 but the row is suppressed entirely
       expect(screen.queryByText('15%')).not.toBeInTheDocument()
     })
 
@@ -303,9 +328,11 @@ describe('ContractCard Component', () => {
 
   // Active card metadata presence
   describe('active card shows all metadata fields', () => {
-    it('shows royalty rate percentage on active cards', () => {
+    it('shows royalty rate row on active cards', () => {
       render(<ContractCard contract={mockContract} />)
-      expect(screen.getByText('15%')).toBeInTheDocument()
+      expect(screen.getByText('Royalty Rate:')).toBeInTheDocument()
+      // mockContract: royalty_rate 0.15, royalty_base 'net_sales' → "15% of Net Sales"
+      expect(screen.getByText('15% of Net Sales')).toBeInTheDocument()
     })
 
     it('shows contract period row on active cards', () => {

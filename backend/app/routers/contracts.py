@@ -218,11 +218,16 @@ async def confirm_contract(
             detail="Contract is already active and cannot be confirmed again.",
         )
 
-    # Build update payload from confirmed fields
+    # Build update payload from confirmed fields.
+    # Use model_dump() for royalty_rate so that List[RoyaltyTier] Pydantic model
+    # instances are converted to plain dicts before being passed to supabase-py,
+    # which serializes the payload with json.dumps() and cannot handle Pydantic
+    # model objects directly.
+    _confirm_dump = confirm_data.model_dump()
     update_data = {
         "status": ContractStatus.ACTIVE,
         "licensee_name": confirm_data.licensee_name,
-        "royalty_rate": confirm_data.royalty_rate,
+        "royalty_rate": _confirm_dump["royalty_rate"],
         "royalty_base": confirm_data.royalty_base,
         "territories": confirm_data.territories,
         "product_categories": confirm_data.product_categories,

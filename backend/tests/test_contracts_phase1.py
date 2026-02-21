@@ -897,6 +897,110 @@ class TestConfirmEndpoint:
                 assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
+    async def test_confirm_sends_royalty_rate_as_plain_dict_for_tiered(self):
+        """
+        When royalty_rate is a tiered List[RoyaltyTier], the update payload must
+        contain plain dicts (not Pydantic model instances) so that supabase-py can
+        JSON-serialize the payload with json.dumps() without a TypeError.
+        """
+        from app.routers.contracts import confirm_contract
+        from app.models.contract import ContractConfirm, RoyaltyTier
+        from datetime import date
+        import json
+
+        contract_id = "draft-tiered-123"
+        user_id = "user-123"
+
+        draft_row = _make_draft_db_contract(contract_id=contract_id)
+        active_row = _make_db_contract(contract_id=contract_id, status="active")
+        active_row["royalty_rate"] = [{"threshold": "0-1000000", "rate": "6%"}, {"threshold": "1000001+", "rate": "8%"}]
+
+        confirm_data = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate=[
+                RoyaltyTier(threshold="0-1000000", rate="6%"),
+                RoyaltyTier(threshold="1000001+", rate="8%"),
+            ],
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+
+                mock_supabase.table.return_value.update.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[active_row])
+
+                await confirm_contract(contract_id, confirm_data, user_id=user_id)
+
+                # The royalty_rate value passed to .update() must be JSON-serializable
+                update_data = mock_supabase.table.return_value.update.call_args[0][0]
+                royalty_rate_in_payload = update_data["royalty_rate"]
+
+                # Must be a plain list of dicts, not Pydantic model instances
+                assert isinstance(royalty_rate_in_payload, list)
+                for tier in royalty_rate_in_payload:
+                    assert isinstance(tier, dict), (
+                        f"Expected plain dict but got {type(tier).__name__} — "
+                        "supabase-py cannot serialize Pydantic model instances"
+                    )
+
+                # Must be JSON-serializable (no TypeError from json.dumps)
+                try:
+                    json.dumps(royalty_rate_in_payload)
+                except TypeError as exc:
+                    pytest.fail(
+                        f"royalty_rate in update payload is not JSON-serializable: {exc}"
+                    )
+
+    @pytest.mark.asyncio
+    async def test_confirm_sends_royalty_rate_as_string_for_flat(self):
+        """
+        When royalty_rate is a flat string like '8%', the update payload must
+        contain a plain string (model_dump() does not alter strings).
+        """
+        from app.routers.contracts import confirm_contract
+        from app.models.contract import ContractConfirm
+        from datetime import date
+        import json
+
+        contract_id = "draft-flat-123"
+        user_id = "user-123"
+
+        draft_row = _make_draft_db_contract(contract_id=contract_id)
+        active_row = _make_db_contract(contract_id=contract_id, status="active")
+
+        confirm_data = ContractConfirm(
+            licensee_name="Nike Inc.",
+            royalty_rate="8% of Net Sales",
+            contract_start_date=date(2024, 1, 1),
+            contract_end_date=date(2025, 12, 31),
+        )
+
+        with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+                mock_verify.return_value = None
+
+                mock_supabase.table.return_value.select.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+
+                mock_supabase.table.return_value.update.return_value \
+                    .eq.return_value.execute.return_value = Mock(data=[active_row])
+
+                await confirm_contract(contract_id, confirm_data, user_id=user_id)
+
+                update_data = mock_supabase.table.return_value.update.call_args[0][0]
+                assert update_data["royalty_rate"] == "8% of Net Sales"
+                assert isinstance(update_data["royalty_rate"], str)
+
+                # Must still be JSON-serializable
+                json.dumps(update_data["royalty_rate"])  # no exception
+
+    @pytest.mark.asyncio
     async def test_confirm_verifies_ownership(self):
         """PUT /{id}/confirm calls verify_contract_ownership."""
         from app.routers.contracts import confirm_contract

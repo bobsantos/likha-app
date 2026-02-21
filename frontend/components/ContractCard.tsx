@@ -13,6 +13,10 @@ interface ContractCardProps {
 
 export default function ContractCard({ contract }: ContractCardProps) {
   const formatRoyaltyRate = (rate: Contract['royalty_rate']): string => {
+    if (typeof rate === 'string') {
+      return rate
+    }
+
     if (typeof rate === 'number') {
       return `${(rate * 100).toFixed(0)}%`
     }
@@ -79,15 +83,22 @@ export default function ContractCard({ contract }: ContractCardProps) {
               </p>
             )}
           </div>
-          {!isDraft && (
-            <span className="text-2xl font-bold text-primary-600">
-              {formatRoyaltyRate(contract.royalty_rate)}
-            </span>
-          )}
         </div>
 
         {!isDraft && (
           <div className="space-y-3 text-sm text-gray-600">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-gray-400 flex-shrink-0" />
+              <div className="flex justify-between w-full">
+                <span>Royalty Rate:</span>
+                <span className="text-gray-900 font-medium">
+                  {contract.royalty_rate !== null
+                    ? `${formatRoyaltyRate(contract.royalty_rate)}${contract.royalty_base ? ` of ${contract.royalty_base === 'net_sales' ? 'Net Sales' : 'Gross Sales'}` : ''}`
+                    : 'N/A'}
+                </span>
+              </div>
+            </div>
+
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
               <div className="flex justify-between w-full">
