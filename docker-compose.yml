@@ -12,6 +12,7 @@ services:
       - ./backend/.env.local
     environment:
       - SUPABASE_URL=http://host.docker.internal:54321  # Override for Docker networking
+      - SUPABASE_PUBLIC_URL=http://localhost:54321  # Browser-accessible URL used to rewrite signed URL hosts
       - HOST_PORT=8001  # Mapped host port — used in startup log so the correct URL is shown
       - HOST_IP=${HOST_IP:-}  # Host LAN IP for startup log and CORS (auto-detected by default)
     extra_hosts:

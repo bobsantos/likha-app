@@ -129,8 +129,8 @@ export default function ContractDetailPage() {
     if (downloadingPeriodId) return
     try {
       setDownloadingPeriodId(periodId)
-      const url = await getSalesReportDownloadUrl(contractId, periodId)
-      window.open(url, '_blank', 'noopener,noreferrer')
+      const rawUrl = await getSalesReportDownloadUrl(contractId, periodId)
+      window.open(resolveUrl(rawUrl), '_blank', 'noopener,noreferrer')
     } catch {
       // Silently ignore — the backend will log the error
     } finally {

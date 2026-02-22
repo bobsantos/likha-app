@@ -3,9 +3,10 @@ Supabase Storage service for contract PDFs.
 Handles upload, signed URL generation, and deletion.
 """
 
+import os
 import re
 from uuid import uuid4
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from app.db import supabase_admin
 
@@ -62,16 +63,56 @@ def upload_contract_pdf(
         raise Exception(f"Failed to upload PDF to storage: {str(e)}")
 
 
+def _rewrite_signed_url_host(signed_url: str) -> str:
+    """
+    Replace the host in a signed URL with the browser-accessible Supabase URL.
+
+    When the backend runs inside Docker it uses an internal URL like
+    ``http://host.docker.internal:54321`` so it can reach the Supabase API.
+    Supabase embeds that internal host in every signed URL it generates, making
+    those URLs unreachable from a browser.
+
+    If ``SUPABASE_PUBLIC_URL`` is set it is used as the replacement origin so
+    the signed URLs returned to the frontend always use the public-facing host
+    (e.g. ``http://localhost:54321`` or ``https://xxx.supabase.co``).
+
+    If the env var is not set the URL is returned unchanged — this is the correct
+    behaviour for production deployments where the backend and Supabase share the
+    same public URL.
+    """
+    public_url = os.getenv("SUPABASE_PUBLIC_URL", "").strip()
+    if not public_url:
+        return signed_url
+
+    parsed_signed = urlparse(signed_url)
+    parsed_public = urlparse(public_url)
+
+    # Swap scheme + netloc; keep path/query/fragment from the signed URL.
+    rewritten = urlunparse((
+        parsed_public.scheme,
+        parsed_public.netloc,
+        parsed_signed.path,
+        parsed_signed.params,
+        parsed_signed.query,
+        parsed_signed.fragment,
+    ))
+    return rewritten
+
+
 def get_signed_url(storage_path: str, expiry_seconds: int = 3600) -> str:
     """
-    Generate a signed URL for accessing a PDF.
+    Generate a signed URL for accessing a file in Supabase Storage.
+
+    The URL host is rewritten via ``_rewrite_signed_url_host`` so that
+    Docker-internal hostnames (``host.docker.internal``) are replaced with the
+    browser-accessible ``SUPABASE_PUBLIC_URL`` before the URL is returned.
 
     Args:
         storage_path: Storage path (e.g., "contracts/user-123/filename.pdf")
         expiry_seconds: URL expiry time in seconds (default: 1 hour)
 
     Returns:
-        Signed URL for accessing the PDF
+        Signed URL for accessing the file, with a browser-accessible host.
 
     Raises:
         Exception: If URL generation fails
@@ -88,7 +129,7 @@ def get_signed_url(storage_path: str, expiry_seconds: int = 3600) -> str:
         if not result or "signedURL" not in result:
             raise Exception("No signed URL returned from storage")
 
-        return result["signedURL"]
+        return _rewrite_signed_url_host(result["signedURL"])
     except Exception as e:
         raise Exception(f"Failed to generate signed URL: {str(e)}")
 

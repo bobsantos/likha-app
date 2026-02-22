@@ -12,7 +12,7 @@ from io import BytesIO
 os.environ['SUPABASE_URL'] = 'https://test.supabase.co'
 os.environ['SUPABASE_KEY'] = 'test-anon-key'
 
-from app.services.storage import upload_contract_pdf, delete_contract_pdf, get_signed_url, upload_sales_report
+from app.services.storage import upload_contract_pdf, delete_contract_pdf, get_signed_url, upload_sales_report, _rewrite_signed_url_host
 
 
 class TestUploadContractPdf:
@@ -96,6 +96,48 @@ class TestUploadContractPdf:
             assert ")" not in uploaded_path
 
 
+class TestRewriteSignedUrlHost:
+    """Test _rewrite_signed_url_host helper."""
+
+    def test_no_env_var_returns_url_unchanged(self):
+        """When SUPABASE_PUBLIC_URL is not set, the URL is returned as-is."""
+        url = "http://host.docker.internal:54321/storage/v1/object/sign/contracts/user-1/file.pdf?token=abc"
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("SUPABASE_PUBLIC_URL", None)
+            result = _rewrite_signed_url_host(url)
+        assert result == url
+
+    def test_env_var_set_replaces_host_and_scheme(self):
+        """When SUPABASE_PUBLIC_URL is set, scheme+host are replaced."""
+        url = "http://host.docker.internal:54321/storage/v1/object/sign/contracts/user-1/file.pdf?token=abc"
+        expected = "http://localhost:54321/storage/v1/object/sign/contracts/user-1/file.pdf?token=abc"
+        with patch.dict(os.environ, {"SUPABASE_PUBLIC_URL": "http://localhost:54321"}):
+            result = _rewrite_signed_url_host(url)
+        assert result == expected
+
+    def test_production_url_replacement(self):
+        """Works when replacing an internal URL with a production Supabase URL."""
+        url = "http://host.docker.internal:54321/storage/v1/object/sign/contracts/user-1/file.pdf?token=xyz"
+        expected = "https://myproject.supabase.co/storage/v1/object/sign/contracts/user-1/file.pdf?token=xyz"
+        with patch.dict(os.environ, {"SUPABASE_PUBLIC_URL": "https://myproject.supabase.co"}):
+            result = _rewrite_signed_url_host(url)
+        assert result == expected
+
+    def test_path_query_fragment_preserved(self):
+        """Path, query string, and fragment are kept exactly as-is after rewrite."""
+        url = "http://host.docker.internal:54321/storage/v1/object/sign/contracts/u/f.xlsx?token=tok&foo=bar"
+        with patch.dict(os.environ, {"SUPABASE_PUBLIC_URL": "http://localhost:54321"}):
+            result = _rewrite_signed_url_host(url)
+        assert result.endswith("/storage/v1/object/sign/contracts/u/f.xlsx?token=tok&foo=bar")
+
+    def test_empty_env_var_returns_url_unchanged(self):
+        """Empty string env var is treated the same as unset — URL is returned unchanged."""
+        url = "http://host.docker.internal:54321/storage/v1/object/sign/contracts/u/f.pdf?token=t"
+        with patch.dict(os.environ, {"SUPABASE_PUBLIC_URL": ""}):
+            result = _rewrite_signed_url_host(url)
+        assert result == url
+
+
 class TestGetSignedUrl:
     """Test generating signed URLs for PDFs."""
 
@@ -145,6 +187,21 @@ class TestGetSignedUrl:
                 get_signed_url(storage_path)
 
             assert "URL generation failed" in str(exc_info.value)
+
+    def test_get_signed_url_rewrites_docker_host_when_env_set(self):
+        """When SUPABASE_PUBLIC_URL is set, the docker-internal host is replaced."""
+        storage_path = "contracts/user-123/report.xlsx"
+        docker_url = "http://host.docker.internal:54321/storage/v1/object/sign/contracts/user-123/report.xlsx?token=tok"
+
+        with patch('app.services.storage.supabase_admin') as mock_supabase:
+            mock_supabase.storage.from_.return_value.create_signed_url.return_value = {
+                "signedURL": docker_url
+            }
+            with patch.dict(os.environ, {"SUPABASE_PUBLIC_URL": "http://localhost:54321"}):
+                result = get_signed_url(storage_path)
+
+        assert "host.docker.internal" not in result
+        assert result.startswith("http://localhost:54321")
 
 
 class TestDeleteContractPdf:
