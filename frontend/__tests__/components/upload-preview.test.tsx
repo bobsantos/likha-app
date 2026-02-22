@@ -168,4 +168,35 @@ describe('UploadPreview component', () => {
     render(<UploadPreview {...defaultProps} salesPeriod={periodOverReported} />)
     expect(screen.getByText(/over-reported/i)).toBeInTheDocument()
   })
+
+  it('shows green match indicator when licensee_reported_royalty is present and has_discrepancy is false', () => {
+    const periodMatching: SalesPeriod = {
+      ...defaultSalesPeriod,
+      licensee_reported_royalty: 6664,
+      discrepancy_amount: 0,
+      has_discrepancy: false,
+    }
+    render(<UploadPreview {...defaultProps} salesPeriod={periodMatching} />)
+    expect(screen.getByText(/reported royalty matches/i)).toBeInTheDocument()
+    expect(screen.queryByText(/under-reported/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/over-reported/i)).not.toBeInTheDocument()
+  })
+
+  it('shows green match indicator when discrepancy_amount is within the 0.01 threshold', () => {
+    const periodWithinThreshold: SalesPeriod = {
+      ...defaultSalesPeriod,
+      licensee_reported_royalty: 6664.005,
+      discrepancy_amount: 0.005,
+      has_discrepancy: true,
+    }
+    render(<UploadPreview {...defaultProps} salesPeriod={periodWithinThreshold} />)
+    expect(screen.getByText(/reported royalty matches/i)).toBeInTheDocument()
+    expect(screen.queryByText(/under-reported/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/over-reported/i)).not.toBeInTheDocument()
+  })
+
+  it('does not show match indicator when licensee_reported_royalty is null', () => {
+    render(<UploadPreview {...defaultProps} />)
+    expect(screen.queryByText(/reported royalty matches/i)).not.toBeInTheDocument()
+  })
 })

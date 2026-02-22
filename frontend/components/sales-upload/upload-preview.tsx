@@ -156,24 +156,31 @@ export default function UploadPreview({
                   {formatCurrency(licensee_reported_royalty)}
                 </span>
               </div>
-              {has_discrepancy && discrepancy_amount !== null && discrepancy_amount !== undefined && Math.abs(discrepancy_amount) > 0.01 && (
-                <div
-                  className={`
-                    flex items-start gap-2 px-3 py-2 rounded-lg text-sm mt-2
-                    ${discrepancy_amount > 0
-                      ? 'bg-amber-50 border border-amber-200 text-amber-800'
-                      : 'bg-primary-100 border border-primary-200 text-primary-800'
-                    }
-                  `}
-                >
-                  <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                  <span>
-                    {discrepancy_amount > 0
-                      ? `Licensee under-reported by ${formatCurrency(discrepancy_amount)} — they may owe more.`
-                      : `Licensee over-reported by ${formatCurrency(Math.abs(discrepancy_amount))}.`
-                    }
-                  </span>
-                </div>
+              {discrepancy_amount !== null && discrepancy_amount !== undefined && (
+                Math.abs(discrepancy_amount) > 0.01 ? (
+                  <div
+                    className={`
+                      flex items-start gap-2 px-3 py-2 rounded-lg text-sm mt-2
+                      ${discrepancy_amount > 0
+                        ? 'bg-amber-50 border border-amber-200 text-amber-800'
+                        : 'bg-primary-100 border border-primary-200 text-primary-800'
+                      }
+                    `}
+                  >
+                    <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <span>
+                      {discrepancy_amount > 0
+                        ? `Licensee under-reported by ${formatCurrency(discrepancy_amount)} — they may owe more.`
+                        : `Licensee over-reported by ${formatCurrency(Math.abs(discrepancy_amount))}.`
+                      }
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm mt-2 bg-green-50 border border-green-200 text-green-700">
+                    <CheckCircle className="w-4 h-4 flex-shrink-0" />
+                    <span>Reported royalty matches our calculation.</span>
+                  </div>
+                )
               )}
             </>
           )}
