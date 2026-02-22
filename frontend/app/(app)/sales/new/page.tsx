@@ -126,7 +126,7 @@ export default function SalesNewPage() {
           if (val) categoryData[cat] = parseFloat(val)
         }
         if (Object.keys(categoryData).length > 0) {
-          payload.category_sales = categoryData
+          payload.category_breakdown = categoryData
         }
       }
 
@@ -226,7 +226,7 @@ export default function SalesNewPage() {
                 <div>
                   <p className="text-xs text-primary-700 mb-1">Calculated Royalty</p>
                   <p className="text-2xl font-bold text-primary-600">
-                    {formatCurrency(savedPeriod.calculated_royalty)}
+                    {formatCurrency(savedPeriod.royalty_calculated)}
                   </p>
                 </div>
               </div>

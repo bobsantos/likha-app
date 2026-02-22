@@ -24,8 +24,8 @@ const defaultSalesPeriod: SalesPeriod = {
   period_start: '2025-01-01',
   period_end: '2025-03-31',
   net_sales: 83300,
-  category_sales: null,
-  calculated_royalty: 6664,
+  category_breakdown: null,
+  royalty_calculated: 6664,
   minimum_applied: false,
   licensee_reported_royalty: null,
   discrepancy_amount: null,
@@ -75,7 +75,7 @@ describe('UploadPreview component', () => {
   it('renders per-category breakdown for category-rate contract', () => {
     const periodWithCategories: SalesPeriod = {
       ...defaultSalesPeriod,
-      category_sales: { Apparel: 61800, Accessories: 29450 },
+      category_breakdown: { Apparel: 61800, Accessories: 29450 },
     }
     render(<UploadPreview {...defaultProps} salesPeriod={periodWithCategories} />)
     // Category names may appear multiple times (in both table and breakdown)

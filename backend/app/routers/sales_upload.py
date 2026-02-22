@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from app.auth import get_current_user, verify_contract_ownership
 from app.db import supabase_admin as supabase
 from app.models.sales import SalesPeriod
-from app.services.royalty_calc import calculate_royalty_with_minimum
+from app.services.royalty_calc import calculate_royalty
 from app.services.spreadsheet_parser import (
     MappingError,
     ParseError,
@@ -301,25 +301,23 @@ async def confirm_upload(
                     "unknown_category",
                 )
 
-    # Calculate royalty
-    minimum_guarantee = Decimal(str(contract.get("minimum_guarantee") or 0))
-    guarantee_period = contract.get("minimum_guarantee_period", "annually") or "annually"
-
     # Build category_breakdown for calculation (convert to Dict[str, Decimal])
     category_breakdown: Optional[dict[str, Decimal]] = None
     if is_category_contract and mapped.category_sales:
         category_breakdown = mapped.category_sales
 
+    # Calculate royalty: sales × rate only.
+    # The minimum guarantee is an ANNUAL true-up check, not a per-period floor.
+    # It must never inflate a single period's royalty — that would misstate earnings
+    # and produce a wrong effective rate. Minimum guarantee tracking is handled
+    # separately via the YTD summary endpoint.
     try:
-        calc_result = calculate_royalty_with_minimum(
+        royalty = calculate_royalty(
             royalty_rate=royalty_rate,
             net_sales=mapped.net_sales,
-            minimum_guarantee=minimum_guarantee,
-            guarantee_period=guarantee_period,
             category_breakdown=category_breakdown,
         )
-        royalty = calc_result.royalty
-        minimum_applied = calc_result.minimum_applied
+        minimum_applied = False  # always False; MG is an annual check only
     except Exception as e:
         raise _error(400, f"Royalty calculation failed: {e}", "royalty_calculation_failed")
 

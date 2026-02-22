@@ -94,8 +94,8 @@ export interface SalesPeriod {
   period_start: string
   period_end: string
   net_sales: number
-  category_sales: CategorySales | null
-  calculated_royalty: number
+  category_breakdown: CategorySales | null   // backend field name
+  royalty_calculated: number                 // backend field name
   minimum_applied: boolean
   licensee_reported_royalty?: number | null   // Phase 1
   discrepancy_amount?: number | null           // Phase 1

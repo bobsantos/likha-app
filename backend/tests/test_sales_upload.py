@@ -921,6 +921,259 @@ class TestConfirmEndpointZeroSalesPeriodAllowed:
         assert result.net_sales == Decimal("0")
 
 
+class TestConfirmEndpointSunriseApparelScenario:
+    """
+    Regression tests for the Sunrise Apparel (BC-2024-0042) royalty calculation bug.
+
+    Bug: The confirm endpoint was calling calculate_royalty_with_minimum() with the
+    annual MG ($20,000) and guarantee_period='annually', which produced period_floor =
+    $20,000/1 = $20,000. Since the real royalty ($6,664) < $20,000, the system bumped
+    the royalty to $20,000 — roughly a 24% effective rate instead of 8%.
+
+    Fix: The confirm endpoint now calls calculate_royalty() directly. Minimum guarantee
+    is an annual true-up check handled by the YTD summary, not a per-period floor.
+    """
+
+    @pytest.mark.asyncio
+    async def test_gross_sales_minus_returns_royalty_is_not_inflated_by_annual_mg(self):
+        """
+        Scenario:
+          - Gross sales: $87,500  Returns: $4,200
+          - Net Sales: $83,300  (mapped as gross_sales + returns in spreadsheet)
+          - Rate: 8% of Net Sales  →  royalty = $6,664
+          - Annual MG: $20,000  (must NOT be applied per-period)
+        Expected: royalty_calculated = $6,664, minimum_applied = False
+        """
+        rows = [
+            ["Gross Sales", "Returns", "SKU"],
+            [87500, 4200, "APP-001"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        column_mapping = {
+            "Gross Sales": "gross_sales",
+            "Returns": "returns",
+            "SKU": "ignore",
+        }
+        contract = _make_db_contract(
+            royalty_rate="8% of Net Sales",
+            minimum_guarantee="20000",
+            minimum_guarantee_period="annually",
+        )
+        # Net sales = 87500 - 4200 = 83300; royalty = 8% * 83300 = 6664.00
+        inserted_period = _make_db_sales_period(
+            net_sales="83300",
+            royalty_calculated="6664.00",
+            minimum_applied=False,
+        )
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            from app.routers.sales_upload import _upload_store, _UploadEntry
+            from app.services.spreadsheet_parser import parse_upload
+            import uuid
+
+            upload_id = str(uuid.uuid4())
+            parsed = parse_upload(xlsx_bytes, "report.xlsx")
+            _upload_store[upload_id] = _UploadEntry(
+                parsed=parsed,
+                contract_id="contract-123",
+                user_id="user-123",
+            )
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=True,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        # Royalty must be 8% of net sales ($83,300), not the annual MG ($20,000)
+        assert result.royalty_calculated == Decimal("6664.00")
+        assert result.minimum_applied is False
+        # Net sales correctly derived as gross - returns
+        assert result.net_sales == Decimal("83300")
+
+    @pytest.mark.asyncio
+    async def test_gross_sales_only_royalty_is_8_percent_of_gross(self):
+        """
+        When the spreadsheet only has a gross sales column (no returns mapped),
+        net_sales = gross_sales = $87,500.
+        Royalty = 8% × $87,500 = $7,000.
+        Annual MG $20,000 must NOT inflate this.
+        """
+        rows = [
+            ["Gross Sales", "SKU"],
+            [87500, "APP-001"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        column_mapping = {
+            "Gross Sales": "gross_sales",
+            "SKU": "ignore",
+        }
+        contract = _make_db_contract(
+            royalty_rate="8% of Net Sales",
+            minimum_guarantee="20000",
+            minimum_guarantee_period="annually",
+        )
+        inserted_period = _make_db_sales_period(
+            net_sales="87500",
+            royalty_calculated="7000.00",
+            minimum_applied=False,
+        )
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            from app.routers.sales_upload import _upload_store, _UploadEntry
+            from app.services.spreadsheet_parser import parse_upload
+            import uuid
+
+            upload_id = str(uuid.uuid4())
+            parsed = parse_upload(xlsx_bytes, "report.xlsx")
+            _upload_store[upload_id] = _UploadEntry(
+                parsed=parsed,
+                contract_id="contract-123",
+                user_id="user-123",
+            )
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=True,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        assert result.royalty_calculated == Decimal("7000.00")
+        assert result.minimum_applied is False
+        assert result.net_sales == Decimal("87500")
+
+    @pytest.mark.asyncio
+    async def test_low_sales_period_royalty_not_bumped_by_annual_mg(self):
+        """
+        A slow quarter: net sales = $10,000, royalty = 8% × $10,000 = $800.
+        Annual MG = $20,000. The per-period royalty must stay at $800,
+        NOT be bumped to $20,000.
+        """
+        rows = [
+            ["Net Sales"],
+            [10000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        column_mapping = {"Net Sales": "net_sales"}
+        contract = _make_db_contract(
+            royalty_rate="8%",
+            minimum_guarantee="20000",
+            minimum_guarantee_period="annually",
+        )
+        inserted_period = _make_db_sales_period(
+            net_sales="10000",
+            royalty_calculated="800",
+            minimum_applied=False,
+        )
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            from app.routers.sales_upload import _upload_store, _UploadEntry
+            from app.services.spreadsheet_parser import parse_upload
+            import uuid
+
+            upload_id = str(uuid.uuid4())
+            parsed = parse_upload(xlsx_bytes, "report.xlsx")
+            _upload_store[upload_id] = _UploadEntry(
+                parsed=parsed,
+                contract_id="contract-123",
+                user_id="user-123",
+            )
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=True,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        # Royalty stays at $800, NOT $20,000
+        assert result.royalty_calculated == Decimal("800")
+        assert result.minimum_applied is False
+
+
 class TestConfirmEndpointRequiresContractOwnership:
     """Confirm endpoint returns 403 when user does not own the contract."""
 

@@ -3,7 +3,7 @@
  *
  * Shows the first few rows of parsed data re-labeled with mapped column headers,
  * aggregated totals, and the calculated royalty. If the period has a discrepancy
- * (licensee_reported_royalty vs calculated_royalty), it renders a discrepancy card.
+ * (licensee_reported_royalty vs royalty_calculated), it renders a discrepancy card.
  */
 
 'use client'
@@ -47,7 +47,7 @@ export default function UploadPreview({
   confirming,
   confirmError,
 }: UploadPreviewProps) {
-  const { net_sales, calculated_royalty, category_sales, licensee_reported_royalty, discrepancy_amount, has_discrepancy } = salesPeriod
+  const { net_sales, royalty_calculated, category_breakdown, licensee_reported_royalty, discrepancy_amount, has_discrepancy } = salesPeriod
 
   return (
     <div className="space-y-6">
@@ -99,10 +99,10 @@ export default function UploadPreview({
           Aggregated Totals
         </h3>
 
-        {/* Category breakdown — shown when category_sales exists */}
-        {category_sales && Object.keys(category_sales).length > 0 && (
+        {/* Category breakdown — shown when category_breakdown exists */}
+        {category_breakdown && Object.keys(category_breakdown).length > 0 && (
           <div className="mb-4 space-y-2">
-            {Object.entries(category_sales).map(([cat, amount]) => (
+            {Object.entries(category_breakdown).map(([cat, amount]) => (
               <div key={cat} className="flex justify-between text-sm">
                 <span className="text-gray-600">{cat}</span>
                 <span className="font-medium text-gray-900 tabular-nums">
@@ -118,7 +118,7 @@ export default function UploadPreview({
         )}
 
         {/* No category breakdown */}
-        {(!category_sales || Object.keys(category_sales).length === 0) && (
+        {(!category_breakdown || Object.keys(category_breakdown).length === 0) && (
           <div className="flex justify-between text-sm mb-4">
             <span className="text-gray-600">Total Net Sales</span>
             <span className="font-semibold text-gray-900 tabular-nums">
@@ -143,7 +143,7 @@ export default function UploadPreview({
           <div className="flex justify-between text-sm">
             <span className="text-primary-700">System Calculated Royalty</span>
             <span className="text-2xl font-bold text-primary-700 tabular-nums">
-              {formatCurrency(calculated_royalty)}
+              {formatCurrency(royalty_calculated)}
             </span>
           </div>
 

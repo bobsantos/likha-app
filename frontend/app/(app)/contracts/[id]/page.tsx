@@ -144,7 +144,7 @@ export default function ContractDetailPage() {
     )
   }
 
-  const totalRoyalties = salesPeriods.reduce((sum, period) => sum + period.calculated_royalty, 0)
+  const totalRoyalties = salesPeriods.reduce((sum, period) => sum + period.royalty_calculated, 0)
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -414,7 +414,7 @@ export default function ContractDetailPage() {
                       {formatCurrency(period.net_sales)}
                     </td>
                     <td className="py-3 px-4 text-right font-semibold text-primary-600">
-                      {formatCurrency(period.calculated_royalty)}
+                      {formatCurrency(period.royalty_calculated)}
                     </td>
                     <td className="py-3 px-4 text-center">
                       {period.minimum_applied ? (
