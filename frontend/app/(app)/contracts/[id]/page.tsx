@@ -18,10 +18,82 @@ import {
   ExternalLink,
   AlertCircle,
   Upload,
+  TrendingDown,
+  TrendingUp,
 } from 'lucide-react'
 import { getContract, getSalesPeriods } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate } from '@/types'
+
+// ---------------------------------------------------------------------------
+// DiscrepancyCell — inline presentational component, no state, no API calls
+// ---------------------------------------------------------------------------
+
+function formatCurrencyStandalone(amount: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount)
+}
+
+function DiscrepancyCell({
+  amount,
+  percentage,
+}: {
+  amount: number
+  percentage: number | null
+}) {
+  const isExact = Math.abs(amount) <= 0.01
+  const isUnder = amount > 0.01
+
+  if (isExact) {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+          Match
+        </span>
+        <span className="text-xs text-green-600 tabular-nums">$0.00</span>
+      </div>
+    )
+  }
+
+  if (isUnder) {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+          <TrendingDown className="w-3 h-3" />
+          Under-reported
+        </span>
+        <span className="text-xs font-medium text-red-600 tabular-nums">
+          +{formatCurrencyStandalone(amount)}
+          {percentage !== null && (
+            <span className="text-red-400 ml-1">({percentage.toFixed(1)}%)</span>
+          )}
+        </span>
+      </div>
+    )
+  }
+
+  // Over-reported
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+        <TrendingUp className="w-3 h-3" />
+        Over-reported
+      </span>
+      <span className="text-xs font-medium text-amber-600 tabular-nums">
+        {formatCurrencyStandalone(amount)}
+        {percentage !== null && (
+          <span className="text-amber-400 ml-1">({percentage.toFixed(1)}%)</span>
+        )}
+      </span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 
 export default function ContractDetailPage() {
   const params = useParams()
@@ -145,6 +217,14 @@ export default function ContractDetailPage() {
   }
 
   const totalRoyalties = salesPeriods.reduce((sum, period) => sum + period.royalty_calculated, 0)
+
+  const totalUnderReported = salesPeriods
+    .filter((p) => (p.discrepancy_amount ?? 0) > 0.01)
+    .reduce((sum, p) => sum + (p.discrepancy_amount ?? 0), 0)
+
+  const underReportedCount = salesPeriods.filter(
+    (p) => (p.discrepancy_amount ?? 0) > 0.01,
+  ).length
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -342,16 +422,36 @@ export default function ContractDetailPage() {
             <h3 className="text-sm font-medium text-gray-600 mb-1">Sales Periods</h3>
             <p className="text-3xl font-bold text-gray-900">{salesPeriods.length}</p>
           </div>
+
+          {totalUnderReported > 0 && (
+            <div className="card animate-fade-in border border-red-200 bg-red-50">
+              <h3 className="text-sm font-medium text-red-700 mb-1">Open Discrepancies</h3>
+              <p className="text-3xl font-bold text-red-700 tabular-nums">
+                {formatCurrency(totalUnderReported)}
+              </p>
+              <p className="text-xs text-red-500 mt-1">
+                Across {underReportedCount} period{underReportedCount !== 1 ? 's' : ''}
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
       {/* Sales Periods Section */}
       <div className="card mt-6 animate-fade-in">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-            <BarChart3 className="w-5 h-5" />
-            Sales Periods
-          </h2>
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5" />
+              Sales Periods
+            </h2>
+            {underReportedCount > 0 && (
+              <p className="text-sm text-red-600 mt-0.5 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5" />
+                {underReportedCount} period{underReportedCount !== 1 ? 's have' : ' has'} under-reported royalties
+              </p>
+            )}
+          </div>
           {contract.status === 'active' && (
             <Link
               href={`/sales/upload?contract_id=${contract.id}`}
@@ -392,7 +492,13 @@ export default function ContractDetailPage() {
                     Net Sales
                   </th>
                   <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                    Reported Royalty
+                  </th>
+                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
                     Calculated Royalty
+                  </th>
+                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                    Discrepancy
                   </th>
                   <th className="text-center py-3 px-4 text-sm font-semibold text-gray-900">
                     MG Applied
@@ -400,31 +506,63 @@ export default function ContractDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {salesPeriods.map((period) => (
-                  <tr key={period.id} className="hover:bg-gray-50">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-gray-400" />
-                        <span className="text-sm text-gray-900">
-                          {formatDate(period.period_start)} - {formatDate(period.period_end)}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-right font-medium text-gray-900">
-                      {formatCurrency(period.net_sales)}
-                    </td>
-                    <td className="py-3 px-4 text-right font-semibold text-primary-600">
-                      {formatCurrency(period.royalty_calculated)}
-                    </td>
-                    <td className="py-3 px-4 text-center">
-                      {period.minimum_applied ? (
-                        <span className="badge-warning">Yes</span>
-                      ) : (
-                        <span className="text-sm text-gray-500">No</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {salesPeriods.map((period) => {
+                  const hasReported = period.licensee_reported_royalty != null
+                  const discrepancy = period.discrepancy_amount ?? null
+                  const discrepancyPct =
+                    hasReported && period.royalty_calculated > 0 && discrepancy !== null
+                      ? (Math.abs(discrepancy) / period.royalty_calculated) * 100
+                      : null
+
+                  const rowBorderClass =
+                    (period.discrepancy_amount ?? 0) > 0.01
+                      ? 'border-l-2 border-l-red-400'
+                      : (period.discrepancy_amount ?? 0) < -0.01
+                        ? 'border-l-2 border-l-amber-400'
+                        : 'border-l-2 border-l-transparent'
+
+                  return (
+                    <tr key={period.id} className={`hover:bg-gray-50 ${rowBorderClass}`}>
+                      <td className="py-3 px-4 min-w-[10rem]">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          <span className="text-sm text-gray-900 whitespace-nowrap">
+                            {formatDate(period.period_start)} - {formatDate(period.period_end)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right font-medium text-gray-900 tabular-nums">
+                        {formatCurrency(period.net_sales)}
+                      </td>
+                      <td className="py-3 px-4 text-right tabular-nums">
+                        {hasReported
+                          ? (
+                            <span className="font-medium text-gray-900">
+                              {formatCurrency(period.licensee_reported_royalty!)}
+                            </span>
+                          )
+                          : <span className="text-gray-400 text-sm">—</span>
+                        }
+                      </td>
+                      <td className="py-3 px-4 text-right font-semibold text-primary-600 tabular-nums">
+                        {formatCurrency(period.royalty_calculated)}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        {hasReported && discrepancy !== null
+                          ? <DiscrepancyCell amount={discrepancy} percentage={discrepancyPct} />
+                          : <span className="text-gray-400 text-sm">—</span>
+                        }
+                      </td>
+                      <td className="py-3 px-4 text-center">
+                        {period.minimum_applied ? (
+                          <span className="badge-warning">Yes</span>
+                        ) : (
+                          <span className="text-sm text-gray-500">No</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

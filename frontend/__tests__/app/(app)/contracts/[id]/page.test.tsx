@@ -383,4 +383,315 @@ describe('Contract Detail Page', () => {
     expect(screen.queryByText(/complete review/i)).not.toBeInTheDocument()
   })
 
+  // ============================================================
+  // Phase 1.2: Royalty Discrepancy Display
+  // ============================================================
+
+  describe('Discrepancy columns', () => {
+    const periodWithUnderReport: SalesPeriod = {
+      id: 'sp-under',
+      contract_id: 'contract-1',
+      period_start: '2024-01-01',
+      period_end: '2024-03-31',
+      net_sales: 100000,
+      category_breakdown: null,
+      royalty_calculated: 15000,
+      minimum_applied: false,
+      licensee_reported_royalty: 14720,
+      discrepancy_amount: 280,
+      has_discrepancy: true,
+      created_at: '2024-04-01T00:00:00Z',
+    }
+
+    const periodWithOverReport: SalesPeriod = {
+      id: 'sp-over',
+      contract_id: 'contract-1',
+      period_start: '2024-04-01',
+      period_end: '2024-06-30',
+      net_sales: 80000,
+      category_breakdown: null,
+      royalty_calculated: 12000,
+      minimum_applied: false,
+      licensee_reported_royalty: 12120,
+      discrepancy_amount: -120,
+      has_discrepancy: true,
+      created_at: '2024-07-01T00:00:00Z',
+    }
+
+    const periodWithMatch: SalesPeriod = {
+      id: 'sp-match',
+      contract_id: 'contract-1',
+      period_start: '2024-07-01',
+      period_end: '2024-09-30',
+      net_sales: 90000,
+      category_breakdown: null,
+      royalty_calculated: 13500,
+      minimum_applied: false,
+      licensee_reported_royalty: 13500,
+      discrepancy_amount: 0,
+      has_discrepancy: false,
+      created_at: '2024-10-01T00:00:00Z',
+    }
+
+    const periodWithNullReported: SalesPeriod = {
+      id: 'sp-null',
+      contract_id: 'contract-1',
+      period_start: '2024-10-01',
+      period_end: '2024-12-31',
+      net_sales: 70000,
+      category_breakdown: null,
+      royalty_calculated: 10500,
+      minimum_applied: false,
+      licensee_reported_royalty: null,
+      discrepancy_amount: null,
+      has_discrepancy: false,
+      created_at: '2025-01-01T00:00:00Z',
+    }
+
+    it('displays "Reported Royalty" column header', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithMatch])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Reported Royalty')).toBeInTheDocument()
+      })
+    })
+
+    it('displays "Discrepancy" column header', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithMatch])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Discrepancy')).toBeInTheDocument()
+      })
+    })
+
+    it('shows licensee_reported_royalty as currency when present', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithUnderReport])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('$14,720.00')).toBeInTheDocument()
+      })
+    })
+
+    it('shows em dash for reported royalty when null', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithNullReported])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        // At least one em dash should appear (both reported and discrepancy cells)
+        const dashes = screen.getAllByText('—')
+        expect(dashes.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('shows under-reported indicator for discrepancy_amount > 0', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithUnderReport])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        const matches = screen.getAllByText(/under-reported/i)
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('shows the discrepancy amount for under-reported period', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithUnderReport])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        // Amount is $280.00, displayed with + prefix (may appear in table and summary card)
+        const matches = screen.getAllByText(/\$280\.00/)
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('shows over-reported indicator for discrepancy_amount < 0', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithOverReport])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/over-reported/i)).toBeInTheDocument()
+      })
+    })
+
+    it('shows match indicator when has_discrepancy is false and reported royalty is present', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithMatch])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Match')).toBeInTheDocument()
+      })
+    })
+
+    it('shows em dash in discrepancy cell when licensee_reported_royalty is null', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithNullReported])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        const dashes = screen.getAllByText('—')
+        expect(dashes.length).toBeGreaterThanOrEqual(2)
+      })
+    })
+  })
+
+  describe('Discrepancy summary card', () => {
+    const underReportedPeriod: SalesPeriod = {
+      id: 'sp-under-1',
+      contract_id: 'contract-1',
+      period_start: '2024-01-01',
+      period_end: '2024-03-31',
+      net_sales: 100000,
+      category_breakdown: null,
+      royalty_calculated: 15000,
+      minimum_applied: false,
+      licensee_reported_royalty: 14720,
+      discrepancy_amount: 280,
+      has_discrepancy: true,
+      created_at: '2024-04-01T00:00:00Z',
+    }
+
+    const matchingPeriod: SalesPeriod = {
+      id: 'sp-match-1',
+      contract_id: 'contract-1',
+      period_start: '2024-04-01',
+      period_end: '2024-06-30',
+      net_sales: 80000,
+      category_breakdown: null,
+      royalty_calculated: 12000,
+      minimum_applied: false,
+      licensee_reported_royalty: 12000,
+      discrepancy_amount: 0,
+      has_discrepancy: false,
+      created_at: '2024-07-01T00:00:00Z',
+    }
+
+    it('shows discrepancy summary card when at least one period is under-reported', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([underReportedPeriod])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Open Discrepancies')).toBeInTheDocument()
+      })
+    })
+
+    it('shows correct total amount in discrepancy summary card', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([underReportedPeriod])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Open Discrepancies')).toBeInTheDocument()
+        // $280.00 total
+        const amounts = screen.getAllByText('$280.00')
+        expect(amounts.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('shows correct period count in discrepancy summary card', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([underReportedPeriod])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        const matches = screen.getAllByText(/1 period/i)
+        expect(matches.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('hides discrepancy summary card when no periods are under-reported', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([matchingPeriod])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+      })
+
+      expect(screen.queryByText('Open Discrepancies')).not.toBeInTheDocument()
+    })
+
+    it('hides discrepancy summary card when all periods have null reported royalty', async () => {
+      const nullPeriod: SalesPeriod = {
+        id: 'sp-null-1',
+        contract_id: 'contract-1',
+        period_start: '2024-01-01',
+        period_end: '2024-03-31',
+        net_sales: 100000,
+        category_breakdown: null,
+        royalty_calculated: 15000,
+        minimum_applied: false,
+        licensee_reported_royalty: null,
+        discrepancy_amount: null,
+        has_discrepancy: false,
+        created_at: '2024-04-01T00:00:00Z',
+      }
+
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([nullPeriod])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+      })
+
+      expect(screen.queryByText('Open Discrepancies')).not.toBeInTheDocument()
+    })
+
+    it('aggregates multiple under-reported periods in summary card', async () => {
+      const secondUnderReported: SalesPeriod = {
+        id: 'sp-under-2',
+        contract_id: 'contract-1',
+        period_start: '2024-04-01',
+        period_end: '2024-06-30',
+        net_sales: 90000,
+        category_breakdown: null,
+        royalty_calculated: 13500,
+        minimum_applied: false,
+        licensee_reported_royalty: 13000,
+        discrepancy_amount: 500,
+        has_discrepancy: true,
+        created_at: '2024-07-01T00:00:00Z',
+      }
+
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([underReportedPeriod, secondUnderReported])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Open Discrepancies')).toBeInTheDocument()
+        // Total: $280 + $500 = $780
+        expect(screen.getByText('$780.00')).toBeInTheDocument()
+        const periodMatches = screen.getAllByText(/2 periods/i)
+        expect(periodMatches.length).toBeGreaterThanOrEqual(1)
+      })
+    })
+  })
+
 })
