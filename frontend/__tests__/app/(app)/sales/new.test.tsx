@@ -22,7 +22,9 @@ jest.mock('@/lib/api', () => ({
   createSalesPeriod: jest.fn(),
 }))
 
-describe('Sales Entry Page', () => {
+// Sales entry page is hidden from the UI (manual sales entry hidden 2026-02-22).
+// The page code is retained for future backfill/forecast features.
+describe.skip('Sales Entry Page', () => {
   const mockPush = jest.fn()
   const mockGetContracts = getContracts as jest.MockedFunction<typeof getContracts>
   const mockCreateSalesPeriod = createSalesPeriod as jest.MockedFunction<typeof createSalesPeriod>

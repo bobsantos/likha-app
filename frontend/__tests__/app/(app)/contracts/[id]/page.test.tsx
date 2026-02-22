@@ -2,7 +2,7 @@
  * Tests for Contract Detail Page
  */
 
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { useParams } from 'next/navigation'
 import ContractDetailPage from '@/app/(app)/contracts/[id]/page'
 import { getContract, getSalesPeriods } from '@/lib/api'
@@ -17,21 +17,8 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/lib/api', () => ({
   getContract: jest.fn(),
   getSalesPeriods: jest.fn(),
-  createSalesPeriod: jest.fn(),
 }))
 
-// Mock SalesPeriodModal
-jest.mock('@/components/SalesPeriodModal', () => {
-  return function MockSalesPeriodModal({ isOpen, onClose, onSaved }: any) {
-    if (!isOpen) return null
-    return (
-      <div data-testid="sales-modal">
-        <button onClick={onClose}>Close Modal</button>
-        <button onClick={onSaved}>Save Period</button>
-      </div>
-    )
-  }
-})
 
 describe('Contract Detail Page', () => {
   const mockGetContract = getContract as jest.MockedFunction<typeof getContract>
@@ -147,14 +134,15 @@ describe('Contract Detail Page', () => {
     })
   })
 
-  it('shows empty state for sales periods', async () => {
+  it('shows coming soon placeholder when no sales periods exist', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
 
     render(<ContractDetailPage />)
 
     await waitFor(() => {
-      expect(screen.getByText(/no sales periods yet/i)).toBeInTheDocument()
+      expect(screen.getByText(/sales tracking coming soon/i)).toBeInTheDocument()
+      expect(screen.getByText(/upload your licensee/i)).toBeInTheDocument()
     })
   })
 
@@ -180,25 +168,6 @@ describe('Contract Detail Page', () => {
     })
 
     expect(screen.queryByText('View PDF')).not.toBeInTheDocument()
-  })
-
-  it('opens sales period modal on button click', async () => {
-    mockGetContract.mockResolvedValue(mockContract)
-    mockGetSalesPeriods.mockResolvedValue([])
-
-    render(<ContractDetailPage />)
-
-    await waitFor(() => {
-      expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
-    })
-
-    // Click "Enter Sales Period" button
-    const enterButton = screen.getAllByText('Enter Sales Period')[0]
-    fireEvent.click(enterButton)
-
-    await waitFor(() => {
-      expect(screen.getByTestId('sales-modal')).toBeInTheDocument()
-    })
   })
 
   it('displays error on fetch failure', async () => {
@@ -415,41 +384,4 @@ describe('Contract Detail Page', () => {
     expect(screen.queryByText(/complete review/i)).not.toBeInTheDocument()
   })
 
-  it('disables "Enter Sales Period" button for draft contracts', async () => {
-    const draftContract: Contract = {
-      ...mockContract,
-      status: 'draft',
-      licensee_name: null,
-      royalty_rate: null,
-      royalty_base: null,
-      reporting_frequency: null,
-    }
-    mockGetContract.mockResolvedValue(draftContract)
-    mockGetSalesPeriods.mockResolvedValue([])
-
-    render(<ContractDetailPage />)
-
-    await waitFor(() => {
-      const buttons = screen.getAllByRole('button', { name: /enter sales period/i })
-      expect(buttons.length).toBeGreaterThanOrEqual(1)
-      buttons.forEach(btn => {
-        expect(btn).toBeDisabled()
-      })
-    })
-  })
-
-  it('enables "Enter Sales Period" button for active contracts', async () => {
-    mockGetContract.mockResolvedValue(mockContract)
-    mockGetSalesPeriods.mockResolvedValue([])
-
-    render(<ContractDetailPage />)
-
-    await waitFor(() => {
-      const buttons = screen.getAllByRole('button', { name: /enter sales period/i })
-      expect(buttons.length).toBeGreaterThanOrEqual(1)
-      buttons.forEach(btn => {
-        expect(btn).not.toBeDisabled()
-      })
-    })
-  })
 })

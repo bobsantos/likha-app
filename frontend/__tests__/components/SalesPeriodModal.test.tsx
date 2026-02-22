@@ -13,7 +13,9 @@ jest.mock('@/lib/api', () => ({
   createSalesPeriod: jest.fn(),
 }))
 
-describe('SalesPeriodModal Component', () => {
+// SalesPeriodModal is not rendered in the UI (manual sales entry hidden 2026-02-22).
+// The component code is retained for future backfill/forecast features.
+describe.skip('SalesPeriodModal Component', () => {
   const mockCreateSalesPeriod = createSalesPeriod as jest.MockedFunction<typeof createSalesPeriod>
   const mockOnClose = jest.fn()
   const mockOnSaved = jest.fn()

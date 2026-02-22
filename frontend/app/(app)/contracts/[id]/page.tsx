@@ -15,15 +15,13 @@ import {
   DollarSign,
   BarChart3,
   FileText,
-  Plus,
   ExternalLink,
-  Loader2,
   AlertCircle,
+  Upload,
 } from 'lucide-react'
 import { getContract, getSalesPeriods } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate } from '@/types'
-import SalesPeriodModal from '@/components/SalesPeriodModal'
 
 export default function ContractDetailPage() {
   const params = useParams()
@@ -33,7 +31,6 @@ export default function ContractDetailPage() {
   const [salesPeriods, setSalesPeriods] = useState<SalesPeriod[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isModalOpen, setIsModalOpen] = useState(false)
 
   const fetchData = async () => {
     try {
@@ -355,31 +352,15 @@ export default function ContractDetailPage() {
             <BarChart3 className="w-5 h-5" />
             Sales Periods
           </h2>
-          <button
-            onClick={() => setIsModalOpen(true)}
-            disabled={contract.status === 'draft'}
-            title={contract.status === 'draft' ? 'Complete the contract review before entering sales periods' : undefined}
-            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Plus className="w-4 h-4" />
-            Enter Sales Period
-          </button>
         </div>
 
         {salesPeriods.length === 0 ? (
           <div className="text-center py-12 bg-gray-50 rounded-lg">
-            <BarChart3 className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-            <h3 className="text-lg font-medium text-gray-900 mb-1">No sales periods yet</h3>
-            <p className="text-gray-600 mb-4">Enter your first sales period to start tracking royalties</p>
-            <button
-              onClick={() => setIsModalOpen(true)}
-              disabled={contract.status === 'draft'}
-              title={contract.status === 'draft' ? 'Complete the contract review before entering sales periods' : undefined}
-              className="btn-primary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Plus className="w-4 h-4" />
-              Enter Sales Period
-            </button>
+            <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <h3 className="text-lg font-medium text-gray-900 mb-1">Sales tracking coming soon</h3>
+            <p className="text-gray-600">
+              Upload your licensee&apos;s sales spreadsheet to calculate and verify royalties.
+            </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -432,16 +413,6 @@ export default function ContractDetailPage() {
         )}
       </div>
 
-      {/* Sales Period Modal */}
-      <SalesPeriodModal
-        contract={contract}
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        onSaved={() => {
-          setIsModalOpen(false)
-          fetchData()
-        }}
-      />
     </div>
   )
 }
