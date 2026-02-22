@@ -500,9 +500,6 @@ export default function ContractDetailPage() {
                   <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
                     Discrepancy
                   </th>
-                  <th className="text-center py-3 px-4 text-sm font-semibold text-gray-900">
-                    MG Applied
-                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -552,13 +549,6 @@ export default function ContractDetailPage() {
                           ? <DiscrepancyCell amount={discrepancy} percentage={discrepancyPct} />
                           : <span className="text-gray-400 text-sm">—</span>
                         }
-                      </td>
-                      <td className="py-3 px-4 text-center">
-                        {period.minimum_applied ? (
-                          <span className="badge-warning">Yes</span>
-                        ) : (
-                          <span className="text-sm text-gray-500">No</span>
-                        )}
                       </td>
                     </tr>
                   )
