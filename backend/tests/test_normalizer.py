@@ -207,6 +207,28 @@ class TestParseRoyaltyBase:
     def test_no_base_no_rate_defaults_to_net_sales(self):
         assert parse_royalty_base(None, rate=None) == "net_sales"
 
+    def test_net_sales_definition_containing_gross(self):
+        """'Net Sales (gross invoiced sales less customer returns and credits)' -> net_sales."""
+        result = parse_royalty_base(
+            "Net Sales (gross invoiced sales less customer returns and credits)"
+        )
+        assert result == "net_sales"
+
+    def test_net_sales_means_gross_minus(self):
+        """'net sales defined as gross invoiced sales less returns' -> net_sales."""
+        result = parse_royalty_base(
+            "net sales defined as gross invoiced sales less returns"
+        )
+        assert result == "net_sales"
+
+    def test_pure_gross_sales_still_works(self):
+        """'Gross Sales' with no 'net' present -> gross_sales."""
+        assert parse_royalty_base("Gross Sales") == "gross_sales"
+
+    def test_gross_revenue(self):
+        """'gross revenue' with no 'net' present -> gross_sales."""
+        assert parse_royalty_base("gross revenue") == "gross_sales"
+
 
 # ---------------------------------------------------------------------------
 # normalize_date
