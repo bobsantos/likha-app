@@ -566,11 +566,34 @@ class TestKeywordMatchingNonStandardNames:
         # These are NOT in the synonym list
         assert result["Total Revenue"] == "ignore"
         assert result["Refunds"] == "ignore"
-        assert result["Amount Owed"] == "ignore"
         assert result["Rate (%)"] == "ignore"
+
+        # "Amount Owed" IS a synonym for licensee_reported_royalty (per-row royalty column in sample-3)
+        assert result["Amount Owed"] == "licensee_reported_royalty"
 
         # "Gross Revenue" IS a synonym for gross_sales
         assert result["Gross Revenue"] == "gross_sales"
+
+    def test_royalty_rate_column_not_matched_to_licensee_royalty(self):
+        """'Royalty Rate' must map to ignore — not to licensee_reported_royalty.
+
+        The bare 'royalty' synonym was removed from FIELD_SYNONYMS to prevent
+        the substring match 'royalty' in 'royalty rate' from firing.
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        columns = [
+            "Product Description", "SKU", "Product Category",
+            "Gross Sales", "Returns / Allowances", "Net Sales",
+            "Royalty Rate", "Royalty Due",
+        ]
+        result = suggest_mapping(columns, saved_mapping=None)
+
+        # "Royalty Rate" is a percentage column — must be ignored
+        assert result["Royalty Rate"] == "ignore"
+
+        # "Royalty Due" is the actual per-row royalty amount — must be mapped correctly
+        assert result["Royalty Due"] == "licensee_reported_royalty"
 
 
 class TestKeywordMatchingCaseInsensitive:

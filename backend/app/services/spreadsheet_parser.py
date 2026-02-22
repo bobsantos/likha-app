@@ -102,8 +102,8 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
         "division", "collection", "segment"
     ],
     "licensee_reported_royalty": [
-        "royalty", "royalty due", "amount due", "calculated royalty",
-        "total royalty"
+        "royalty due", "amount due", "calculated royalty",
+        "total royalty", "amount owed",
     ],
     "territory": [
         "territory", "region", "market", "country", "geography"
