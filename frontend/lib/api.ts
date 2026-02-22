@@ -4,7 +4,7 @@
 
 import { supabase } from './supabase'
 import { getApiUrl } from './url-utils'
-import type { Contract } from '@/types'
+import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse } from '@/types'
 
 // Re-export so existing imports of getApiUrl from '@/lib/api' keep working.
 export { getApiUrl } from './url-utils'
@@ -169,6 +169,80 @@ export async function getSalesPeriods(contractId: string) {
 
   if (!response.ok) {
     throw new Error('Failed to fetch sales periods')
+  }
+
+  return response.json()
+}
+
+export async function uploadSalesReport(
+  contractId: string,
+  file: File,
+  periodStart: string,
+  periodEnd: string
+): Promise<UploadPreviewResponse> {
+  const { data: { session } } = await supabase.auth.getSession()
+
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('period_start', periodStart)
+  formData.append('period_end', periodEnd)
+
+  const headers: HeadersInit = {}
+  if (session?.access_token) {
+    headers['Authorization'] = `Bearer ${session.access_token}`
+  }
+
+  const response = await fetch(`${getResolvedApiUrl()}/api/sales/upload/${contractId}`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new ApiError(
+      typeof body?.detail === 'string' ? body.detail : 'Failed to upload sales report',
+      response.status,
+      body
+    )
+  }
+
+  return response.json()
+}
+
+export async function confirmSalesUpload(
+  contractId: string,
+  data: UploadConfirmRequest
+): Promise<SalesPeriod> {
+  const headers = await getAuthHeaders()
+
+  const response = await fetch(`${getResolvedApiUrl()}/api/sales/upload/${contractId}/confirm`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(data),
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new ApiError(
+      typeof body?.detail === 'string' ? body.detail : 'Failed to confirm sales upload',
+      response.status,
+      body
+    )
+  }
+
+  return response.json()
+}
+
+export async function getSavedMapping(contractId: string): Promise<SavedMappingResponse> {
+  const headers = await getAuthHeaders()
+
+  const response = await fetch(`${getResolvedApiUrl()}/api/sales/upload/mapping/${contractId}`, {
+    headers,
+  })
+
+  if (!response.ok) {
+    throw new ApiError('Failed to fetch saved mapping', response.status)
   }
 
   return response.json()

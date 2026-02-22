@@ -5,7 +5,7 @@ Pydantic models for sales periods.
 from datetime import date
 from decimal import Decimal
 from typing import Optional, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 
 class SalesPeriodCreate(BaseModel):
@@ -15,6 +15,7 @@ class SalesPeriodCreate(BaseModel):
     period_end: date
     net_sales: Decimal = Field(ge=0)
     category_breakdown: Optional[Dict[str, Decimal]] = None
+    licensee_reported_royalty: Optional[Decimal] = None  # Phase 1
 
 
 class SalesPeriod(SalesPeriodCreate):
@@ -27,6 +28,26 @@ class SalesPeriod(SalesPeriodCreate):
 
     class Config:
         from_attributes = True
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def discrepancy_amount(self) -> Optional[Decimal]:
+        """
+        Difference between licensee-reported and system-calculated royalty.
+        Positive = licensee under-reported; Negative = licensee over-reported.
+        None if licensee_reported_royalty is not set.
+        """
+        if self.licensee_reported_royalty is None:
+            return None
+        return self.royalty_calculated - self.licensee_reported_royalty
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def has_discrepancy(self) -> bool:
+        """True if there is a non-zero discrepancy between reported and calculated."""
+        if self.licensee_reported_royalty is None:
+            return False
+        return self.licensee_reported_royalty != self.royalty_calculated
 
 
 class RoyaltySummary(BaseModel):

@@ -134,15 +134,14 @@ describe('Contract Detail Page', () => {
     })
   })
 
-  it('shows coming soon placeholder when no sales periods exist', async () => {
+  it('shows empty state when no sales periods exist', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
 
     render(<ContractDetailPage />)
 
     await waitFor(() => {
-      expect(screen.getByText(/sales tracking coming soon/i)).toBeInTheDocument()
-      expect(screen.getByText(/upload your licensee/i)).toBeInTheDocument()
+      expect(screen.getByText(/no sales periods yet/i)).toBeInTheDocument()
     })
   })
 
