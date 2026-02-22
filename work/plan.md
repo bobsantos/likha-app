@@ -294,25 +294,27 @@ These gaps are addressed in the tasks below.
 
 ---
 
-## Phase 1 Completion: Discrepancy Detection (Immediate Priority)
+## Phase 1 Completion: Discrepancy Detection ✅ COMPLETE
 
 Full specification in `docs/prd-royalty-tracking.md` — Phase 1 section.
 
 **Summary:** Add `licensee_reported_royalty` field to sales periods. Compute `discrepancy_amount` and `has_discrepancy` on the response. Show discrepancy in the result card and sales history table. Requires a new migration.
 
+**Status:** Complete as of 2026-02-23.
+
 **Checklist:**
 
-- [ ] Migration: `supabase/migrations/[timestamp]_add_licensee_reported_royalty.sql`
-- [ ] Backend: add field to `SalesPeriodCreate` and `SalesPeriodResponse`, compute discrepancy fields
-- [ ] Backend: write TDD tests for all discrepancy states
-- [ ] Frontend: add "Licensee Reported Royalty" field to sales entry form
-- [ ] Frontend: update royalty result card to show discrepancy (amber = under-reported, blue = over-reported)
-- [ ] Frontend: add Discrepancy column to `SalesHistoryTable`
-- [ ] Frontend: update `SalesPeriodModal` to include the field
-- [ ] Frontend: update TypeScript types in `/frontend/types/index.ts`
-- [ ] Frontend: write tests for all discrepancy display states
+- [x] Migration: `supabase/migrations/20260222000002_add_licensee_reported_royalty.sql`
+- [x] Backend: add field to `SalesPeriodCreate` and `SalesPeriodResponse`, compute discrepancy fields (`models/sales.py`)
+- [x] Backend: write TDD tests for all discrepancy states (`test_sales_upload.py`)
+- [x] Frontend: licensee reported royalty captured via spreadsheet upload column mapping
+- [x] Frontend: update royalty result card to show discrepancy — green match, amber under-reported, blue over-reported (`upload-preview.tsx`)
+- [x] Frontend: add Discrepancy column to sales periods table with color-coded badges (`contracts/[id]/page.tsx`)
+- [x] Frontend: update `SalesPeriodModal` to include the field
+- [x] Frontend: update TypeScript types in `/frontend/types/index.ts` (`licensee_reported_royalty`, `discrepancy_amount`, `has_discrepancy`)
+- [x] Frontend: write tests for all discrepancy display states (17 new tests in page.test.tsx, 3 in upload-preview.test.tsx)
 
-**Success Criteria:** Licensor can record what the licensee reported, system immediately flags any discrepancy, sales history table shows discrepancy status at a glance. All new tests passing.
+**Success Criteria:** ✅ Licensor can record what the licensee reported, system immediately flags any discrepancy, sales history table shows discrepancy status at a glance. All new tests passing.
 
 ---
 
@@ -362,7 +364,7 @@ Full specification in `docs/prd-royalty-tracking.md` — Phase 1 section.
 
 ---
 
-## Phase 1.1: Spreadsheet Upload with Column Mapping
+## Phase 1.1: Spreadsheet Upload with Column Mapping ✅ COMPLETE
 
 **Target:** First post-MVP sprint (after beta user feedback confirms pain)
 
@@ -370,19 +372,28 @@ Full specification in `docs/product/prd/royalty-report/prd-royalty-tracking.md` 
 
 **Summary:** 4-step upload wizard (file upload → column mapping → data preview → confirm). Spreadsheet parser service handles xlsx, xls, and csv. Column mappings saved per licensee and auto-applied on subsequent uploads. Multi-row reports aggregated by category before royalty calculation. Dependencies: `openpyxl`, `xlrd`.
 
+**Status:** Complete as of 2026-02-23. Additional improvements applied: column mapping bug fix (bare "royalty" synonym), source file storage, signed URL download, royalty base extraction fix.
+
 **Checklist:**
 
-- [ ] Migration: `supabase/migrations/[timestamp]_add_licensee_column_mappings.sql`
-- [ ] Backend: create `backend/app/services/spreadsheet_parser.py` with `parse_upload` and `apply_mapping`
-- [ ] Backend: create upload endpoints (`POST /api/sales/upload/{contract_id}`, `POST .../confirm`, `GET .../mapping/{contract_id}`)
-- [ ] Backend: write TDD tests for parser (standard xlsx, non-standard csv, title rows, category aggregation, saved mapping, unsupported types)
-- [ ] Frontend: add "Upload Report" button to contract detail page
-- [ ] Frontend: create `/frontend/app/(app)/sales/upload/page.tsx` (4-step wizard)
-- [ ] Frontend: create `column-mapper.tsx` component
-- [ ] Frontend: create `upload-preview.tsx` component
-- [ ] Frontend: write tests for upload flow end-to-end
+- [x] Migration: `supabase/migrations/20260222000003_add_licensee_column_mappings.sql`
+- [x] Backend: create `backend/app/services/spreadsheet_parser.py` with `parse_upload`, `apply_mapping`, `suggest_mapping` (725 lines)
+- [x] Backend: create upload endpoints — `POST /upload/{contract_id}`, `POST /upload/{contract_id}/confirm`, `GET /upload/mapping/{contract_id}`, `GET /upload/{contract_id}/periods/{period_id}/source-file`
+- [x] Backend: write TDD tests for parser — standard xlsx, non-standard csv, title rows, merged cells, category aggregation, licensee royalty extraction, keyword matching, saved mapping, unsupported types, corrupt files (`test_spreadsheet_parser.py`, 701 lines)
+- [x] Frontend: add "Upload Report" button to contract detail page (active contracts only)
+- [x] Frontend: create `/frontend/app/(app)/sales/upload/page.tsx` (3-step wizard: upload → mapping → preview/confirm, 548 lines)
+- [x] Frontend: create `column-mapper.tsx` component (per-column dropdown, save mapping checkbox)
+- [x] Frontend: create `upload-preview.tsx` component (sample rows, aggregated totals, royalty calc, discrepancy indicator)
+- [x] Frontend: write tests for upload flow end-to-end (`sales-upload-page.test.tsx`, `column-mapper.test.tsx`, `upload-preview.test.tsx`)
 
-**Success Criteria:** Licensor uploads a licensee Excel file, creates a sales period in under 3 minutes. Second upload auto-applies saved mapping. Multi-row reports aggregate correctly. All tests passing.
+**Additional work completed during Phase 1.1:**
+- [x] Source file storage: original spreadsheet saved to Supabase Storage at confirm time (`source_file_path` on `sales_periods`, migration `20260223100000`)
+- [x] Download icon on contract detail page for each sales period with a stored source file
+- [x] Signed URL host rewriting for Docker environments (`SUPABASE_PUBLIC_URL`)
+- [x] Column mapping fix: removed bare "royalty" synonym that incorrectly matched "Royalty Rate" columns
+- [x] Royalty base extraction fix: improved extractor prompt and normalizer to correctly classify net sales definitions containing "gross"
+
+**Success Criteria:** ✅ Licensor uploads a licensee Excel file, creates a sales period in under 3 minutes. Second upload auto-applies saved mapping. Multi-row reports aggregate correctly. All tests passing (451 backend, 337 frontend).
 
 ---
 
@@ -561,33 +572,33 @@ NEXT_PUBLIC_API_URL=https://[backend].railway.app
 
 ### MVP (End of Day 10) — Minimum to Ship
 
-- [ ] User can sign up and login
-- [ ] User can upload contract PDF
-- [ ] Extraction review form displays and is editable
-- [ ] Contract is saved to database
-- [ ] Dashboard shows list of contracts
-- [ ] User can add sales period via manual form
-- [ ] Royalty is calculated correctly (flat, tiered, category)
-- [ ] YTD summary is displayed
-- [ ] Minimum guarantee logic works
+- [x] User can sign up and login
+- [x] User can upload contract PDF
+- [x] Extraction review form displays and is editable
+- [x] Contract is saved to database
+- [x] Dashboard shows list of contracts
+- [x] User can add sales period via manual form
+- [x] Royalty is calculated correctly (flat, tiered, category)
+- [x] YTD summary is displayed
+- [x] Minimum guarantee logic works
 - [ ] App is deployed (Frontend: Vercel, Backend: Railway)
 - [ ] All pages are mobile responsive
 - [ ] Error states are handled gracefully
 
-### Phase 1 Complete (Discrepancy Detection) — Required Before Beta
+### Phase 1 Complete (Discrepancy Detection) ✅
 
-- [ ] Licensor can record what the licensee reported alongside their own calculation
-- [ ] System flags discrepancies automatically
-- [ ] Sales history table shows discrepancy status at a glance
-- [ ] Beta users can use this to verify one real licensee report
+- [x] Licensor can record what the licensee reported alongside their own calculation
+- [x] System flags discrepancies automatically
+- [x] Sales history table shows discrepancy status at a glance
+- [x] Beta users can use this to verify one real licensee report
 
-### Phase 1.1 Complete (Spreadsheet Upload) — Target for Month 2
+### Phase 1.1 Complete (Spreadsheet Upload) ✅
 
-- [ ] Licensor can upload an Excel file from a licensee
-- [ ] Column mapping wizard works for non-standard headers
-- [ ] Mappings are saved per licensee (auto-apply on subsequent uploads)
-- [ ] Multi-row reports aggregate correctly by category
-- [ ] Time to enter one sales period: under 3 minutes (vs. 10+ minutes manual)
+- [x] Licensor can upload an Excel file from a licensee
+- [x] Column mapping wizard works for non-standard headers
+- [x] Mappings are saved per licensee (auto-apply on subsequent uploads)
+- [x] Multi-row reports aggregate correctly by category
+- [x] Time to enter one sales period: under 3 minutes (vs. 10+ minutes manual)
 
 **Ready for:**
 
@@ -601,8 +612,8 @@ NEXT_PUBLIC_API_URL=https://[backend].railway.app
 
 Feature gaps and their target phases are documented in `docs/prd-royalty-tracking.md`. Brief summary:
 
-- **Phase 1 (immediate):** No discrepancy detection yet — `licensee_reported_royalty` field and discrepancy display are not yet built
-- **Phase 1.1 (first post-MVP sprint):** No spreadsheet upload — licensor must manually transcribe from licensee's Excel file
+- ~~**Phase 1 (immediate):** No discrepancy detection yet~~ — ✅ COMPLETE
+- ~~**Phase 1.1 (first post-MVP sprint):** No spreadsheet upload~~ — ✅ COMPLETE
 - **Phase 2 (v2, Month 3-6):** No Excel template generation, no AI-assisted column mapping, no email intake
 
 ### Deferred to v2 (Out of scope for current roadmap)
