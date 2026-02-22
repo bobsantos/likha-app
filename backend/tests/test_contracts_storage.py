@@ -17,6 +17,38 @@ os.environ['SUPABASE_SERVICE_KEY'] = 'test-service-key'
 class TestExtractEndpointWithStorage:
     """Test /extract endpoint uploads PDF to storage."""
 
+    def _mock_no_duplicate(self, mock_supabase):
+        """Helper: configure supabase mock so the duplicate check returns no matches."""
+        mock_supabase.table.return_value.select.return_value \
+            .eq.return_value.ilike.return_value.execute.return_value = Mock(data=[])
+
+    def _mock_draft_insert(self, mock_supabase, contract_id="draft-001", filename="test_contract.pdf"):
+        """Helper: configure supabase mock to return a draft row on insert."""
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock(
+            data=[{
+                "id": contract_id,
+                "user_id": "user-123",
+                "status": "draft",
+                "filename": filename,
+                "pdf_url": f"https://test.supabase.co/storage/v1/object/sign/contracts/user-123/{filename}?token=abc",
+                "storage_path": f"contracts/user-123/{filename}",
+                "extracted_terms": {},
+                "licensee_name": None,
+                "royalty_rate": None,
+                "royalty_base": None,
+                "territories": [],
+                "product_categories": None,
+                "contract_start_date": None,
+                "contract_end_date": None,
+                "minimum_guarantee": None,
+                "minimum_guarantee_period": None,
+                "advance_payment": None,
+                "reporting_frequency": None,
+                "created_at": "2026-02-19T08:15:00Z",
+                "updated_at": "2026-02-19T08:15:00Z",
+            }]
+        )
+
     @pytest.mark.asyncio
     async def test_extract_uploads_pdf_to_storage(self):
         """Extraction should upload PDF to storage and return storage path."""
@@ -30,33 +62,40 @@ class TestExtractEndpointWithStorage:
         mock_file.filename = "test_contract.pdf"
         mock_file.read = AsyncMock(return_value=pdf_content)
 
-        with patch('app.routers.contracts.extract_contract') as mock_extract:
-            with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
-                with patch('app.routers.contracts.get_signed_url') as mock_signed_url:
-                    # Mock extraction returning terms
-                    mock_extract.return_value = (
-                        Mock(model_dump=lambda: {"licensee_name": "Test Corp"}),
-                        {"input_tokens": 100, "output_tokens": 50}
-                    )
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+            self._mock_no_duplicate(mock_supabase)
+            self._mock_draft_insert(mock_supabase)
 
-                    # Mock storage upload
-                    mock_upload.return_value = "contracts/user-123/test_contract.pdf"
+            with patch('app.routers.contracts.extract_contract') as mock_extract:
+                with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
+                    with patch('app.routers.contracts.get_signed_url') as mock_signed_url:
+                        with patch('app.routers.contracts.normalize_extracted_terms') as mock_norm:
+                            # Mock extraction returning terms
+                            mock_extract.return_value = (
+                                Mock(model_dump=lambda: {"licensee_name": "Test Corp"}),
+                                {"input_tokens": 100, "output_tokens": 50}
+                            )
 
-                    # Mock signed URL generation
-                    mock_signed_url.return_value = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/test_contract.pdf?token=abc"
+                            # Mock storage upload
+                            mock_upload.return_value = "contracts/user-123/test_contract.pdf"
 
-                    result = await extract_contract_terms(mock_file, user_id="user-123")
+                            # Mock signed URL generation
+                            mock_signed_url.return_value = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/test_contract.pdf?token=abc"
 
-                    # Verify PDF was uploaded to storage
-                    mock_upload.assert_called_once()
-                    upload_call = mock_upload.call_args
-                    assert upload_call[0][0] == pdf_content  # file_content
-                    assert upload_call[0][1] == "user-123"  # user_id
-                    assert "test_contract.pdf" in upload_call[0][2]  # filename
+                            mock_norm.return_value = Mock(model_dump=lambda: {})
 
-                    # Verify response includes storage path
-                    assert "storage_path" in result
-                    assert result["storage_path"] == "contracts/user-123/test_contract.pdf"
+                            result = await extract_contract_terms(mock_file, user_id="user-123")
+
+                            # Verify PDF was uploaded to storage
+                            mock_upload.assert_called_once()
+                            upload_call = mock_upload.call_args
+                            assert upload_call[0][0] == pdf_content  # file_content
+                            assert upload_call[0][1] == "user-123"  # user_id
+                            assert "test_contract.pdf" in upload_call[0][2]  # filename
+
+                            # Verify response includes storage path
+                            assert "storage_path" in result
+                            assert result["storage_path"] == "contracts/user-123/test_contract.pdf"
 
     @pytest.mark.asyncio
     async def test_extract_returns_signed_url(self):
@@ -70,26 +109,32 @@ class TestExtractEndpointWithStorage:
         mock_file.filename = "test_contract.pdf"
         mock_file.read = AsyncMock(return_value=pdf_content)
 
-        with patch('app.routers.contracts.extract_contract') as mock_extract:
-            with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
-                with patch('app.routers.contracts.get_signed_url') as mock_signed_url:
-                    mock_extract.return_value = (
-                        Mock(model_dump=lambda: {"licensee_name": "Test Corp"}),
-                        {"input_tokens": 100, "output_tokens": 50}
-                    )
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+            self._mock_no_duplicate(mock_supabase)
+            self._mock_draft_insert(mock_supabase)
 
-                    mock_upload.return_value = "contracts/user-123/test_contract.pdf"
-                    mock_signed_url.return_value = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/test_contract.pdf?token=abc123"
+            with patch('app.routers.contracts.extract_contract') as mock_extract:
+                with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
+                    with patch('app.routers.contracts.get_signed_url') as mock_signed_url:
+                        with patch('app.routers.contracts.normalize_extracted_terms') as mock_norm:
+                            mock_extract.return_value = (
+                                Mock(model_dump=lambda: {"licensee_name": "Test Corp"}),
+                                {"input_tokens": 100, "output_tokens": 50}
+                            )
 
-                    result = await extract_contract_terms(mock_file, user_id="user-123")
+                            mock_upload.return_value = "contracts/user-123/test_contract.pdf"
+                            mock_signed_url.return_value = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/test_contract.pdf?token=abc123"
+                            mock_norm.return_value = Mock(model_dump=lambda: {})
 
-                    # Verify signed URL was generated
-                    mock_signed_url.assert_called_once_with("contracts/user-123/test_contract.pdf")
+                            result = await extract_contract_terms(mock_file, user_id="user-123")
 
-                    # Verify response includes PDF URL
-                    assert "pdf_url" in result
-                    assert result["pdf_url"].startswith("https://")
-                    assert "test_contract.pdf" in result["pdf_url"]
+                            # Verify signed URL was generated
+                            mock_signed_url.assert_called_once_with("contracts/user-123/test_contract.pdf")
+
+                            # Verify response includes PDF URL
+                            assert "pdf_url" in result
+                            assert result["pdf_url"].startswith("https://")
+                            assert "test_contract.pdf" in result["pdf_url"]
 
     @pytest.mark.asyncio
     async def test_extract_cleans_up_temp_file_on_storage_failure(self):
@@ -102,23 +147,26 @@ class TestExtractEndpointWithStorage:
         mock_file.filename = "test_contract.pdf"
         mock_file.read = AsyncMock(return_value=pdf_content)
 
-        with patch('app.routers.contracts.extract_contract') as mock_extract:
-            with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
-                with patch('os.unlink') as mock_unlink:
-                    mock_extract.return_value = (
-                        Mock(model_dump=lambda: {"licensee_name": "Test Corp"}),
-                        {"input_tokens": 100, "output_tokens": 50}
-                    )
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
+            self._mock_no_duplicate(mock_supabase)
 
-                    # Mock storage upload failure
-                    mock_upload.side_effect = Exception("Storage error")
+            with patch('app.routers.contracts.extract_contract') as mock_extract:
+                with patch('app.routers.contracts.upload_contract_pdf') as mock_upload:
+                    with patch('os.unlink') as mock_unlink:
+                        mock_extract.return_value = (
+                            Mock(model_dump=lambda: {"licensee_name": "Test Corp"}),
+                            {"input_tokens": 100, "output_tokens": 50}
+                        )
 
-                    with pytest.raises(HTTPException) as exc_info:
-                        await extract_contract_terms(mock_file, user_id="user-123")
+                        # Mock storage upload failure
+                        mock_upload.side_effect = Exception("Storage error")
 
-                    # Verify temp file was still cleaned up
-                    assert mock_unlink.called
-                    assert "Storage error" in str(exc_info.value.detail) or "Extraction failed" in str(exc_info.value.detail)
+                        with pytest.raises(HTTPException) as exc_info:
+                            await extract_contract_terms(mock_file, user_id="user-123")
+
+                        # Verify temp file was still cleaned up
+                        assert mock_unlink.called
+                        assert "Storage error" in str(exc_info.value.detail) or "Extraction failed" in str(exc_info.value.detail)
 
 
 class TestCreateContractWithStorage:
@@ -148,12 +196,14 @@ class TestCreateContractWithStorage:
             reporting_frequency="quarterly"
         )
 
-        with patch('app.routers.contracts.supabase') as mock_supabase:
+        with patch('app.routers.contracts.supabase_admin') as mock_supabase:
             # Mock database insert
             mock_supabase.table.return_value.insert.return_value.execute.return_value = Mock(
                 data=[{
                     "id": "contract-123",
                     "user_id": "user-123",
+                    "status": "active",
+                    "filename": "contract.pdf",
                     "licensee_name": "Test Corp",
                     "pdf_url": contract_data.pdf_url,
                     "extracted_terms": {},
@@ -167,6 +217,7 @@ class TestCreateContractWithStorage:
                     "minimum_guarantee_period": "quarterly",
                     "advance_payment": None,
                     "reporting_frequency": "quarterly",
+                    "storage_path": None,
                     "created_at": "2024-01-01T00:00:00Z",
                     "updated_at": "2024-01-01T00:00:00Z"
                 }]
@@ -193,7 +244,7 @@ class TestDeleteContractWithStorage:
         pdf_url = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/contract.pdf?token=abc"
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
                     # Mock ownership verification (async)
                     mock_verify.return_value = None
@@ -233,7 +284,7 @@ class TestDeleteContractWithStorage:
         pdf_url = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/contract.pdf?token=abc"
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
                     mock_verify.return_value = None
 
@@ -268,7 +319,7 @@ class TestDeleteContractWithStorage:
         pdf_url = "https://test.supabase.co/storage/v1/object/sign/contracts/user-123/contract.pdf?token=abc"
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase') as mock_supabase:
+            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
                     mock_verify.return_value = None
 

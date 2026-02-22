@@ -4,21 +4,36 @@
 
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Upload, FileText, Loader2, CheckCircle2, ArrowLeft, AlertCircle, RefreshCw, FolderOpen } from 'lucide-react'
-import { uploadContract, createContract, ApiError } from '@/lib/api'
-import type { ExtractedTerms, ExtractionResponse } from '@/types'
+import { format } from 'date-fns'
+import {
+  Upload,
+  FileText,
+  Loader2,
+  CheckCircle2,
+  ArrowLeft,
+  AlertCircle,
+  RefreshCw,
+  FolderOpen,
+  ExternalLink,
+} from 'lucide-react'
+import { uploadContract, confirmDraft, getContract, ApiError } from '@/lib/api'
+import type { ExtractedTerms, ExtractionResponse, DuplicateContractInfo } from '@/types'
+import RoyaltyRateInput from '@/components/RoyaltyRateInput'
 
 type Step = 'upload' | 'extracting' | 'review' | 'saving'
-type ErrorType = 'validation' | 'upload' | 'extraction' | 'save' | 'auth' | null
+type ErrorType = 'validation' | 'upload' | 'extraction' | 'save' | 'auth' | 'duplicate' | 'incomplete_draft' | null
 
 interface ErrorInfo {
   type: ErrorType
   title: string
   message: string
+  duplicateInfo?: DuplicateContractInfo
 }
+
+const DRAFT_STORAGE_KEY = 'upload_draft'
 
 function classifyError(error: unknown): ErrorInfo {
   if (error instanceof ApiError && error.status === 401) {
@@ -26,6 +41,32 @@ function classifyError(error: unknown): ErrorInfo {
       type: 'auth',
       title: 'Your session has expired',
       message: 'Please sign in again to continue.',
+    }
+  }
+
+  // Handle 409 Conflict — duplicate filename or incomplete draft
+  if (error instanceof ApiError && error.status === 409) {
+    const data = error.data as any
+    const detail = data?.detail
+    const code = detail?.code
+    const existingContract: DuplicateContractInfo | undefined = detail?.existing_contract
+
+    if (code === 'DUPLICATE_FILENAME') {
+      return {
+        type: 'duplicate',
+        title: 'A contract with this filename already exists',
+        message: detail?.message ?? 'A contract with this filename already exists.',
+        duplicateInfo: existingContract,
+      }
+    }
+
+    if (code === 'INCOMPLETE_DRAFT') {
+      return {
+        type: 'incomplete_draft',
+        title: 'You have an unfinished upload for this file',
+        message: detail?.message ?? 'You have an incomplete upload for this file.',
+        duplicateInfo: existingContract,
+      }
     }
   }
 
@@ -54,20 +95,132 @@ function classifyError(error: unknown): ErrorInfo {
   }
 }
 
+function formatDate(dateString: string) {
+  try {
+    return format(new Date(dateString), 'MMM d, yyyy')
+  } catch {
+    return dateString
+  }
+}
+
 export default function UploadContractPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const retryFileInputRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('upload')
   const [file, setFile] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [errorType, setErrorType] = useState<ErrorType>(null)
+  const [errorTitle, setErrorTitle] = useState<string>('')
+  const [duplicateInfo, setDuplicateInfo] = useState<DuplicateContractInfo | null>(null)
   const [extractedTerms, setExtractedTerms] = useState<ExtractedTerms | null>(null)
   const [formData, setFormData] = useState<any>({})
+  const [draftContractId, setDraftContractId] = useState<string | null>(null)
+  const [hasSavedDraft, setHasSavedDraft] = useState(false)
+  const [savedDraftData, setSavedDraftData] = useState<{ draftContractId: string; formData: any } | null>(null)
+  const [loadingDraft, setLoadingDraft] = useState(false)
 
-  // File validation
+  // Load a draft contract by ID and populate the review form.
+  // Used both by the ?draft= query param effect and by the "Resume review" button
+  // when a 409 INCOMPLETE_DRAFT is returned (same-page flow — no navigation needed).
+  const loadDraft = useCallback((draftId: string): Promise<void> => {
+    setLoadingDraft(true)
+
+    return getContract(draftId)
+      .then((contract: any) => {
+        // The backend runs normalize_extracted_terms for draft contracts and returns
+        // the result as form_values — use it directly, just like the fresh-upload path.
+        const fv = contract.form_values
+
+        const populated = {
+          licensee_name: fv?.licensee_name || '',
+          licensor_name: fv?.licensor_name || '',
+          contract_start_date: fv?.contract_start_date || '',
+          contract_end_date: fv?.contract_end_date || '',
+          royalty_rate: typeof fv?.royalty_rate === 'number'
+            ? String(fv.royalty_rate)
+            : typeof fv?.royalty_rate === 'object' && fv?.royalty_rate !== null
+              ? JSON.stringify(fv.royalty_rate)
+              : fv?.royalty_rate || '',
+          royalty_base: fv?.royalty_base || 'net_sales',
+          territories: Array.isArray(fv?.territories)
+            ? fv.territories.join(', ')
+            : '',
+          reporting_frequency: fv?.reporting_frequency || 'quarterly',
+          minimum_guarantee: fv?.minimum_guarantee != null ? String(fv.minimum_guarantee) : '',
+          advance_payment: fv?.advance_payment != null ? String(fv.advance_payment) : '',
+        }
+
+        setDraftContractId(draftId)
+        setFormData(populated)
+        setLoadingDraft(false)
+        setStep('review')
+      })
+      .catch(() => {
+        setLoadingDraft(false)
+        setError('Could not load draft. Please try uploading again.')
+        setErrorType('upload')
+        setErrorTitle('Could not load draft')
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // On mount: if ?draft=<id> is in the URL, fetch that draft and populate the review form.
+  // Note: loadDraft is also called directly by the "Resume review" button when a 409
+  // INCOMPLETE_DRAFT is returned, avoiding a same-page navigation that would not
+  // re-trigger this effect.
+  useEffect(() => {
+    const draftId = searchParams.get('draft')
+    if (!draftId) return
+
+    loadDraft(draftId)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // On mount: check sessionStorage for a saved draft
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem(DRAFT_STORAGE_KEY)
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (parsed?.draftContractId) {
+          setSavedDraftData(parsed)
+          setHasSavedDraft(true)
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }, [])
+
+  // Persist draft to sessionStorage whenever we enter review step
+  const saveDraftToStorage = useCallback((id: string, data: any) => {
+    try {
+      sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ draftContractId: id, formData: data }))
+    } catch {
+      // sessionStorage may not be available
+    }
+  }, [])
+
+  // Clear draft from sessionStorage
+  const clearDraftFromStorage = useCallback(() => {
+    try {
+      sessionStorage.removeItem(DRAFT_STORAGE_KEY)
+    } catch {
+      // Ignore
+    }
+  }, [])
+
+  // File validation.
+  // Mobile browsers (Android Chrome, Samsung Internet) sometimes report
+  // file.type as '' even for valid PDFs picked from a file manager or
+  // content URI.  Accept the file when either the MIME type is correct OR
+  // the filename ends with .pdf (case-insensitive).
   const validateFile = (file: File): string | null => {
-    if (file.type !== 'application/pdf') {
+    const isPdfByType = file.type === 'application/pdf'
+    const isPdfByName = file.name.toLowerCase().endsWith('.pdf')
+    if (!isPdfByType && !isPdfByName) {
       return 'Please upload a PDF file'
     }
     if (file.size > 10 * 1024 * 1024) {
@@ -84,12 +237,15 @@ export default function UploadContractPage() {
     if (validationError) {
       setError(validationError)
       setErrorType('validation')
+      setErrorTitle('Invalid file')
       setFile(null)
       return
     }
 
     setError(null)
     setErrorType(null)
+    setErrorTitle('')
+    setDuplicateInfo(null)
     setFile(selectedFile)
   }
 
@@ -123,17 +279,21 @@ export default function UploadContractPage() {
       setStep('extracting')
       setError(null)
       setErrorType(null)
+      setErrorTitle('')
+      setDuplicateInfo(null)
 
       const response: ExtractionResponse = await uploadContract(file)
       setExtractedTerms(response.extracted_terms)
+      setDraftContractId(response.contract_id ?? null)
 
       // Initialize form data with backend-normalized values
       const fv = response.form_values
-      setFormData({
+      const newFormData = {
         licensee_name: fv.licensee_name || '',
         licensor_name: fv.licensor_name || '',
-        contract_start: fv.contract_start_date || '',
-        contract_end: fv.contract_end_date || '',
+        // Use the same date key names as the backend ContractConfirm model expects.
+        contract_start_date: fv.contract_start_date || '',
+        contract_end_date: fv.contract_end_date || '',
         royalty_rate: typeof fv.royalty_rate === 'number'
           ? String(fv.royalty_rate)
           : typeof fv.royalty_rate === 'object'
@@ -146,7 +306,13 @@ export default function UploadContractPage() {
         reporting_frequency: fv.reporting_frequency || 'quarterly',
         minimum_guarantee: fv.minimum_guarantee != null ? String(fv.minimum_guarantee) : '',
         advance_payment: fv.advance_payment != null ? String(fv.advance_payment) : '',
-      })
+      }
+      setFormData(newFormData)
+
+      // Persist to sessionStorage when entering review step
+      if (response.contract_id) {
+        saveDraftToStorage(response.contract_id, newFormData)
+      }
 
       setStep('review')
     } catch (err) {
@@ -159,40 +325,92 @@ export default function UploadContractPage() {
 
       setError(info.message)
       setErrorType(info.type)
+      setErrorTitle(info.title)
+      if (info.duplicateInfo) {
+        setDuplicateInfo(info.duplicateInfo)
+      }
       setStep('upload')
       // Keep file in state so user can retry
     }
+  }
+
+  // Restore saved draft from sessionStorage
+  const handleRestoreDraft = () => {
+    if (!savedDraftData) return
+    setDraftContractId(savedDraftData.draftContractId)
+    setFormData(savedDraftData.formData)
+    setHasSavedDraft(false)
+    setSavedDraftData(null)
+    setStep('review')
+  }
+
+  // Dismiss the restore banner without restoring
+  const handleDismissRestore = () => {
+    clearDraftFromStorage()
+    setHasSavedDraft(false)
+    setSavedDraftData(null)
   }
 
   // Save contract
   const handleSaveContract = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    // Validate required fields before submitting
+    if (!formData.licensee_name?.trim()) {
+      setError('Licensee name is required.')
+      setErrorType('validation')
+      setErrorTitle('Required fields missing')
+      return
+    }
+    if (!formData.contract_start_date?.trim()) {
+      setError('Contract start date is required.')
+      setErrorType('validation')
+      setErrorTitle('Required fields missing')
+      return
+    }
+    if (!formData.contract_end_date?.trim()) {
+      setError('Contract end date is required.')
+      setErrorType('validation')
+      setErrorTitle('Required fields missing')
+      return
+    }
+
     try {
       setStep('saving')
       setError(null)
       setErrorType(null)
+      setErrorTitle('')
 
-      // Parse royalty rate from percentage string to decimal
-      let royaltyRate: number | object
+      // Determine the royalty_rate value to send to the backend.
+      // The backend ContractConfirm model expects str | list | dict — NOT a plain float.
+      // Send JSON-parsed objects for tiered/structured rates, or the raw trimmed string
+      // for simple percentage values (e.g. "10%" or "10").
+      let royaltyRate: string | object
       try {
         const rateValue = formData.royalty_rate.trim()
-        if (rateValue.includes('%')) {
-          royaltyRate = parseFloat(rateValue.replace('%', '')) / 100
-        } else if (rateValue.startsWith('{') || rateValue.startsWith('[')) {
+        if (rateValue.startsWith('{') || rateValue.startsWith('[')) {
           royaltyRate = JSON.parse(rateValue)
         } else {
-          royaltyRate = parseFloat(rateValue) / 100
+          royaltyRate = rateValue
         }
       } catch {
-        royaltyRate = 0
+        royaltyRate = formData.royalty_rate.trim()
+      }
+
+      if (!draftContractId) {
+        setError('Missing draft ID — please try uploading again.')
+        setErrorType('save')
+        setErrorTitle('Contract could not be saved')
+        setStep('review')
+        return
       }
 
       const contractData = {
         licensee_name: formData.licensee_name,
-        licensor_name: formData.licensor_name || null,
-        contract_start: formData.contract_start || null,
-        contract_end: formData.contract_end || null,
+        // contract_start_date / contract_end_date match the backend ContractConfirm field names.
+        // Both are validated as non-empty above before reaching this point.
+        contract_start_date: formData.contract_start_date,
+        contract_end_date: formData.contract_end_date,
         royalty_rate: royaltyRate,
         royalty_base: formData.royalty_base,
         territories: formData.territories
@@ -203,27 +421,27 @@ export default function UploadContractPage() {
         advance_payment: formData.advance_payment ? parseFloat(formData.advance_payment) : null,
       }
 
-      const contract = await createContract(contractData)
+      const contract = await confirmDraft(draftContractId, contractData)
+      clearDraftFromStorage()
       router.push(`/contracts/${contract.id}`)
     } catch (err) {
       setError('Your extracted terms are still here — nothing was lost. Please try saving again.')
       setErrorType('save')
+      setErrorTitle('Contract could not be saved')
       setStep('review')
     }
   }
 
   const handleInputChange = (field: string, value: string) => {
-    setFormData((prev: any) => ({ ...prev, [field]: value }))
+    setFormData((prev: any) => {
+      const next = { ...prev, [field]: value }
+      // Keep sessionStorage in sync during review
+      if (draftContractId) {
+        saveDraftToStorage(draftContractId, next)
+      }
+      return next
+    })
   }
-
-  // Derive friendly title for current error
-  const errorTitle = (() => {
-    if (!error) return ''
-    if (errorType === 'save') return 'Contract could not be saved'
-    if (errorType === 'extraction') return 'Could not read contract'
-    if (errorType === 'validation') return 'Invalid file'
-    return 'Upload failed'
-  })()
 
   // Whether the dropzone should show error state
   const showDropzoneError = step === 'upload' && error !== null && errorType !== 'save'
@@ -245,8 +463,44 @@ export default function UploadContractPage() {
         <p className="mt-2 text-gray-600">Upload a PDF contract to extract licensing terms</p>
       </div>
 
+      {/* Loading Draft (from ?draft= query param) */}
+      {loadingDraft && (
+        <div className="card text-center py-12 animate-fade-in">
+          <Loader2 className="w-16 h-16 text-primary-600 animate-spin mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Loading draft...</h2>
+          <p className="text-gray-600">Please wait</p>
+        </div>
+      )}
+
+      {/* Restore Draft Banner */}
+      {!loadingDraft && hasSavedDraft && step === 'upload' && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg mb-6 animate-fade-in">
+          <FileText className="w-5 h-5 text-blue-600 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-blue-900">Resume your previous upload</p>
+            <p className="text-sm text-blue-700 mt-0.5">
+              You have an unfinished review session. Would you like to pick up where you left off?
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleRestoreDraft}
+              className="btn-primary text-sm"
+            >
+              Resume
+            </button>
+            <button
+              onClick={handleDismissRestore}
+              className="btn-secondary text-sm"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Step 1: Upload */}
-      {step === 'upload' && (
+      {!loadingDraft && step === 'upload' && (
         <div className="card animate-fade-in">
           {showDropzoneError ? (
             /* Error state dropzone */
@@ -258,57 +512,131 @@ export default function UploadContractPage() {
               onDrop={handleDrop}
             >
               <div className="flex flex-col items-center animate-slide-up">
-                <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
-                  <AlertCircle className="w-8 h-8 text-red-500" />
-                </div>
-                <p className="text-base font-semibold text-gray-900 mb-1">{errorTitle}</p>
-                <p className="text-sm text-gray-500 mb-6 text-center max-w-xs">{error}</p>
-
-                {file && (
-                  <p className="text-xs text-gray-400 mb-6 flex items-center gap-1.5">
-                    <FileText className="w-3.5 h-3.5" />
-                    {file.name} &middot; {(file.size / 1024 / 1024).toFixed(2)} MB
-                  </p>
-                )}
-
-                {errorType === 'validation' ? (
-                  /* Validation errors: only offer file chooser, no retry */
-                  <label className="cursor-pointer">
-                    <input
-                      type="file"
-                      accept=".pdf"
-                      onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
-                      className="hidden"
-                    />
-                    <span className="btn-primary flex items-center gap-2">
-                      <FolderOpen className="w-4 h-4" />
-                      Choose a file
-                    </span>
-                  </label>
+                {/* 409 Duplicate Filename UI */}
+                {errorType === 'duplicate' && duplicateInfo ? (
+                  <>
+                    <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mb-4">
+                      <AlertCircle className="w-8 h-8 text-amber-500" />
+                    </div>
+                    <p className="text-base font-semibold text-gray-900 mb-2">{errorTitle}</p>
+                    <p className="text-sm text-gray-500 mb-2">
+                      Uploaded on {formatDate(duplicateInfo.created_at)}
+                    </p>
+                    <code className="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-gray-700 mb-6">
+                      {duplicateInfo.filename}
+                    </code>
+                    <div className="flex items-center gap-3 flex-wrap justify-center">
+                      <Link
+                        href={`/contracts/${duplicateInfo.id}`}
+                        className="btn-primary flex items-center gap-2"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        View existing contract
+                      </Link>
+                      <label className="cursor-pointer">
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                          className="hidden"
+                        />
+                        <span className="btn-secondary flex items-center gap-2">
+                          <FolderOpen className="w-4 h-4" />
+                          Choose a different file
+                        </span>
+                      </label>
+                    </div>
+                  </>
+                ) : errorType === 'incomplete_draft' && duplicateInfo ? (
+                  /* 409 Incomplete Draft UI */
+                  <>
+                    <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center mb-4">
+                      <AlertCircle className="w-8 h-8 text-amber-500" />
+                    </div>
+                    <p className="text-base font-semibold text-gray-900 mb-2">{errorTitle}</p>
+                    <p className="text-sm text-gray-500 mb-6 text-center max-w-xs">{error}</p>
+                    <div className="flex items-center gap-3 flex-wrap justify-center">
+                      {/* Use a button (not a Link) so we load the draft without navigating away.
+                          A Link to the same page won't re-mount the component, so the useEffect
+                          that reads ?draft= would not re-run. */}
+                      <button
+                        type="button"
+                        onClick={() => loadDraft(duplicateInfo.id)}
+                        className="btn-primary flex items-center gap-2"
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        Resume review
+                      </button>
+                      <label className="cursor-pointer">
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                          className="hidden"
+                        />
+                        <span className="btn-secondary flex items-center gap-2">
+                          <FolderOpen className="w-4 h-4" />
+                          Choose a different file
+                        </span>
+                      </label>
+                    </div>
+                  </>
                 ) : (
-                  /* Upload/extraction errors: offer retry + choose different file */
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={handleUpload}
-                      className="btn-primary flex items-center gap-2"
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                      Try again
-                    </button>
-                    <label className="cursor-pointer">
-                      <input
-                        ref={retryFileInputRef}
-                        type="file"
-                        accept=".pdf"
-                        onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
-                        className="hidden"
-                      />
-                      <span className="btn-secondary flex items-center gap-2">
-                        <FolderOpen className="w-4 h-4" />
-                        Choose different file
-                      </span>
-                    </label>
-                  </div>
+                  /* Generic error UI */
+                  <>
+                    <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mb-4">
+                      <AlertCircle className="w-8 h-8 text-red-500" />
+                    </div>
+                    <p className="text-base font-semibold text-gray-900 mb-1">{errorTitle}</p>
+                    <p className="text-sm text-gray-500 mb-6 text-center max-w-xs">{error}</p>
+
+                    {file && (
+                      <p className="text-xs text-gray-400 mb-6 flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5" />
+                        {file.name} &middot; {(file.size / 1024 / 1024).toFixed(2)} MB
+                      </p>
+                    )}
+
+                    {errorType === 'validation' ? (
+                      /* Validation errors: only offer file chooser, no retry */
+                      <label className="cursor-pointer">
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                          className="hidden"
+                        />
+                        <span className="btn-primary flex items-center gap-2">
+                          <FolderOpen className="w-4 h-4" />
+                          Choose a file
+                        </span>
+                      </label>
+                    ) : (
+                      /* Upload/extraction errors: offer retry + choose different file */
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={handleUpload}
+                          className="btn-primary flex items-center gap-2"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          Try again
+                        </button>
+                        <label className="cursor-pointer">
+                          <input
+                            ref={retryFileInputRef}
+                            type="file"
+                            accept=".pdf"
+                            onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                            className="hidden"
+                          />
+                          <span className="btn-secondary flex items-center gap-2">
+                            <FolderOpen className="w-4 h-4" />
+                            Choose different file
+                          </span>
+                        </label>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -363,7 +691,7 @@ export default function UploadContractPage() {
       )}
 
       {/* Step 2: Extracting */}
-      {step === 'extracting' && (
+      {!loadingDraft && step === 'extracting' && (
         <div className="card text-center py-12 animate-fade-in">
           <Loader2 className="w-16 h-16 text-primary-600 animate-spin mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">
@@ -374,15 +702,15 @@ export default function UploadContractPage() {
       )}
 
       {/* Step 3: Review */}
-      {step === 'review' && (
+      {!loadingDraft && step === 'review' && (
         <div className="card animate-fade-in">
           <div className="flex items-center gap-2 mb-6">
             <CheckCircle2 className="w-6 h-6 text-green-600" />
             <h2 className="text-xl font-semibold text-gray-900">Review Extracted Terms</h2>
           </div>
 
-          {/* Inline save error */}
-          {errorType === 'save' && error && (
+          {/* Inline save/validation error */}
+          {(errorType === 'save' || errorType === 'validation') && error && (
             <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg mb-6 animate-slide-up">
               <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
               <div>
@@ -421,39 +749,36 @@ export default function UploadContractPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Contract Start Date
+                  Contract Start Date *
                 </label>
                 <input
                   type="date"
-                  value={formData.contract_start}
-                  onChange={(e) => handleInputChange('contract_start', e.target.value)}
+                  value={formData.contract_start_date}
+                  onChange={(e) => handleInputChange('contract_start_date', e.target.value)}
                   className="input"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Contract End Date
+                  Contract End Date *
                 </label>
                 <input
                   type="date"
-                  value={formData.contract_end}
-                  onChange={(e) => handleInputChange('contract_end', e.target.value)}
+                  value={formData.contract_end_date}
+                  onChange={(e) => handleInputChange('contract_end_date', e.target.value)}
                   className="input"
                 />
               </div>
 
-              <div>
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Royalty Rate (%) *
+                  Royalty Rate *
                 </label>
-                <input
-                  type="text"
-                  value={formData.royalty_rate}
-                  onChange={(e) => handleInputChange('royalty_rate', e.target.value)}
+                <RoyaltyRateInput
+                  value={formData.royalty_rate ?? ''}
+                  onChange={(value) => handleInputChange('royalty_rate', value)}
                   required
-                  placeholder="e.g., 10 or 10%"
-                  className="input"
                 />
               </div>
 
@@ -537,19 +862,22 @@ export default function UploadContractPage() {
               <button
                 type="button"
                 onClick={() => {
+                  clearDraftFromStorage()
                   setStep('upload')
                   setFile(null)
                   setExtractedTerms(null)
                   setFormData({})
+                  setDraftContractId(null)
                   setError(null)
                   setErrorType(null)
+                  setErrorTitle('')
                 }}
                 className="btn-secondary"
               >
                 Cancel
               </button>
               <button type="submit" className="btn-primary">
-                Save Contract
+                Confirm and Save
               </button>
             </div>
           </form>
@@ -557,7 +885,7 @@ export default function UploadContractPage() {
       )}
 
       {/* Step 4: Saving */}
-      {step === 'saving' && (
+      {!loadingDraft && step === 'saving' && (
         <div className="card text-center py-12 animate-fade-in">
           <Loader2 className="w-16 h-16 text-primary-600 animate-spin mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Saving contract...</h2>

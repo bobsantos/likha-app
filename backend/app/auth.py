@@ -5,7 +5,7 @@ Provides user authentication and resource ownership verification.
 
 from fastapi import HTTPException, Header
 from typing import Optional
-from app.db import supabase
+from app.db import supabase, supabase_admin
 
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> str:
@@ -79,7 +79,7 @@ async def verify_contract_ownership(contract_id: str, user_id: str) -> None:
     """
     try:
         # Query contract by ID
-        result = supabase.table("contracts").select("*").eq("id", contract_id).execute()
+        result = supabase_admin.table("contracts").select("*").eq("id", contract_id).execute()
 
         # Contract not found
         if not result.data or len(result.data) == 0:
