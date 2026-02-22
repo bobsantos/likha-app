@@ -175,54 +175,60 @@ Week 2 focuses on:
 ### Frontend Tasks
 
 **Morning: Contract Detail View**
-- [ ] Create contract detail page: `/frontend/app/(app)/contracts/[id]/page.tsx`
+- [x] Create contract detail page: `/frontend/app/(app)/contracts/[id]/page.tsx`
   - Fetch contract by ID
   - Fetch sales periods
   - Display contract summary
   - Display sales history table
 
 **Components:**
-- `ContractHeader` - Licensee name, contract period, status
-- `ContractTerms` - Display all terms in readable format
-- `SalesHistoryTable` - List of sales periods
+- [x] `ContractHeader` - Licensee name, contract period, status badge
+- [x] `ContractTerms` - All terms in readable read-only format
+- [x] `SalesHistoryTable` - Table with Period, Net Sales, Royalty, MG Applied columns
+- [x] `SalesPeriodModal` - Modal for entering sales periods from the detail page
 
 **Afternoon: Sales Entry Form**
-- [ ] Create sales entry page: `/frontend/app/(app)/sales/new/page.tsx`
-- [ ] Build sales entry component: `/frontend/components/sales-entry-form.tsx`
-  - Contract selector
+- [x] Create sales entry page: `/frontend/app/(app)/sales/new/page.tsx`
+- [x] Build sales entry form (inline, 22 tests passing)
+  - Contract selector (dropdown of active contracts)
   - Period dates (start + end)
   - Net sales amount
-  - Category breakdown (conditional)
+  - Category breakdown (conditional — shown for category-rate contracts)
   - Display calculated royalty after submission
+  - Pre-selection via ?contract_id= query param
+  - "Enter Another Period" reset flow
+- [x] Add "Sales" link to navigation (`/components/nav.tsx`)
 
 **Components:**
-- `SalesEntryForm` - Form to add sales period
-- `CategoryBreakdownInput` - Multi-input for category sales
-- `RoyaltyResult` - Display calculated royalty + YTD
+- [x] Sales entry form (inline in page)
+- [x] Category breakdown inputs (conditional per contract type)
+- [x] Royalty result card (success state with net sales + calculated royalty)
 
 ### Backend Tasks
 
 **YTD Summary Implementation**
-- [ ] Implement `GET /api/sales/summary/{contract_id}` (currently 501)
+- [x] Implement `GET /api/sales/summary/{contract_id}` (currently 501)
   - Calculate YTD totals from sales_periods
   - Apply minimum guarantee logic
   - Track advance payment credit
   - Return RoyaltySummary model
 
-- [ ] Add minimum guarantee application in `royalty_calc.py`:
+- [x] Add minimum guarantee application in `royalty_calc.py`:
   - Quarterly minimum: `max(calculated, quarterly_min)`
   - Annual minimum: track shortfall, apply at year-end
   - Set `minimum_applied` flag correctly
 
-- [ ] Advance payment tracking:
+- [x] Advance payment tracking:
   - Deduct advance from Year 1 royalties
   - Track remaining credit
   - Reset for Year 2+
 
 **Success Criteria:**
-- `/api/sales/summary/{contract_id}` returns complete YTD data
-- Minimum guarantee correctly applied
-- Advance payment properly credited
+- [x] `/api/sales/summary/{contract_id}` returns complete YTD data
+- [x] Minimum guarantee correctly applied
+- [x] Advance payment properly credited
+- [x] 361 backend tests passing (327 existing + 34 new)
+- [x] TDD approach followed
 
 ---
 
