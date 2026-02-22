@@ -21,6 +21,7 @@ from app.auth import get_current_user, verify_contract_ownership
 from app.db import supabase_admin as supabase
 from app.models.sales import SalesPeriod
 from app.services.royalty_calc import calculate_royalty
+from app.services.storage import get_signed_url, upload_sales_report
 from app.services.spreadsheet_parser import (
     MappingError,
     ParseError,
@@ -48,6 +49,8 @@ class _UploadEntry:
     parsed: ParsedSheet
     contract_id: str
     user_id: str
+    raw_bytes: bytes = field(default_factory=bytes)
+    original_filename: str = "upload.xlsx"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -55,13 +58,21 @@ class _UploadEntry:
 _upload_store: dict[str, _UploadEntry] = {}
 
 
-def _store_upload(parsed: ParsedSheet, contract_id: str, user_id: str) -> str:
+def _store_upload(
+    parsed: ParsedSheet,
+    contract_id: str,
+    user_id: str,
+    raw_bytes: bytes = b"",
+    original_filename: str = "upload.xlsx",
+) -> str:
     """Store a parsed sheet in memory and return the upload_id."""
     upload_id = str(uuid.uuid4())
     _upload_store[upload_id] = _UploadEntry(
         parsed=parsed,
         contract_id=contract_id,
         user_id=user_id,
+        raw_bytes=raw_bytes,
+        original_filename=original_filename,
     )
     return upload_id
 
@@ -195,8 +206,8 @@ async def upload_file(
         if all(v == "ignore" for v in suggested.values()):
             mapping_source = "none"
 
-    # Store in memory
-    upload_id = _store_upload(parsed, contract_id, user_id)
+    # Store in memory (including raw bytes for later upload to storage at confirm time)
+    upload_id = _store_upload(parsed, contract_id, user_id, raw_bytes=file_content, original_filename=filename)
 
     return {
         "upload_id": upload_id,
@@ -356,6 +367,19 @@ async def confirm_upload(
     if category_breakdown:
         category_breakdown_for_db = {k: str(v) for k, v in category_breakdown.items()}
 
+    # Upload the original spreadsheet to Supabase Storage (best-effort)
+    source_file_path: Optional[str] = None
+    if entry.raw_bytes:
+        try:
+            source_file_path = upload_sales_report(
+                file_content=entry.raw_bytes,
+                user_id=user_id,
+                contract_id=contract_id,
+                filename=entry.original_filename,
+            )
+        except Exception as e:
+            logger.warning(f"Could not upload sales report file to storage: {e}")
+
     # Insert sales period
     insert_data: dict[str, Any] = {
         "contract_id": contract_id,
@@ -368,6 +392,8 @@ async def confirm_upload(
     }
     if mapped.licensee_reported_royalty is not None:
         insert_data["licensee_reported_royalty"] = str(mapped.licensee_reported_royalty)
+    if source_file_path is not None:
+        insert_data["source_file_path"] = source_file_path
 
     result_db = supabase.table("sales_periods").insert(insert_data).execute()
 
@@ -427,3 +453,43 @@ async def get_saved_mapping(
         "column_mapping": None,
         "updated_at": None,
     }
+
+
+@router.get("/upload/{contract_id}/periods/{period_id}/source-file")
+async def get_sales_report_download_url(
+    contract_id: str,
+    period_id: str,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """
+    Return a short-lived signed URL for downloading the original sales report file.
+
+    Returns 404 if the period has no source file stored.
+    """
+    # Auth + ownership
+    await verify_contract_ownership(contract_id, user_id)
+
+    # Fetch the sales period
+    period_result = (
+        supabase.table("sales_periods")
+        .select("id, contract_id, source_file_path")
+        .eq("id", period_id)
+        .eq("contract_id", contract_id)
+        .execute()
+    )
+    if not period_result.data:
+        raise HTTPException(status_code=404, detail="Sales period not found")
+
+    period = period_result.data[0]
+    source_file_path = period.get("source_file_path")
+
+    if not source_file_path:
+        raise HTTPException(status_code=404, detail="No source file stored for this sales period")
+
+    try:
+        signed_url = get_signed_url(source_file_path)
+    except Exception as e:
+        logger.error(f"Failed to generate signed URL for {source_file_path}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate download URL")
+
+    return {"download_url": signed_url}

@@ -93,6 +93,59 @@ def get_signed_url(storage_path: str, expiry_seconds: int = 3600) -> str:
         raise Exception(f"Failed to generate signed URL: {str(e)}")
 
 
+def upload_sales_report(
+    file_content: bytes,
+    user_id: str,
+    contract_id: str,
+    filename: str,
+) -> str:
+    """
+    Upload a sales report spreadsheet to Supabase Storage.
+
+    Storage path: sales-reports/{user_id}/{contract_id}/{sanitized_filename}
+    Using upsert=true so re-uploads overwrite orphaned files.
+
+    Args:
+        file_content: Binary content of the spreadsheet file
+        user_id: User ID for organizing storage by user
+        contract_id: Contract ID the report belongs to
+        filename: Original filename (e.g. "Q1_report.xlsx")
+
+    Returns:
+        Storage path (e.g., "sales-reports/user-123/contract-456/Q1_report.xlsx")
+
+    Raises:
+        Exception: If upload fails
+    """
+    if not supabase_admin:
+        raise ValueError("SUPABASE_SERVICE_KEY is required for storage operations")
+
+    # Sanitize filename: replace spaces and special chars with underscores
+    sanitized_filename = re.sub(r'[^\w\-.]', '_', filename)
+    storage_path = f"sales-reports/{user_id}/{contract_id}/{sanitized_filename}"
+
+    # Determine content type from extension
+    lower = filename.lower()
+    if lower.endswith(".csv"):
+        content_type = "text/csv"
+    else:
+        # Default to xlsx content type for .xlsx and anything else
+        content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    try:
+        supabase_admin.storage.from_("contracts").upload(
+            storage_path,
+            file_content,
+            {
+                "content-type": content_type,
+                "upsert": "true"
+            }
+        )
+        return storage_path
+    except Exception as e:
+        raise Exception(f"Failed to upload sales report to storage: {str(e)}")
+
+
 def delete_contract_pdf(pdf_url_or_path: str) -> bool:
     """
     Delete a contract PDF from Supabase Storage.

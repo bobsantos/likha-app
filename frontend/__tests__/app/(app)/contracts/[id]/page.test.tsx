@@ -3,9 +3,10 @@
  */
 
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { useParams } from 'next/navigation'
 import ContractDetailPage from '@/app/(app)/contracts/[id]/page'
-import { getContract, getSalesPeriods } from '@/lib/api'
+import { getContract, getSalesPeriods, getSalesReportDownloadUrl } from '@/lib/api'
 import type { Contract, SalesPeriod } from '@/types'
 
 // Mock next/navigation
@@ -17,12 +18,14 @@ jest.mock('next/navigation', () => ({
 jest.mock('@/lib/api', () => ({
   getContract: jest.fn(),
   getSalesPeriods: jest.fn(),
+  getSalesReportDownloadUrl: jest.fn(),
 }))
 
 
 describe('Contract Detail Page', () => {
   const mockGetContract = getContract as jest.MockedFunction<typeof getContract>
   const mockGetSalesPeriods = getSalesPeriods as jest.MockedFunction<typeof getSalesPeriods>
+  const mockGetSalesReportDownloadUrl = getSalesReportDownloadUrl as jest.MockedFunction<typeof getSalesReportDownloadUrl>
 
   // mockContract uses the correct Contract type field names:
   //   contract_start_date / contract_end_date (NOT contract_start / contract_end)
@@ -691,6 +694,111 @@ describe('Contract Detail Page', () => {
         const periodMatches = screen.getAllByText(/2 periods/i)
         expect(periodMatches.length).toBeGreaterThanOrEqual(1)
       })
+    })
+  })
+
+  // ============================================================
+  // Source file download icon
+  // ============================================================
+
+  describe('Source file download icon', () => {
+    const periodWithSourceFile: SalesPeriod = {
+      id: 'sp-with-file',
+      contract_id: 'contract-1',
+      period_start: '2024-01-01',
+      period_end: '2024-03-31',
+      net_sales: 100000,
+      category_breakdown: null,
+      royalty_calculated: 15000,
+      minimum_applied: false,
+      source_file_path: 'sales-reports/user-1/acme-q1-2024.xlsx',
+      created_at: '2024-04-01T00:00:00Z',
+    }
+
+    const periodWithoutSourceFile: SalesPeriod = {
+      id: 'sp-no-file',
+      contract_id: 'contract-1',
+      period_start: '2024-04-01',
+      period_end: '2024-06-30',
+      net_sales: 80000,
+      category_breakdown: null,
+      royalty_calculated: 12000,
+      minimum_applied: false,
+      source_file_path: null,
+      created_at: '2024-07-01T00:00:00Z',
+    }
+
+    it('shows download button when source_file_path is present', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithSourceFile])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /download source report/i })
+        ).toBeInTheDocument()
+      })
+    })
+
+    it('does not show download button when source_file_path is null', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithoutSourceFile])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        // Table renders (net sales should be visible)
+        expect(screen.getByText('$80,000.00')).toBeInTheDocument()
+      })
+
+      expect(
+        screen.queryByRole('button', { name: /download source report/i })
+      ).not.toBeInTheDocument()
+    })
+
+    it('calls getSalesReportDownloadUrl and opens result URL when download button is clicked', async () => {
+      const user = userEvent.setup()
+      const signedUrl = 'https://storage.example.com/signed/acme-q1-2024.xlsx?token=abc'
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithSourceFile])
+      mockGetSalesReportDownloadUrl.mockResolvedValue(signedUrl)
+
+      const windowOpenSpy = jest.spyOn(window, 'open').mockImplementation(() => null)
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(
+          screen.getByRole('button', { name: /download source report/i })
+        ).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: /download source report/i }))
+
+      await waitFor(() => {
+        expect(mockGetSalesReportDownloadUrl).toHaveBeenCalledWith('contract-1', 'sp-with-file')
+        expect(windowOpenSpy).toHaveBeenCalledWith(signedUrl, '_blank', 'noopener,noreferrer')
+      })
+
+      windowOpenSpy.mockRestore()
+    })
+
+    it('shows download button only for rows that have a source file when rows are mixed', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithSourceFile, periodWithoutSourceFile])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        // Both rows rendered
+        expect(screen.getByText('$100,000.00')).toBeInTheDocument()
+        expect(screen.getByText('$80,000.00')).toBeInTheDocument()
+      })
+
+      // Only one download button — for the row that has a source file
+      const downloadButtons = screen.getAllByRole('button', { name: /download source report/i })
+      expect(downloadButtons).toHaveLength(1)
     })
   })
 

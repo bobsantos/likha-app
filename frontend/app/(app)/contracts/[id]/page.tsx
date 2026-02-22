@@ -20,8 +20,9 @@ import {
   Upload,
   TrendingDown,
   TrendingUp,
+  Download,
 } from 'lucide-react'
-import { getContract, getSalesPeriods } from '@/lib/api'
+import { getContract, getSalesPeriods, getSalesReportDownloadUrl } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate } from '@/types'
 
@@ -103,6 +104,7 @@ export default function ContractDetailPage() {
   const [salesPeriods, setSalesPeriods] = useState<SalesPeriod[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [downloadingPeriodId, setDownloadingPeriodId] = useState<string | null>(null)
 
   const fetchData = async () => {
     try {
@@ -120,6 +122,19 @@ export default function ContractDetailPage() {
       setError(err instanceof Error ? err.message : 'Failed to load contract data')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDownloadSourceFile = async (periodId: string) => {
+    if (downloadingPeriodId) return
+    try {
+      setDownloadingPeriodId(periodId)
+      const url = await getSalesReportDownloadUrl(contractId, periodId)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch {
+      // Silently ignore — the backend will log the error
+    } finally {
+      setDownloadingPeriodId(null)
     }
   }
 
@@ -500,6 +515,7 @@ export default function ContractDetailPage() {
                   <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
                     Discrepancy
                   </th>
+                  <th className="py-3 px-4 w-10" aria-label="Source file" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
@@ -549,6 +565,18 @@ export default function ContractDetailPage() {
                           ? <DiscrepancyCell amount={discrepancy} percentage={discrepancyPct} />
                           : <span className="text-gray-400 text-sm">—</span>
                         }
+                      </td>
+                      <td className="py-3 px-4 w-10">
+                        {period.source_file_path && (
+                          <button
+                            onClick={() => handleDownloadSourceFile(period.id)}
+                            disabled={downloadingPeriodId === period.id}
+                            aria-label="Download source report"
+                            className="text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   )

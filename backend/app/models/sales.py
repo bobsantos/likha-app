@@ -16,6 +16,7 @@ class SalesPeriodCreate(BaseModel):
     net_sales: Decimal = Field(ge=0)
     category_breakdown: Optional[Dict[str, Decimal]] = None
     licensee_reported_royalty: Optional[Decimal] = None  # Phase 1
+    source_file_path: Optional[str] = None
 
 
 class SalesPeriod(SalesPeriodCreate):

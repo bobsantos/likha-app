@@ -247,3 +247,27 @@ export async function getSavedMapping(contractId: string): Promise<SavedMappingR
 
   return response.json()
 }
+
+/**
+ * Get a short-lived signed download URL for the source spreadsheet attached to
+ * a sales period.  The backend generates the URL from the stored
+ * source_file_path so the caller never needs to construct storage paths.
+ */
+export async function getSalesReportDownloadUrl(
+  contractId: string,
+  periodId: string
+): Promise<string> {
+  const headers = await getAuthHeaders()
+
+  const response = await fetch(
+    `${getResolvedApiUrl()}/api/sales/upload/${contractId}/periods/${periodId}/source-file`,
+    { headers }
+  )
+
+  if (!response.ok) {
+    throw new ApiError('Failed to get download URL', response.status)
+  }
+
+  const data = await response.json()
+  return data.download_url as string
+}

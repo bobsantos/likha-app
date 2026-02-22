@@ -1269,3 +1269,263 @@ class TestGetMappingReturnsNullWhenNoneExists:
         assert result["licensee_name"] == "New Licensee LLC"
         assert result["column_mapping"] is None
         assert result["updated_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# Confirm endpoint: storage upload behaviour
+# ---------------------------------------------------------------------------
+
+class TestConfirmEndpointUploadsFileToStorage:
+    """Confirm endpoint uploads the original spreadsheet to Supabase Storage."""
+
+    @pytest.mark.asyncio
+    async def test_confirm_calls_upload_sales_report_and_stores_path(self):
+        """When raw_bytes are present, confirm should upload and store source_file_path."""
+        rows = [
+            ["Net Sales"],
+            [50000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        column_mapping = {"Net Sales": "net_sales"}
+        contract = _make_db_contract(royalty_rate="8%")
+
+        storage_path = "sales-reports/user-123/contract-123/report.xlsx"
+        inserted_period = {
+            **_make_db_sales_period(net_sales="50000", royalty_calculated="4000"),
+            "source_file_path": storage_path,
+        }
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.routers.sales_upload.upload_sales_report", return_value=storage_path) as mock_upload:
+
+            from app.routers.sales_upload import _upload_store, _UploadEntry
+            from app.services.spreadsheet_parser import parse_upload
+            import uuid
+
+            upload_id = str(uuid.uuid4())
+            parsed = parse_upload(xlsx_bytes, "report.xlsx")
+            _upload_store[upload_id] = _UploadEntry(
+                parsed=parsed,
+                contract_id="contract-123",
+                user_id="user-123",
+                raw_bytes=xlsx_bytes,
+                original_filename="report.xlsx",
+            )
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        mock_upload.assert_called_once_with(
+            file_content=xlsx_bytes,
+            user_id="user-123",
+            contract_id="contract-123",
+            filename="report.xlsx",
+        )
+        assert result.source_file_path == storage_path
+
+    @pytest.mark.asyncio
+    async def test_confirm_continues_if_storage_upload_fails(self):
+        """A storage upload failure should not abort the confirm — it logs a warning and continues."""
+        rows = [
+            ["Net Sales"],
+            [50000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        column_mapping = {"Net Sales": "net_sales"}
+        contract = _make_db_contract(royalty_rate="8%")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.routers.sales_upload.upload_sales_report", side_effect=Exception("Storage down")):
+
+            from app.routers.sales_upload import _upload_store, _UploadEntry
+            from app.services.spreadsheet_parser import parse_upload
+            import uuid
+
+            upload_id = str(uuid.uuid4())
+            parsed = parse_upload(xlsx_bytes, "report.xlsx")
+            _upload_store[upload_id] = _UploadEntry(
+                parsed=parsed,
+                contract_id="contract-123",
+                user_id="user-123",
+                raw_bytes=xlsx_bytes,
+                original_filename="report.xlsx",
+            )
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            # Should not raise even though storage upload failed
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        assert result.id == "sp-1"
+        # source_file_path should be None since upload failed
+        assert result.source_file_path is None
+
+
+# ---------------------------------------------------------------------------
+# GET /api/sales/upload/{contract_id}/periods/{period_id}/source-file
+# ---------------------------------------------------------------------------
+
+class TestGetSalesReportDownloadUrl:
+    """GET source-file endpoint returns a signed URL for the stored spreadsheet."""
+
+    @pytest.mark.asyncio
+    async def test_returns_signed_url_when_source_file_exists(self):
+        """Should return a download_url when source_file_path is set on the period."""
+        storage_path = "sales-reports/user-123/contract-123/report.xlsx"
+        period_row = {
+            "id": "sp-1",
+            "contract_id": "contract-123",
+            "source_file_path": storage_path,
+        }
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.routers.sales_upload.get_signed_url", return_value="https://signed.url/report.xlsx") as mock_signed:
+
+            mock_period_exec = MagicMock()
+            mock_period_exec.execute.return_value = Mock(data=[period_row])
+            mock_period_eq2 = MagicMock()
+            mock_period_eq2.execute.return_value = Mock(data=[period_row])
+            mock_period_eq1 = MagicMock()
+            mock_period_eq1.eq.return_value = mock_period_exec
+            mock_period_sel = MagicMock()
+            mock_period_sel.eq.return_value = mock_period_eq1
+            mock_periods_t = MagicMock()
+            mock_periods_t.select.return_value = mock_period_sel
+
+            mock_supabase.table.return_value = mock_periods_t
+
+            from app.routers.sales_upload import get_sales_report_download_url
+
+            result = await get_sales_report_download_url(
+                contract_id="contract-123",
+                period_id="sp-1",
+                user_id="user-123",
+            )
+
+        assert result["download_url"] == "https://signed.url/report.xlsx"
+        mock_signed.assert_called_once_with(storage_path)
+
+    @pytest.mark.asyncio
+    async def test_returns_404_when_no_source_file_path(self):
+        """Should return 404 when the period has no source_file_path."""
+        period_row = {
+            "id": "sp-1",
+            "contract_id": "contract-123",
+            "source_file_path": None,
+        }
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            mock_period_exec = MagicMock()
+            mock_period_exec.execute.return_value = Mock(data=[period_row])
+            mock_period_eq1 = MagicMock()
+            mock_period_eq1.eq.return_value = mock_period_exec
+            mock_period_sel = MagicMock()
+            mock_period_sel.eq.return_value = mock_period_eq1
+            mock_periods_t = MagicMock()
+            mock_periods_t.select.return_value = mock_period_sel
+
+            mock_supabase.table.return_value = mock_periods_t
+
+            from app.routers.sales_upload import get_sales_report_download_url
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_sales_report_download_url(
+                    contract_id="contract-123",
+                    period_id="sp-1",
+                    user_id="user-123",
+                )
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_returns_404_when_period_not_found(self):
+        """Should return 404 when the sales period does not exist."""
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            mock_period_exec = MagicMock()
+            mock_period_exec.execute.return_value = Mock(data=[])
+            mock_period_eq1 = MagicMock()
+            mock_period_eq1.eq.return_value = mock_period_exec
+            mock_period_sel = MagicMock()
+            mock_period_sel.eq.return_value = mock_period_eq1
+            mock_periods_t = MagicMock()
+            mock_periods_t.select.return_value = mock_period_sel
+
+            mock_supabase.table.return_value = mock_periods_t
+
+            from app.routers.sales_upload import get_sales_report_download_url
+            from fastapi import HTTPException
+
+            with pytest.raises(HTTPException) as exc_info:
+                await get_sales_report_download_url(
+                    contract_id="contract-123",
+                    period_id="nonexistent",
+                    user_id="user-123",
+                )
+
+        assert exc_info.value.status_code == 404

@@ -100,6 +100,7 @@ export interface SalesPeriod {
   licensee_reported_royalty?: number | null   // Phase 1
   discrepancy_amount?: number | null           // Phase 1
   has_discrepancy?: boolean                    // Phase 1
+  source_file_path?: string | null             // storage path for the uploaded sales report spreadsheet
   created_at: string
 }
 
