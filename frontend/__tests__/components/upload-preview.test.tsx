@@ -5,7 +5,7 @@
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import UploadPreview from '@/components/sales-upload/upload-preview'
-import type { SalesPeriod } from '@/types'
+import type { SalesPeriod, UploadWarning } from '@/types'
 
 const sampleRows = [
   { 'Net Sales Amount': '12000.00', 'Product Category': 'Apparel', 'Royalty Due': '960.00' },
@@ -38,6 +38,7 @@ const defaultProps = {
   mappedHeaders,
   totalRows: 11,
   salesPeriod: defaultSalesPeriod,
+  uploadWarnings: [] as UploadWarning[],
   onConfirm: jest.fn(),
   onBack: jest.fn(),
   confirming: false,
@@ -198,5 +199,78 @@ describe('UploadPreview component', () => {
   it('does not show match indicator when licensee_reported_royalty is null', () => {
     render(<UploadPreview {...defaultProps} />)
     expect(screen.queryByText(/reported royalty matches/i)).not.toBeInTheDocument()
+  })
+
+  // --- New tests for upload warnings display (Change 3) ---
+
+  it('renders upload warnings when present', () => {
+    const warnings: UploadWarning[] = [
+      {
+        field: 'licensee_name',
+        extracted_value: 'Sunrise Apparel LLC',
+        contract_value: 'Sunrise Apparel Co.',
+        message: "Uploaded file says licensee is 'Sunrise Apparel LLC' — your contract says 'Sunrise Apparel Co.'. Verify the file is from the correct licensee.",
+      },
+    ]
+    render(<UploadPreview {...defaultProps} uploadWarnings={warnings} />)
+    expect(screen.getByText(/Uploaded file says licensee is/i)).toBeInTheDocument()
+    expect(screen.getByText(/Sunrise Apparel LLC/)).toBeInTheDocument()
+    expect(screen.getByText(/Sunrise Apparel Co\./)).toBeInTheDocument()
+  })
+
+  it('does not render warnings section when upload_warnings is empty', () => {
+    render(<UploadPreview {...defaultProps} uploadWarnings={[]} />)
+    // No warning callout cards should appear
+    expect(screen.queryByRole('region', { name: /upload warning/i })).not.toBeInTheDocument()
+  })
+
+  it('renders multiple warnings when multiple are present', () => {
+    const warnings: UploadWarning[] = [
+      {
+        field: 'licensee_name',
+        extracted_value: 'Sunrise Apparel LLC',
+        contract_value: 'Sunrise Apparel Co.',
+        message: "Uploaded file says licensee is 'Sunrise Apparel LLC' — your contract says 'Sunrise Apparel Co.'.",
+      },
+      {
+        field: 'royalty_rate',
+        extracted_value: '10',
+        contract_value: '8',
+        message: "Uploaded file uses rate 10% — your contract specifies 8%.",
+      },
+    ]
+    render(<UploadPreview {...defaultProps} uploadWarnings={warnings} />)
+    expect(screen.getByText(/Uploaded file says licensee/i)).toBeInTheDocument()
+    expect(screen.getByText(/Uploaded file uses rate 10%/i)).toBeInTheDocument()
+  })
+
+  it('warning shows extracted value and contract value', () => {
+    const warnings: UploadWarning[] = [
+      {
+        field: 'royalty_rate',
+        extracted_value: '10',
+        contract_value: '8',
+        message: "Uploaded file uses rate 10% — your contract specifies 8%. Verify your contract terms.",
+      },
+    ]
+    render(<UploadPreview {...defaultProps} uploadWarnings={warnings} />)
+    expect(screen.getByText(/10%.*8%|Uploaded file uses rate 10%/i)).toBeInTheDocument()
+  })
+
+  it('warnings are shown between the preview table and confirm button', () => {
+    const warnings: UploadWarning[] = [
+      {
+        field: 'licensee_name',
+        extracted_value: 'Wrong Co.',
+        contract_value: 'Right Co.',
+        message: "Licensee mismatch warning text here.",
+      },
+    ]
+    render(<UploadPreview {...defaultProps} uploadWarnings={warnings} />)
+    const warningEl = screen.getByText(/Licensee mismatch warning text here/i)
+    const confirmBtn = screen.getByRole('button', { name: /confirm/i })
+    // Both exist in the document
+    expect(warningEl).toBeInTheDocument()
+    expect(confirmBtn).toBeInTheDocument()
   })
 })

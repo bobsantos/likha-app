@@ -4,7 +4,7 @@ Pydantic models for sales periods.
 
 from datetime import date
 from decimal import Decimal
-from typing import Optional, Dict
+from typing import Any, Optional, Dict, List
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -26,6 +26,9 @@ class SalesPeriod(SalesPeriodCreate):
     minimum_applied: bool
     created_at: str
     updated_at: str
+    # upload_warnings is populated at confirm-time and is not persisted in the DB.
+    # It defaults to [] so that periods fetched from the DB are still valid.
+    upload_warnings: List[Dict[str, Any]] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

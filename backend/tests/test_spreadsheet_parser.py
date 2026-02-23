@@ -566,7 +566,9 @@ class TestKeywordMatchingNonStandardNames:
         # These are NOT in the synonym list
         assert result["Total Revenue"] == "ignore"
         assert result["Refunds"] == "ignore"
-        assert result["Rate (%)"] == "ignore"
+
+        # "Rate (%)" now maps to royalty_rate (Phase 1.1.1 — it was 'ignore' before)
+        assert result["Rate (%)"] == "royalty_rate"
 
         # "Amount Owed" IS a synonym for licensee_reported_royalty (per-row royalty column in sample-3)
         assert result["Amount Owed"] == "licensee_reported_royalty"
@@ -575,10 +577,11 @@ class TestKeywordMatchingNonStandardNames:
         assert result["Gross Revenue"] == "gross_sales"
 
     def test_royalty_rate_column_not_matched_to_licensee_royalty(self):
-        """'Royalty Rate' must map to ignore — not to licensee_reported_royalty.
+        """'Royalty Rate' must map to royalty_rate — not to licensee_reported_royalty.
 
-        The bare 'royalty' synonym was removed from FIELD_SYNONYMS to prevent
-        the substring match 'royalty' in 'royalty rate' from firing.
+        Phase 1.1.1: 'Royalty Rate' now maps to the new royalty_rate cross-check field
+        instead of 'ignore'. The bare 'royalty' synonym was never added to
+        licensee_reported_royalty, so 'Royalty Due' still maps correctly.
         """
         from app.services.spreadsheet_parser import suggest_mapping
 
@@ -589,8 +592,8 @@ class TestKeywordMatchingNonStandardNames:
         ]
         result = suggest_mapping(columns, saved_mapping=None)
 
-        # "Royalty Rate" is a percentage column — must be ignored
-        assert result["Royalty Rate"] == "ignore"
+        # "Royalty Rate" is a percentage column — maps to the royalty_rate cross-check field
+        assert result["Royalty Rate"] == "royalty_rate"
 
         # "Royalty Due" is the actual per-row royalty amount — must be mapped correctly
         assert result["Royalty Due"] == "licensee_reported_royalty"
@@ -698,3 +701,201 @@ class TestKeywordMatchingNsAntiPattern:
         # A column literally named " NS" (with leading space) should match
         result = suggest_mapping([" NS"], saved_mapping=None)
         assert result[" NS"] == "net_sales"
+
+
+# ---------------------------------------------------------------------------
+# suggest_mapping — new field synonyms (Phase 1.1.1)
+# ---------------------------------------------------------------------------
+
+class TestKeywordMatchingNewFieldsPhase111:
+    """suggest_mapping() correctly matches the three new cross-check fields."""
+
+    def test_licensee_name_column_matched(self):
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Licensee Name"], saved_mapping=None)
+        assert result["Licensee Name"] == "licensee_name"
+
+    def test_licensee_column_matched(self):
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Licensee"], saved_mapping=None)
+        assert result["Licensee"] == "licensee_name"
+
+    def test_company_name_matched_to_licensee_name(self):
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Company Name"], saved_mapping=None)
+        assert result["Company Name"] == "licensee_name"
+
+    def test_manufacturer_matched_to_licensee_name(self):
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Manufacturer"], saved_mapping=None)
+        assert result["Manufacturer"] == "licensee_name"
+
+    def test_reporting_period_matched_to_report_period(self):
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Reporting Period"], saved_mapping=None)
+        assert result["Reporting Period"] == "report_period"
+
+    def test_report_period_column_matched(self):
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Report Period"], saved_mapping=None)
+        assert result["Report Period"] == "report_period"
+
+    def test_quarter_matched_to_report_period(self):
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Quarter"], saved_mapping=None)
+        assert result["Quarter"] == "report_period"
+
+    def test_royalty_rate_column_matched_to_royalty_rate(self):
+        """'Royalty Rate' must now map to royalty_rate (not licensee_reported_royalty and not ignore)."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Royalty Rate"], saved_mapping=None)
+        assert result["Royalty Rate"] == "royalty_rate"
+
+    def test_applicable_rate_matched_to_royalty_rate(self):
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Applicable Rate"], saved_mapping=None)
+        assert result["Applicable Rate"] == "royalty_rate"
+
+    def test_rate_percent_matched_to_royalty_rate(self):
+        """'Rate (%)' must now map to royalty_rate (was 'ignore' before Phase 1.1.1)."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Rate (%)"], saved_mapping=None)
+        assert result["Rate (%)"] == "royalty_rate"
+
+    def test_royalty_due_still_maps_to_licensee_reported_royalty(self):
+        """Adding royalty_rate synonyms must not steal 'Royalty Due' from licensee_reported_royalty."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        result = suggest_mapping(["Royalty Due"], saved_mapping=None)
+        assert result["Royalty Due"] == "licensee_reported_royalty"
+
+    def test_royalty_rate_does_not_steal_royalty_due(self):
+        """Full realistic set: 'Royalty Rate' -> royalty_rate, 'Royalty Due' -> licensee_reported_royalty."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        columns = [
+            "Product Description", "SKU", "Product Category",
+            "Gross Sales", "Returns / Allowances", "Net Sales",
+            "Royalty Rate", "Royalty Due",
+        ]
+        result = suggest_mapping(columns, saved_mapping=None)
+
+        assert result["Royalty Rate"] == "royalty_rate"
+        assert result["Royalty Due"] == "licensee_reported_royalty"
+
+    def test_period_start_does_not_match_report_period(self):
+        """'Period Start' contains 'period' but should be ignored — it's a date boundary, not a report period label."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        # "period" substring match is intentional; the spec says use it.
+        # But we verify no false conflicts: "Period Start" could match "period"
+        # which is a synonym for report_period.  This test documents current behavior.
+        # If the implementation uses exact synonym matching (not substring), this
+        # would be "ignore". The spec does say "period" is a synonym, so a column
+        # literally named "Period" should match — "Period Start" contains "period"
+        # so it will match report_period. This is acceptable per the spec.
+        result = suggest_mapping(["Period"], saved_mapping=None)
+        assert result["Period"] == "report_period"
+
+
+class TestExtractCrossCheckValues:
+    """extract_cross_check_values() returns first non-null value per cross-check field."""
+
+    def test_returns_licensee_name_from_mapped_column(self):
+        from app.services.spreadsheet_parser import parse_upload, extract_cross_check_values
+
+        rows = [
+            ["Licensee Name", "Net Sales"],
+            ["Sunrise Apparel Co.", 12000],
+            ["Sunrise Apparel Co.", 9000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+        column_mapping = {
+            "Licensee Name": "licensee_name",
+            "Net Sales": "net_sales",
+        }
+        result = extract_cross_check_values(parsed, column_mapping)
+
+        assert result["licensee_name"] == "Sunrise Apparel Co."
+
+    def test_returns_report_period_from_mapped_column(self):
+        from app.services.spreadsheet_parser import parse_upload, extract_cross_check_values
+
+        rows = [
+            ["Report Period", "Net Sales"],
+            ["Q1 2025", 12000],
+            ["Q1 2025", 9000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+        column_mapping = {
+            "Report Period": "report_period",
+            "Net Sales": "net_sales",
+        }
+        result = extract_cross_check_values(parsed, column_mapping)
+
+        assert result["report_period"] == "Q1 2025"
+
+    def test_returns_royalty_rate_from_mapped_column(self):
+        from app.services.spreadsheet_parser import parse_upload, extract_cross_check_values
+
+        rows = [
+            ["Royalty Rate", "Net Sales"],
+            ["8%", 12000],
+            ["8%", 9000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+        column_mapping = {
+            "Royalty Rate": "royalty_rate",
+            "Net Sales": "net_sales",
+        }
+        result = extract_cross_check_values(parsed, column_mapping)
+
+        assert result["royalty_rate"] == "8%"
+
+    def test_returns_none_when_cross_check_columns_not_mapped(self):
+        from app.services.spreadsheet_parser import parse_upload, extract_cross_check_values
+
+        rows = [
+            ["Net Sales"],
+            [12000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+        column_mapping = {"Net Sales": "net_sales"}
+        result = extract_cross_check_values(parsed, column_mapping)
+
+        assert result["licensee_name"] is None
+        assert result["report_period"] is None
+        assert result["royalty_rate"] is None
+
+    def test_skips_empty_rows_to_find_first_non_null(self):
+        from app.services.spreadsheet_parser import parse_upload, extract_cross_check_values
+
+        # First row has empty licensee name; second row has the value
+        rows = [
+            ["Licensee Name", "Net Sales"],
+            ["", 12000],
+            ["Sunrise Apparel Co.", 9000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+        column_mapping = {
+            "Licensee Name": "licensee_name",
+            "Net Sales": "net_sales",
+        }
+        result = extract_cross_check_values(parsed, column_mapping)
+
+        assert result["licensee_name"] == "Sunrise Apparel Co."

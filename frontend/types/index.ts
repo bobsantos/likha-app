@@ -158,6 +158,9 @@ export type LikhaField =
   | 'product_category'
   | 'licensee_reported_royalty'
   | 'territory'
+  | 'report_period'
+  | 'licensee_name'
+  | 'royalty_rate'
   | 'ignore'
 
 export type MappingSource = 'saved' | 'suggested' | 'none'
@@ -192,4 +195,15 @@ export interface SavedMappingResponse {
   licensee_name: string
   column_mapping: ColumnMapping | null
   updated_at: string | null
+}
+
+export interface UploadWarning {
+  field: string
+  extracted_value: string
+  contract_value: string
+  message: string
+}
+
+export interface ConfirmSalesUploadResponse extends SalesPeriod {
+  upload_warnings: UploadWarning[]
 }

@@ -80,10 +80,20 @@ VALID_FIELDS = {
     "product_category",
     "licensee_reported_royalty",
     "territory",
+    "licensee_name",
+    "report_period",
+    "royalty_rate",
     "ignore",
 }
 
-# Keyword synonyms for column matching — order determines priority
+# Cross-check field names (informational — not used in calculation)
+CROSS_CHECK_FIELDS = {"licensee_name", "report_period", "royalty_rate"}
+
+# Keyword synonyms for column matching — order determines priority.
+# More specific entries must appear before broader ones to prevent false matches.
+# royalty_rate must come before licensee_reported_royalty so "royalty rate"
+# (which contains "rate") maps to royalty_rate rather than firing on a future
+# broad "royalty" synonym.
 FIELD_SYNONYMS: dict[str, list[str]] = {
     "net_sales": [
         "net sales", "net revenue", "net proceeds", "royalty base",
@@ -101,12 +111,26 @@ FIELD_SYNONYMS: dict[str, list[str]] = {
         "category", "product line", "product type", "line",
         "division", "collection", "segment"
     ],
+    # royalty_rate must be checked before licensee_reported_royalty so that
+    # "Royalty Rate" matches royalty_rate (via "royalty rate" or "rate")
+    # instead of accidentally matching licensee_reported_royalty.
+    "royalty_rate": [
+        "royalty rate", "applicable rate", "rate (%)", "rate applied", "rate",
+    ],
     "licensee_reported_royalty": [
         "royalty due", "amount due", "calculated royalty",
         "total royalty", "amount owed",
     ],
     "territory": [
         "territory", "region", "market", "country", "geography"
+    ],
+    "licensee_name": [
+        "licensee name", "licensee", "company name", "company",
+        "manufacturer", "partner",
+    ],
+    "report_period": [
+        "reporting period", "report period", "fiscal period",
+        "report date", "period covered", "quarter", "period",
     ],
 }
 
@@ -671,6 +695,52 @@ def apply_mapping(
         gross_sales=gross_sales_total if gross_sales_total else None,
         returns=returns_total if returns_total else None,
     )
+
+
+# ---------------------------------------------------------------------------
+# extract_cross_check_values
+# ---------------------------------------------------------------------------
+
+def extract_cross_check_values(
+    parsed: ParsedSheet,
+    column_mapping: dict[str, str],
+) -> dict[str, Optional[str]]:
+    """
+    Extract the first non-null value from each cross-check column in the mapping.
+
+    Cross-check fields are informational only (licensee_name, report_period,
+    royalty_rate).  They are not used in calculation but are compared against
+    contract data during the confirm step to produce upload warnings.
+
+    Args:
+        parsed: Result from parse_upload().
+        column_mapping: Maps detected column names to canonical Likha field names.
+
+    Returns:
+        Dict with keys "licensee_name", "report_period", "royalty_rate".
+        Each value is the first non-empty string found in the mapped column,
+        or None if the field is not mapped or all values are empty.
+    """
+    # Build reverse map: field_name -> first column mapped to it
+    field_to_col: dict[str, str] = {}
+    for col, field in column_mapping.items():
+        if field in CROSS_CHECK_FIELDS and field not in field_to_col:
+            field_to_col[field] = col
+
+    result: dict[str, Optional[str]] = {
+        "licensee_name": None,
+        "report_period": None,
+        "royalty_rate": None,
+    }
+
+    for field_name, col in field_to_col.items():
+        for row in parsed.all_rows:
+            val = row.get(col, "")
+            if val and str(val).strip():
+                result[field_name] = str(val).strip()
+                break
+
+    return result
 
 
 # ---------------------------------------------------------------------------

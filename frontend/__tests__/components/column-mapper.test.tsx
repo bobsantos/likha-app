@@ -7,6 +7,12 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import ColumnMapper from '@/components/sales-upload/column-mapper'
 import type { ColumnMapping, MappingSource } from '@/types'
 
+const sampleRows = [
+  { 'Net Sales Amount': '12000.00', 'Product Category': 'Apparel', SKU: 'APP-001', 'Royalty Due': '960.00' },
+  { 'Net Sales Amount': '8500.00', 'Product Category': 'Accessories', SKU: 'ACC-001', 'Royalty Due': '680.00' },
+  { 'Net Sales Amount': '5200.00', 'Product Category': 'Apparel', SKU: 'APP-002', 'Royalty Due': '416.00' },
+]
+
 const defaultProps = {
   detectedColumns: ['Net Sales Amount', 'Product Category', 'SKU', 'Royalty Due'],
   suggestedMapping: {
@@ -17,6 +23,8 @@ const defaultProps = {
   } as ColumnMapping,
   mappingSource: 'suggested' as MappingSource,
   licenseeName: 'Sunrise Apparel Co.',
+  sampleRows,
+  totalRows: 42,
   onMappingConfirm: jest.fn(),
   onBack: jest.fn(),
 }
@@ -28,12 +36,11 @@ describe('ColumnMapper component', () => {
 
   it('renders one row per detected column', () => {
     render(<ColumnMapper {...defaultProps} />)
-    // Each column should be shown as a code element
-    // Use getAllByText for columns that may also appear in dropdown options
-    expect(screen.getByText('Net Sales Amount')).toBeInTheDocument()
+    // Column names appear both in mapping controls and preview table headers — use getAllByText
+    expect(screen.getAllByText('Net Sales Amount').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Product Category').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByText('SKU')).toBeInTheDocument()
-    expect(screen.getByText('Royalty Due')).toBeInTheDocument()
+    expect(screen.getAllByText('SKU').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Royalty Due').length).toBeGreaterThanOrEqual(1)
     // Verify there are exactly 4 dropdowns (one per column)
     expect(screen.getAllByRole('combobox')).toHaveLength(4)
   })
@@ -181,5 +188,126 @@ describe('ColumnMapper component', () => {
     render(<ColumnMapper {...defaultProps} onBack={onBack} />)
     fireEvent.click(screen.getByRole('button', { name: /back/i }))
     expect(onBack).toHaveBeenCalledTimes(1)
+  })
+
+  // --- New tests for raw data preview table (Change 2) ---
+
+  it('renders raw data preview table below mapping controls', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    // The label for the preview table should appear
+    expect(screen.getByText(/raw data from your file/i)).toBeInTheDocument()
+  })
+
+  it('preview table shows detected column names as headers (not Likha field names)', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    // Raw column names from the file should appear as table headers
+    // Use getAllByText since column names may also appear in the mapping controls
+    expect(screen.getAllByText('Net Sales Amount').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Product Category').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('SKU').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Royalty Due').length).toBeGreaterThanOrEqual(1)
+    // Likha field labels should NOT appear as table headers (they appear only in dropdowns)
+    // "Net Sales" is an option label — the table header should be the raw name
+    const tableHeaders = screen.getAllByRole('columnheader')
+    const headerTexts = tableHeaders.map((th) => th.textContent)
+    expect(headerTexts).toContain('Net Sales Amount')
+    expect(headerTexts).not.toContain('net_sales')
+  })
+
+  it('preview table shows sample row data', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    expect(screen.getByText('12000.00')).toBeInTheDocument()
+    expect(screen.getByText('8500.00')).toBeInTheDocument()
+    expect(screen.getByText('APP-001')).toBeInTheDocument()
+    expect(screen.getByText('960.00')).toBeInTheDocument()
+  })
+
+  it('preview table shows up to 5 sample rows', () => {
+    const sixRows = [
+      { 'Net Sales Amount': '1000.00', 'Product Category': 'A', SKU: 'S1', 'Royalty Due': '80.00' },
+      { 'Net Sales Amount': '2000.00', 'Product Category': 'B', SKU: 'S2', 'Royalty Due': '160.00' },
+      { 'Net Sales Amount': '3000.00', 'Product Category': 'C', SKU: 'S3', 'Royalty Due': '240.00' },
+      { 'Net Sales Amount': '4000.00', 'Product Category': 'D', SKU: 'S4', 'Royalty Due': '320.00' },
+      { 'Net Sales Amount': '5000.00', 'Product Category': 'E', SKU: 'S5', 'Royalty Due': '400.00' },
+      { 'Net Sales Amount': '6000.00', 'Product Category': 'F', SKU: 'S6', 'Royalty Due': '480.00' },
+    ]
+    render(<ColumnMapper {...defaultProps} sampleRows={sixRows} totalRows={100} />)
+    // Should show at most 5 rows — the 6th row value should not appear
+    expect(screen.queryByText('6000.00')).not.toBeInTheDocument()
+    // First 5 rows should be present
+    expect(screen.getByText('5000.00')).toBeInTheDocument()
+  })
+
+  it('preview table shows correct row count label "showing N of M rows"', () => {
+    render(<ColumnMapper {...defaultProps} sampleRows={sampleRows} totalRows={42} />)
+    // Label should say showing 3 of 42 rows (3 sample rows, 42 total)
+    expect(screen.getByText(/showing 3 of 42 rows/i)).toBeInTheDocument()
+  })
+
+  it('preview table does not update when mapping dropdown values change', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    // Raw value should be present before any change
+    expect(screen.getByText('12000.00')).toBeInTheDocument()
+
+    // Change a dropdown
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[0], { target: { value: 'gross_sales' } })
+
+    // Raw data should still be present unchanged
+    expect(screen.getByText('12000.00')).toBeInTheDocument()
+    // The column header in the raw table should still show the original file column name
+    const tableHeaders = screen.getAllByRole('columnheader')
+    const headerTexts = tableHeaders.map((th) => th.textContent)
+    expect(headerTexts).toContain('Net Sales Amount')
+  })
+
+  // --- New tests for new mapping options (Change 1) ---
+
+  it('new mapping options appear in dropdowns: Report Period, Licensee Name, Royalty Rate', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    const selects = screen.getAllByRole('combobox')
+    // All selects should include the three new options
+    expect(selects[0]).toContainHTML('Report Period')
+    expect(selects[0]).toContainHTML('Licensee Name')
+    expect(selects[0]).toContainHTML('Royalty Rate')
+  })
+
+  it('can map a column to report_period', () => {
+    const onMappingConfirm = jest.fn()
+    render(<ColumnMapper {...defaultProps} onMappingConfirm={onMappingConfirm} />)
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[2], { target: { value: 'report_period' } })
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    expect(onMappingConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mapping: expect.objectContaining({ SKU: 'report_period' }),
+      })
+    )
+  })
+
+  it('can map a column to licensee_name', () => {
+    const onMappingConfirm = jest.fn()
+    render(<ColumnMapper {...defaultProps} onMappingConfirm={onMappingConfirm} />)
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[2], { target: { value: 'licensee_name' } })
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    expect(onMappingConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mapping: expect.objectContaining({ SKU: 'licensee_name' }),
+      })
+    )
+  })
+
+  it('can map a column to royalty_rate', () => {
+    const onMappingConfirm = jest.fn()
+    render(<ColumnMapper {...defaultProps} onMappingConfirm={onMappingConfirm} />)
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[2], { target: { value: 'royalty_rate' } })
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    expect(onMappingConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mapping: expect.objectContaining({ SKU: 'royalty_rate' }),
+      })
+    )
   })
 })

@@ -4,7 +4,7 @@
 
 import { supabase } from './supabase'
 import { getApiUrl } from './url-utils'
-import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse } from '@/types'
+import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse, ConfirmSalesUploadResponse } from '@/types'
 
 // Re-export so existing imports of getApiUrl from '@/lib/api' keep working.
 export { getApiUrl } from './url-utils'
@@ -213,7 +213,7 @@ export async function uploadSalesReport(
 export async function confirmSalesUpload(
   contractId: string,
   data: UploadConfirmRequest
-): Promise<SalesPeriod> {
+): Promise<ConfirmSalesUploadResponse> {
   const headers = await getAuthHeaders()
 
   const response = await fetch(`${getResolvedApiUrl()}/api/sales/upload/${contractId}/confirm`, {

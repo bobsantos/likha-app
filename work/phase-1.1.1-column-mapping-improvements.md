@@ -1,9 +1,22 @@
 # Phase 1.1.1 Spec: Column Mapping Improvements
 
 **Created:** 2026-02-22
-**Status:** Ready for engineering
+**Status:** Complete (frontend + backend)
+**Completed:** 2026-02-23
 **Branch:** `royalty-report-spreadsheet-upload-column-mappring` (amend this branch)
 **Depends on:** Phase 1.1 spec (`work/phase-1.1-spec.md`) — these are targeted amendments, not a replacement
+
+### Implementation status (2026-02-23)
+
+| Change | Status | Notes |
+|--------|--------|-------|
+| Change 1: New mapping targets in dropdown | DONE (frontend) | `report_period`, `licensee_name`, `royalty_rate` added to `FIELD_OPTIONS` in `column-mapper.tsx` and to `LikhaField` type in `types/index.ts` |
+| Change 1: New FIELD_SYNONYMS (backend) | DONE (backend) | `licensee_name`, `report_period`, `royalty_rate` added to `FIELD_SYNONYMS` in `spreadsheet_parser.py`; `royalty_rate` placed before `licensee_reported_royalty` to prevent conflict; `VALID_FIELDS` and `CROSS_CHECK_FIELDS` sets updated |
+| Change 1: Cross-check logic in confirm endpoint | DONE (backend) | `extract_cross_check_values()` added to `spreadsheet_parser.py`; `_build_upload_warnings()` added to `sales_upload.py`; confirm endpoint calls both and returns `upload_warnings` on the response; non-blocking (exceptions logged and swallowed); `upload_warnings` field added to `SalesPeriod` model with `default_factory=list` |
+| Change 2: Raw data preview table in Step 2 | DONE (frontend) | `ColumnMapper` now accepts `sampleRows` and `totalRows` props; renders read-only table below mapping controls; shows up to 5 rows; label "showing N of M rows"; column headers are raw file names; hover on mapping row highlights corresponding column in preview |
+| Change 3: Upload warnings in Step 3 | DONE (frontend) | `UploadPreview` accepts `uploadWarnings?: UploadWarning[]`; renders amber callout cards between royalty calc card and confirm button; non-blocking; `UploadWarning` interface and `ConfirmSalesUploadResponse` type added to `types/index.ts`; `confirmSalesUpload` in `api.ts` updated to return `ConfirmSalesUploadResponse`; upload page captures and passes warnings through |
+
+All tests pass: 480 backend tests, 352 frontend tests.
 
 ---
 

@@ -16,7 +16,7 @@ import { Upload, FileText, Check, AlertCircle, Loader2 } from 'lucide-react'
 import { getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload } from '@/lib/api'
 import ColumnMapper from '@/components/sales-upload/column-mapper'
 import UploadPreview, { type MappedHeader } from '@/components/sales-upload/upload-preview'
-import type { Contract, UploadPreviewResponse, SalesPeriod, ColumnMapping } from '@/types'
+import type { Contract, UploadPreviewResponse, SalesPeriod, ColumnMapping, UploadWarning } from '@/types'
 
 type WizardStep = 1 | 2 | 3
 
@@ -342,6 +342,7 @@ export default function SalesUploadPage() {
   const [confirmedMapping, setConfirmedMapping] = useState<ColumnMapping | null>(null)
   const [saveMapping, setSaveMapping] = useState(true)
   const [salesPeriod, setSalesPeriod] = useState<SalesPeriod | null>(null)
+  const [uploadWarnings, setUploadWarnings] = useState<UploadWarning[]>([])
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
 
@@ -384,14 +385,15 @@ export default function SalesUploadPage() {
     setConfirming(true)
     setConfirmError(null)
     try {
-      const period = await confirmSalesUpload(contractId, {
+      const response = await confirmSalesUpload(contractId, {
         upload_id: uploadPreview.upload_id,
         column_mapping: mapping,
         period_start: uploadPreview.period_start,
         period_end: uploadPreview.period_end,
         save_mapping: save,
       })
-      setSalesPeriod(period)
+      setSalesPeriod(response)
+      setUploadWarnings(response.upload_warnings ?? [])
       setStep(3)
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : 'Failed to create sales period')
@@ -448,6 +450,9 @@ export default function SalesUploadPage() {
             product_category: 'Product Category',
             licensee_reported_royalty: 'Licensee Reported Royalty',
             territory: 'Territory',
+            report_period: 'Report Period',
+            licensee_name: 'Licensee Name',
+            royalty_rate: 'Royalty Rate',
           }
           return {
             originalColumn: col,
@@ -524,6 +529,8 @@ export default function SalesUploadPage() {
               suggestedMapping={uploadPreview.suggested_mapping}
               mappingSource={uploadPreview.mapping_source}
               licenseeName={contract?.licensee_name ?? contractName}
+              sampleRows={uploadPreview.sample_rows}
+              totalRows={uploadPreview.total_rows}
               onMappingConfirm={handleMappingConfirm}
               onBack={() => setStep(1)}
             />
@@ -536,6 +543,7 @@ export default function SalesUploadPage() {
             mappedHeaders={mappedHeaders}
             totalRows={uploadPreview.total_rows}
             salesPeriod={salesPeriod}
+            uploadWarnings={uploadWarnings}
             onConfirm={handlePreviewConfirm}
             onBack={() => setStep(2)}
             confirming={confirming}

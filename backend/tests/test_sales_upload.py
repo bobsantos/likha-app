@@ -1529,3 +1529,649 @@ class TestGetSalesReportDownloadUrl:
                 )
 
         assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Confirm endpoint: cross-check warnings (Phase 1.1.1)
+# ---------------------------------------------------------------------------
+
+def _make_confirm_context(rows, column_mapping, contract, inserted_period):
+    """
+    Helper to build a complete confirm_upload test context.
+    Returns (upload_id, mock_supabase_patcher, mock_ownership_patcher).
+    """
+    import uuid
+    from app.routers.sales_upload import _upload_store, _UploadEntry
+    from app.services.spreadsheet_parser import parse_upload
+
+    xlsx_bytes = _make_xlsx_bytes(rows)
+    parsed = parse_upload(xlsx_bytes, "report.xlsx")
+    upload_id = str(uuid.uuid4())
+    _upload_store[upload_id] = _UploadEntry(
+        parsed=parsed,
+        contract_id="contract-123",
+        user_id="user-123",
+    )
+    return upload_id, xlsx_bytes
+
+
+class TestConfirmEndpointCrossCheckWarnings:
+    """Confirm endpoint emits upload_warnings for cross-check field mismatches."""
+
+    @pytest.mark.asyncio
+    async def test_no_cross_check_columns_mapped_gives_empty_warnings(self):
+        """When no cross-check columns are in the mapping, upload_warnings is empty."""
+        rows = [
+            ["Net Sales"],
+            [50000],
+        ]
+        column_mapping = {"Net Sales": "net_sales"}
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        assert hasattr(result, "upload_warnings")
+        assert result.upload_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_licensee_name_match_gives_no_warning(self):
+        """Licensee name in file matches contract — no warning."""
+        rows = [
+            ["Licensee Name", "Net Sales"],
+            ["Sunrise Apparel Co.", 50000],
+        ]
+        column_mapping = {
+            "Licensee Name": "licensee_name",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        # Exact match (case-insensitive) — no warning
+        licensee_warnings = [w for w in result.upload_warnings if w["field"] == "licensee_name"]
+        assert licensee_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_licensee_name_mismatch_gives_warning(self):
+        """Licensee name in file does not match contract — warning returned."""
+        rows = [
+            ["Licensee Name", "Net Sales"],
+            ["Sunrise Apparel LLC", 50000],  # LLC vs Co. — mismatch
+        ]
+        column_mapping = {
+            "Licensee Name": "licensee_name",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        licensee_warnings = [w for w in result.upload_warnings if w["field"] == "licensee_name"]
+        assert len(licensee_warnings) == 1
+        warning = licensee_warnings[0]
+        assert warning["extracted_value"] == "Sunrise Apparel LLC"
+        assert warning["contract_value"] == "Sunrise Apparel Co."
+        assert "Sunrise Apparel LLC" in warning["message"]
+        assert "Sunrise Apparel Co." in warning["message"]
+
+    @pytest.mark.asyncio
+    async def test_licensee_name_substring_match_gives_no_warning(self):
+        """Extracted name is a substring of the contract name — no warning (substring match)."""
+        rows = [
+            ["Licensee Name", "Net Sales"],
+            ["Sunrise Apparel", 50000],  # substring of "Sunrise Apparel Co."
+        ]
+        column_mapping = {
+            "Licensee Name": "licensee_name",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        licensee_warnings = [w for w in result.upload_warnings if w["field"] == "licensee_name"]
+        assert licensee_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_royalty_rate_match_gives_no_warning(self):
+        """Royalty rate in file matches contract flat rate — no warning."""
+        rows = [
+            ["Royalty Rate", "Net Sales"],
+            ["8%", 50000],
+        ]
+        column_mapping = {
+            "Royalty Rate": "royalty_rate",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        rate_warnings = [w for w in result.upload_warnings if w["field"] == "royalty_rate"]
+        assert rate_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_royalty_rate_mismatch_gives_warning(self):
+        """Royalty rate in file differs from contract flat rate — warning returned."""
+        rows = [
+            ["Royalty Rate", "Net Sales"],
+            ["10%", 50000],  # contract is 8%
+        ]
+        column_mapping = {
+            "Royalty Rate": "royalty_rate",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        rate_warnings = [w for w in result.upload_warnings if w["field"] == "royalty_rate"]
+        assert len(rate_warnings) == 1
+        warning = rate_warnings[0]
+        assert "10" in warning["extracted_value"]
+        assert "8" in warning["contract_value"]
+        assert "10" in warning["message"]
+        assert "8" in warning["message"]
+
+    @pytest.mark.asyncio
+    async def test_royalty_rate_check_skipped_for_category_rate_contract(self):
+        """royalty_rate cross-check is skipped when contract uses category rates."""
+        rows = [
+            ["Product Category", "Royalty Rate", "Net Sales"],
+            ["Apparel", "10%", 50000],
+        ]
+        column_mapping = {
+            "Product Category": "product_category",
+            "Royalty Rate": "royalty_rate",
+            "Net Sales": "net_sales",
+        }
+        # Category-rate contract (dict royalty_rate)
+        contract = _make_db_contract(
+            royalty_rate={"Apparel": "8%", "Accessories": "10%"},
+            licensee_name="Sunrise Apparel Co.",
+        )
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        # No royalty_rate warning — category-rate contracts are skipped
+        rate_warnings = [w for w in result.upload_warnings if w["field"] == "royalty_rate"]
+        assert rate_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_report_period_overlap_gives_no_warning(self):
+        """Report period in file overlaps with period_start/period_end — no warning."""
+        rows = [
+            ["Report Period", "Net Sales"],
+            ["Q1 2025", 50000],
+        ]
+        column_mapping = {
+            "Report Period": "report_period",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            # period_start = 2025-01-01 = Q1 start — overlaps with "Q1 2025"
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        period_warnings = [w for w in result.upload_warnings if w["field"] == "report_period"]
+        assert period_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_report_period_no_overlap_gives_warning(self):
+        """Report period in file does not overlap with period_start/period_end — warning."""
+        rows = [
+            ["Report Period", "Net Sales"],
+            ["Q3 2025", 50000],  # July-Sept 2025
+        ]
+        column_mapping = {
+            "Report Period": "report_period",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            # period_start/end = Q1 2025 (Jan-Mar), file says Q3 2025 (Jul-Sep) — no overlap
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        period_warnings = [w for w in result.upload_warnings if w["field"] == "report_period"]
+        assert len(period_warnings) == 1
+        warning = period_warnings[0]
+        assert "Q3 2025" in warning["extracted_value"]
+        assert "Q3 2025" in warning["message"]
+
+    @pytest.mark.asyncio
+    async def test_report_period_unparseable_gives_no_warning(self):
+        """Unparseable report period string produces no warning (non-blocking)."""
+        rows = [
+            ["Report Period", "Net Sales"],
+            ["FY25-H1-CUSTOM-FORMAT-UNPARSEABLE", 50000],
+        ]
+        column_mapping = {
+            "Report Period": "report_period",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            # Must not raise — unparseable period is non-blocking
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        period_warnings = [w for w in result.upload_warnings if w["field"] == "report_period"]
+        assert period_warnings == []
+
+    @pytest.mark.asyncio
+    async def test_cross_check_is_non_blocking(self):
+        """Even with all three cross-check mismatches, confirm still succeeds (201)."""
+        rows = [
+            ["Licensee Name", "Royalty Rate", "Report Period", "Net Sales"],
+            ["Wrong Licensee", "15%", "Q3 2025", 50000],
+        ]
+        column_mapping = {
+            "Licensee Name": "licensee_name",
+            "Royalty Rate": "royalty_rate",
+            "Report Period": "report_period",
+            "Net Sales": "net_sales",
+        }
+        contract = _make_db_contract(royalty_rate="8%", licensee_name="Sunrise Apparel Co.")
+        inserted_period = _make_db_sales_period(net_sales="50000", royalty_calculated="4000")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            mock_upsert_result = MagicMock()
+            mock_upsert_result.execute.return_value = Mock(data=[{}])
+            mock_mapping_t = MagicMock()
+            mock_mapping_t.upsert.return_value = mock_upsert_result
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return mock_mapping_t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            # Must not raise — cross-checks are non-blocking
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        # Should have warnings but still return a valid period
+        assert result.id == "sp-1"
+        assert len(result.upload_warnings) >= 2  # at least licensee + royalty_rate warnings

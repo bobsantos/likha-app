@@ -9,7 +9,7 @@
 'use client'
 
 import { AlertCircle, ArrowLeft, Loader2, CheckCircle } from 'lucide-react'
-import type { SalesPeriod } from '@/types'
+import type { SalesPeriod, UploadWarning } from '@/types'
 
 export interface MappedHeader {
   originalColumn: string
@@ -22,6 +22,7 @@ export interface UploadPreviewProps {
   mappedHeaders: MappedHeader[]
   totalRows: number
   salesPeriod: SalesPeriod
+  uploadWarnings?: UploadWarning[]
   onConfirm: () => void
   onBack: () => void
   confirming: boolean
@@ -42,6 +43,7 @@ export default function UploadPreview({
   mappedHeaders,
   totalRows,
   salesPeriod,
+  uploadWarnings = [],
   onConfirm,
   onBack,
   confirming,
@@ -186,6 +188,21 @@ export default function UploadPreview({
           )}
         </div>
       </div>
+
+      {/* Upload warnings — non-blocking amber callout cards */}
+      {uploadWarnings.length > 0 && (
+        <div className="space-y-3">
+          {uploadWarnings.map((warning, i) => (
+            <div
+              key={i}
+              className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg"
+            >
+              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-800">{warning.message}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Error message */}
       {confirmError && (
