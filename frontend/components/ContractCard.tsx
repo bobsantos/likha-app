@@ -4,7 +4,7 @@
 
 import Link from 'next/link'
 import { format } from 'date-fns'
-import { Calendar, MapPin, DollarSign, BarChart3, ArrowRight } from 'lucide-react'
+import { Calendar, MapPin, Banknote, BarChart3, ArrowRight } from 'lucide-react'
 import type { Contract, TieredRate, CategoryRate } from '@/types'
 
 interface ContractCardProps {
@@ -169,16 +169,16 @@ export default function ContractCard({ contract }: ContractCardProps) {
             {contract.territories && contract.territories.length > 0 && (
               <div className="flex items-center gap-2">
                 <MapPin className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                <div className="flex justify-between w-full">
-                  <span>Territories:</span>
-                  <span className="text-gray-900 font-medium">{contract.territories.join(', ')}</span>
+                <div className="flex justify-between w-full min-w-0">
+                  <span className="flex-shrink-0">Territories:</span>
+                  <span className="text-gray-900 font-medium truncate ml-2">{contract.territories.join(', ')}</span>
                 </div>
               </div>
             )}
 
             {contract.minimum_guarantee && (
               <div className="flex items-center gap-2">
-                <DollarSign className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                <Banknote className="w-4 h-4 text-gray-400 flex-shrink-0" />
                 <div className="flex justify-between w-full">
                   <span>Minimum Guarantee:</span>
                   <span className="text-gray-900 font-semibold">

@@ -2,7 +2,7 @@
  * DashboardSummary component - Display high-level metrics
  */
 
-import { FileText, DollarSign } from 'lucide-react'
+import { FileText, Banknote } from 'lucide-react'
 
 interface DashboardSummaryProps {
   totalContracts: number
@@ -47,7 +47,7 @@ export default function DashboardSummary({
             <p className="text-xs text-gray-500 mt-1">Total earnings this year</p>
           </div>
           <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
-            <DollarSign className="w-6 h-6 text-green-600 group-hover:scale-110 transition-transform" />
+            <Banknote className="w-6 h-6 text-green-600 group-hover:scale-110 transition-transform" />
           </div>
         </div>
       </div>

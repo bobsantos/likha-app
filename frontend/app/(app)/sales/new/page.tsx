@@ -10,7 +10,7 @@ import Link from 'next/link'
 import { format } from 'date-fns'
 import {
   ArrowLeft,
-  DollarSign,
+  Banknote,
   Calendar,
   CheckCircle2,
   AlertCircle,
@@ -210,7 +210,7 @@ export default function SalesNewPage() {
             {/* Royalty Result */}
             <div className="bg-primary-50 border border-primary-200 rounded-xl p-6 mb-6 text-left">
               <div className="flex items-center gap-2 mb-4">
-                <DollarSign className="w-5 h-5 text-primary-600" />
+                <Banknote className="w-5 h-5 text-primary-600" />
                 <h3 className="text-sm font-semibold text-primary-900 uppercase tracking-wide">
                   Royalty Calculated
                 </h3>
@@ -380,7 +380,7 @@ export default function SalesNewPage() {
                 className="block text-sm font-medium text-gray-700 mb-2"
               >
                 <span className="flex items-center gap-2">
-                  <DollarSign className="w-4 h-4" />
+                  <Banknote className="w-4 h-4" />
                   Net Sales Amount *
                 </span>
               </label>
