@@ -161,6 +161,26 @@ export default function ContractDetailPage() {
     }).format(amount)
   }
 
+  // Returns true if `value` is a plain dict of category->rate strings from the backend.
+  // e.g. { "Apparel": "10%", "Accessories": "12%", "Footwear": "8%" }
+  const isPlainCategoryDict = (value: unknown): value is Record<string, string> => {
+    return (
+      value !== null &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      !('type' in (value as object))
+    )
+  }
+
+  // Parse a rate value like "10%", "10", or 0.1 into a plain percentage number (10).
+  const parseRateToPercent = (raw: string | number): number | null => {
+    if (typeof raw === 'number') {
+      return raw <= 1 ? raw * 100 : raw
+    }
+    const match = raw.match(/(\d+(\.\d+)?)/)
+    return match ? parseFloat(match[1]) : null
+  }
+
   const formatRoyaltyRate = (rate: Contract['royalty_rate']): string => {
     if (typeof rate === 'string') {
       // Bare number string (e.g. "8", "10.5") — append "%" defensively
@@ -174,17 +194,37 @@ export default function ContractDetailPage() {
       return `${(rate * 100).toFixed(0)}%`
     }
 
-    if (rate !== null && typeof rate === 'object' && 'type' in rate) {
-      if (rate.type === 'tiered') {
-        const tierRate = rate as TieredRate
-        const rates = tierRate.tiers.map((t) => t.rate * 100)
-        const min = Math.min(...rates)
-        const max = Math.max(...rates)
-        return `${min.toFixed(0)}-${max.toFixed(0)}% (Tiered)`
+    if (rate !== null && typeof rate === 'object') {
+      // Plain dict from the backend: { "Apparel": "10%", "Footwear": "8%" }
+      if (isPlainCategoryDict(rate)) {
+        const percents = Object.values(rate)
+          .map(parseRateToPercent)
+          .filter((n): n is number => n !== null)
+        if (percents.length === 0) return 'Per Category'
+        const min = Math.min(...percents)
+        const max = Math.max(...percents)
+        if (min === max) return `${min.toFixed(0)}% (Per Category)`
+        return `${min.toFixed(0)}-${max.toFixed(0)}% (Per Category)`
       }
 
-      if (rate.type === 'category') {
-        return 'Category Rates'
+      if ('type' in rate) {
+        if (rate.type === 'tiered') {
+          const tierRate = rate as TieredRate
+          const rates = tierRate.tiers.map((t) => t.rate * 100)
+          const min = Math.min(...rates)
+          const max = Math.max(...rates)
+          return `${min.toFixed(0)}-${max.toFixed(0)}% (Tiered)`
+        }
+
+        if (rate.type === 'category') {
+          const catRate = rate as CategoryRate
+          const percents = Object.values(catRate.rates).map((r) => r * 100)
+          if (percents.length === 0) return 'Per Category'
+          const min = Math.min(...percents)
+          const max = Math.max(...percents)
+          if (min === max) return `${min.toFixed(0)}% (Per Category)`
+          return `${min.toFixed(0)}-${max.toFixed(0)}% (Per Category)`
+        }
       }
     }
 
@@ -347,6 +387,43 @@ export default function ContractDetailPage() {
                   <p className="font-medium text-gray-900">
                     {formatRoyaltyRate(contract.royalty_rate)}
                   </p>
+                  {/* Full per-category breakdown — shown when the backend returns a plain dict */}
+                  {contract.royalty_rate !== null && isPlainCategoryDict(contract.royalty_rate) && (
+                    <table className="mt-2 text-sm border-collapse">
+                      <tbody>
+                        {Object.entries(contract.royalty_rate as Record<string, string>).map(
+                          ([category, rate]) => (
+                            <tr key={category}>
+                              <td className="pr-4 py-0.5 text-gray-600">{category}</td>
+                              <td className="py-0.5 font-medium text-gray-900 tabular-nums">
+                                {rate}
+                              </td>
+                            </tr>
+                          ),
+                        )}
+                      </tbody>
+                    </table>
+                  )}
+                  {/* Full per-category breakdown — shown for the typed CategoryRate shape */}
+                  {contract.royalty_rate !== null &&
+                    typeof contract.royalty_rate === 'object' &&
+                    'type' in (contract.royalty_rate as object) &&
+                    (contract.royalty_rate as CategoryRate).type === 'category' && (
+                      <table className="mt-2 text-sm border-collapse">
+                        <tbody>
+                          {Object.entries((contract.royalty_rate as CategoryRate).rates).map(
+                            ([category, rate]) => (
+                              <tr key={category}>
+                                <td className="pr-4 py-0.5 text-gray-600">{category}</td>
+                                <td className="py-0.5 font-medium text-gray-900 tabular-nums">
+                                  {(rate * 100).toFixed(0)}%
+                                </td>
+                              </tr>
+                            ),
+                          )}
+                        </tbody>
+                      </table>
+                    )}
                 </div>
               </div>
 
