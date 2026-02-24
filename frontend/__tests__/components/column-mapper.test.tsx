@@ -84,6 +84,11 @@ describe('ColumnMapper component', () => {
     expect(screen.getByText(/columns matched by keyword/i)).toBeInTheDocument()
   })
 
+  it('shows "AI matched" banner when mappingSource is "ai"', () => {
+    render(<ColumnMapper {...defaultProps} mappingSource="ai" />)
+    expect(screen.getByText(/matched by AI/i)).toBeInTheDocument()
+  })
+
   it('shows "no suggestions" banner when mappingSource is "none"', () => {
     render(
       <ColumnMapper
@@ -458,5 +463,45 @@ describe('ColumnMapper component', () => {
         mapping: expect.objectContaining({ SKU: 'metadata' }),
       })
     )
+  })
+
+  // --- Per-column mapping source badges ---
+
+  describe('per-column mapping source badges', () => {
+    const mappingSources: Record<string, 'keyword' | 'ai' | 'none'> = {
+      'Net Sales Amount': 'ai',
+      'Product Category': 'keyword',
+      SKU: 'none',
+      'Royalty Due': 'ai',
+    }
+
+    it('renders "AI" badge for columns with source "ai"', () => {
+      render(<ColumnMapper {...defaultProps} mappingSources={mappingSources} />)
+      // Two columns have source "ai" — there should be two "AI" badges
+      const badges = screen.getAllByText('AI')
+      expect(badges.length).toBe(2)
+    })
+
+    it('renders "Auto" badge for columns with source "keyword"', () => {
+      render(<ColumnMapper {...defaultProps} mappingSources={mappingSources} />)
+      const badge = screen.getByText('Auto')
+      expect(badge).toBeInTheDocument()
+    })
+
+    it('renders no badge for columns with source "none"', () => {
+      // Only one column has source "none" (SKU). Since no badge is rendered for "none",
+      // verify by checking the total badge count: 2 "AI" + 1 "Auto" = 3 badges total.
+      render(<ColumnMapper {...defaultProps} mappingSources={mappingSources} />)
+      const aiBadges = screen.getAllByText('AI')
+      const autoBadges = screen.getAllByText('Auto')
+      expect(aiBadges.length + autoBadges.length).toBe(3)
+    })
+
+    it('works without mappingSources prop (backwards compatible)', () => {
+      // No mappingSources passed — no badges should appear, component should not crash
+      render(<ColumnMapper {...defaultProps} />)
+      expect(screen.queryByText('AI')).not.toBeInTheDocument()
+      expect(screen.queryByText('Auto')).not.toBeInTheDocument()
+    })
   })
 })

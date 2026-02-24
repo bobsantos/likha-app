@@ -527,9 +527,9 @@ class TestMappingSourceAi:
 
     def test_suggest_mapping_returns_ai_source_flag(self):
         """
-        suggest_mapping() with contract_context returns a tuple
-        (mapping_dict, mapping_source) where mapping_source is 'ai' when AI
-        resolved at least one previously-ignored column.
+        suggest_mapping() with contract_context returns a 3-tuple
+        (mapping_dict, mapping_source, col_sources) where mapping_source is
+        'ai' when AI resolved at least one previously-ignored column.
         """
         from app.services.spreadsheet_parser import suggest_mapping
 
@@ -549,7 +549,7 @@ class TestMappingSourceAi:
                 return_source=True,
             )
 
-        mapping, source = result
+        mapping, source, col_sources = result
         assert source == "ai"
         assert mapping["Rev"] == "net_sales"
 
@@ -574,7 +574,7 @@ class TestMappingSourceAi:
                 return_source=True,
             )
 
-        mapping, source = result
+        mapping, source, col_sources = result
         assert source == "suggested"
 
     def test_suggest_mapping_returns_none_source_when_all_ignore(self):
@@ -598,7 +598,7 @@ class TestMappingSourceAi:
                 return_source=True,
             )
 
-        mapping, source = result
+        mapping, source, col_sources = result
         assert source == "none"
         assert all(v == "ignore" for v in mapping.values())
 
@@ -630,3 +630,365 @@ class TestSuggestMappingBackwardCompatibility:
         assert result["Revenue"] == "net_sales"
         assert result["Cat"] == "product_category"
         assert result["New Col"] == "ignore"
+
+
+# ---------------------------------------------------------------------------
+# suggest_mapping() — sample_rows passed to claude_suggest
+# ---------------------------------------------------------------------------
+
+class TestSuggestMappingSampleValues:
+    """suggest_mapping() extracts per-column samples from sample_rows and passes
+    them to claude_suggest() instead of the previous hardcoded empty list."""
+
+    def test_sample_values_extracted_per_column(self):
+        """
+        When sample_rows are provided, claude_suggest receives the actual cell
+        values for each unresolved column.
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        # "Rev" and "Merch Desc" will not match any keyword synonym
+        column_names = ["Net Sales", "Rev", "Merch Desc"]
+        sample_rows = [
+            {"Net Sales": "12000", "Rev": "8500", "Merch Desc": "T-Shirt"},
+            {"Net Sales": "9000", "Rev": "7200", "Merch Desc": "Hat"},
+        ]
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales", "Merch Desc": "ignore"},
+        ) as mock_claude:
+            suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                sample_rows=sample_rows,
+            )
+
+        assert mock_claude.called
+        sent_columns = mock_claude.call_args[0][0]
+        # Find what samples were sent for "Rev"
+        rev_col = next(c for c in sent_columns if c["name"] == "Rev")
+        assert "8500" in rev_col["samples"]
+        assert "7200" in rev_col["samples"]
+        # Samples for "Merch Desc"
+        merch_col = next(c for c in sent_columns if c["name"] == "Merch Desc")
+        assert "T-Shirt" in merch_col["samples"]
+
+    def test_already_resolved_columns_not_in_sample_payload(self):
+        """
+        Columns resolved by keyword matching are not sent to claude_suggest,
+        so their samples don't appear in the payload.
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Net Sales", "Rev"]
+        sample_rows = [{"Net Sales": "12000", "Rev": "8500"}]
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},
+        ) as mock_claude:
+            suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                sample_rows=sample_rows,
+            )
+
+        assert mock_claude.called
+        sent_columns = mock_claude.call_args[0][0]
+        sent_names = [c["name"] for c in sent_columns]
+        # "Net Sales" was resolved by keyword — must not appear
+        assert "Net Sales" not in sent_names
+        assert "Rev" in sent_names
+
+    def test_none_sample_rows_sends_empty_samples(self):
+        """
+        When sample_rows is not provided (defaults to None), claude_suggest
+        still receives the unresolved columns but with samples=[].
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Rev"]
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},
+        ) as mock_claude:
+            suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                # no sample_rows argument
+            )
+
+        assert mock_claude.called
+        sent_columns = mock_claude.call_args[0][0]
+        rev_col = next(c for c in sent_columns if c["name"] == "Rev")
+        assert rev_col["samples"] == []
+
+    def test_empty_sample_rows_sends_empty_samples(self):
+        """
+        When sample_rows=[] (empty list), claude_suggest receives samples=[]
+        per column rather than raising an error.
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Rev"]
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},
+        ) as mock_claude:
+            suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                sample_rows=[],
+            )
+
+        assert mock_claude.called
+        sent_columns = mock_claude.call_args[0][0]
+        rev_col = next(c for c in sent_columns if c["name"] == "Rev")
+        assert rev_col["samples"] == []
+
+    def test_none_cell_values_excluded_from_samples(self):
+        """
+        None values in sample_rows are excluded from the samples list sent
+        to claude_suggest — only non-empty string values are included.
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Rev"]
+        sample_rows = [
+            {"Rev": "8500"},
+            {"Rev": None},
+            {"Rev": ""},
+            {"Rev": "7200"},
+        ]
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},
+        ) as mock_claude:
+            suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                sample_rows=sample_rows,
+            )
+
+        sent_columns = mock_claude.call_args[0][0]
+        rev_col = next(c for c in sent_columns if c["name"] == "Rev")
+        # None and "" should be excluded
+        assert None not in rev_col["samples"]
+        assert "" not in rev_col["samples"]
+        assert "8500" in rev_col["samples"]
+        assert "7200" in rev_col["samples"]
+
+    def test_samples_capped_at_five_values(self):
+        """
+        Only the first 5 non-empty values per column are sent to claude_suggest,
+        even when sample_rows has more.
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Rev"]
+        sample_rows = [{"Rev": str(i * 100)} for i in range(1, 8)]  # 7 rows
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},
+        ) as mock_claude:
+            suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                sample_rows=sample_rows,
+            )
+
+        sent_columns = mock_claude.call_args[0][0]
+        rev_col = next(c for c in sent_columns if c["name"] == "Rev")
+        assert len(rev_col["samples"]) <= 5
+
+
+# ---------------------------------------------------------------------------
+# suggest_mapping() — per-column mapping_sources
+# ---------------------------------------------------------------------------
+
+class TestMappingSources:
+    """suggest_mapping(return_source=True) returns a 3-tuple
+    (mapping, source_str, col_sources) where col_sources maps each column
+    name to its source: 'saved', 'keyword', 'ai', or 'none'."""
+
+    def test_returns_three_tuple_when_return_source_true(self):
+        """return_source=True now returns a 3-tuple (mapping, source, col_sources)."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Net Sales"]
+        contract_context = _make_contract_context()
+
+        with patch("app.services.spreadsheet_parser.claude_suggest", return_value={}):
+            result = suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                return_source=True,
+            )
+
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        mapping, source, col_sources = result
+        assert isinstance(mapping, dict)
+        assert isinstance(source, str)
+        assert isinstance(col_sources, dict)
+
+    def test_keyword_resolved_column_gets_keyword_source(self):
+        """A column resolved by keyword matching gets source='keyword'."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Net Sales"]
+        contract_context = _make_contract_context()
+
+        with patch("app.services.spreadsheet_parser.claude_suggest", return_value={}):
+            _, _, col_sources = suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                return_source=True,
+            )
+
+        assert col_sources["Net Sales"] == "keyword"
+
+    def test_ai_resolved_column_gets_ai_source(self):
+        """A column resolved by AI (was 'ignore' after keyword pass) gets source='ai'."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Rev"]  # does not match any keyword synonym
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},
+        ):
+            _, _, col_sources = suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                return_source=True,
+            )
+
+        assert col_sources["Rev"] == "ai"
+
+    def test_unresolved_column_gets_none_source(self):
+        """A column that neither keyword nor AI resolved gets source='none'."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["XYZ_MYSTERY_COL"]
+        contract_context = _make_contract_context()
+
+        with patch("app.services.spreadsheet_parser.claude_suggest", return_value={}):
+            _, _, col_sources = suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                return_source=True,
+            )
+
+        assert col_sources["XYZ_MYSTERY_COL"] == "none"
+
+    def test_saved_mapping_column_gets_saved_source(self):
+        """A column resolved from the saved mapping gets source='saved'."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Revenue"]
+        saved_mapping = {"Revenue": "net_sales"}
+        contract_context = _make_contract_context()
+
+        with patch("app.services.spreadsheet_parser.claude_suggest", return_value={}):
+            _, _, col_sources = suggest_mapping(
+                column_names,
+                saved_mapping=saved_mapping,
+                contract_context=contract_context,
+                return_source=True,
+            )
+
+        assert col_sources["Revenue"] == "saved"
+
+    def test_mixed_sources_per_column(self):
+        """
+        With a mix of columns, each gets the correct individual source label:
+        - "Net Sales" keyword-resolved → 'keyword'
+        - "Rev" AI-resolved → 'ai'
+        - "XYZ" neither resolved → 'none'
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Net Sales", "Rev", "XYZ"]
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},  # AI only resolves "Rev"
+        ):
+            _, _, col_sources = suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                return_source=True,
+            )
+
+        assert col_sources["Net Sales"] == "keyword"
+        assert col_sources["Rev"] == "ai"
+        assert col_sources["XYZ"] == "none"
+
+    def test_col_sources_covers_all_columns(self):
+        """col_sources has an entry for every column in column_names."""
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Net Sales", "Rev", "Category", "Junk Col"]
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},
+        ):
+            _, _, col_sources = suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                return_source=True,
+            )
+
+        assert set(col_sources.keys()) == set(column_names)
+
+    def test_overall_source_str_still_correct_with_new_return(self):
+        """
+        The second element (overall source_str) is still correct now that
+        the function returns a 3-tuple instead of a 2-tuple.
+        AI resolved at least one column → source_str == 'ai'.
+        """
+        from app.services.spreadsheet_parser import suggest_mapping
+
+        column_names = ["Rev"]
+        contract_context = _make_contract_context()
+
+        with patch(
+            "app.services.spreadsheet_parser.claude_suggest",
+            return_value={"Rev": "net_sales"},
+        ):
+            _, source, _ = suggest_mapping(
+                column_names,
+                saved_mapping=None,
+                contract_context=contract_context,
+                return_source=True,
+            )
+
+        assert source == "ai"

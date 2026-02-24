@@ -402,16 +402,21 @@ async def upload_file(
 
     # Determine mapping source
     if saved_mapping:
+        suggested, _, mapping_sources = suggest_mapping(
+            parsed.column_names,
+            saved_mapping=saved_mapping,
+            return_source=True,
+            sample_rows=parsed.sample_rows,
+        )
         mapping_source = "saved"
-        # Generate suggested mapping using saved mapping (no AI needed)
-        suggested = suggest_mapping(parsed.column_names, saved_mapping=saved_mapping)
     else:
         # Generate suggested mapping with AI second-pass for unresolved columns
-        suggested, mapping_source = suggest_mapping(
+        suggested, mapping_source, mapping_sources = suggest_mapping(
             parsed.column_names,
             saved_mapping=None,
             contract_context=contract_context,
             return_source=True,
+            sample_rows=parsed.sample_rows,
         )
 
     # Store in memory (including raw bytes for later upload to storage at confirm time)
@@ -427,6 +432,7 @@ async def upload_file(
         "sample_rows": parsed.sample_rows,
         "suggested_mapping": suggested,
         "mapping_source": mapping_source,
+        "mapping_sources": mapping_sources,
         "period_start": period_start,
         "period_end": period_end,
     }

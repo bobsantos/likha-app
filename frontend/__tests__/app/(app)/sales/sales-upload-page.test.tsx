@@ -176,6 +176,32 @@ describe('Sales Upload Wizard Page', () => {
     })
   })
 
+  it('shows AI banner in Step 2 when mapping_source is ai', async () => {
+    const aiPreview: UploadPreviewResponse = { ...mockUploadPreview, mapping_source: 'ai' }
+    mockUploadSalesReport.mockResolvedValue(aiPreview)
+    render(<SalesUploadPage />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/period start/i)).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+    fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+
+    const fileInput = screen.getByTestId('spreadsheet-file-input')
+    const file = new File(['test'], 'sales.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /upload.*parse/i })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /upload.*parse/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/matched by AI/i)).toBeInTheDocument()
+    })
+  })
+
   it('advances to Step 3 (preview) after mapping is confirmed', async () => {
     mockUploadSalesReport.mockResolvedValue(mockUploadPreview)
     mockConfirmSalesUpload.mockResolvedValue(mockSalesPeriod)

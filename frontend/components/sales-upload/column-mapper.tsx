@@ -16,6 +16,7 @@ export interface ColumnMapperProps {
   detectedColumns: string[]
   suggestedMapping: ColumnMapping
   mappingSource: MappingSource
+  mappingSources?: Record<string, 'keyword' | 'ai' | 'none'>
   licenseeName: string
   sampleRows: Record<string, string>[]
   totalRows: number
@@ -56,6 +57,7 @@ interface MappingRowProps {
   isLastRow: boolean
   onHover: (column: string | null) => void
   sampleValues: string[]
+  columnSource?: 'keyword' | 'ai' | 'none'
 }
 
 function MappingRow({
@@ -65,6 +67,7 @@ function MappingRow({
   isLastRow,
   onHover,
   sampleValues,
+  columnSource,
 }: MappingRowProps) {
   const isIgnored = selectedField === 'ignore'
   const isMetadata = selectedField === 'metadata'
@@ -85,6 +88,16 @@ function MappingRow({
         <code className="text-sm text-gray-800 font-mono bg-gray-100 px-2 py-0.5 rounded truncate max-w-full">
           {detectedColumn}
         </code>
+        {columnSource === 'ai' && (
+          <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 flex-shrink-0">
+            AI
+          </span>
+        )}
+        {columnSource === 'keyword' && (
+          <span className="text-xs font-medium px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 flex-shrink-0">
+            Auto
+          </span>
+        )}
       </div>
 
       {/* Col 2: Field dropdown */}
@@ -146,6 +159,7 @@ export default function ColumnMapper({
   detectedColumns,
   suggestedMapping,
   mappingSource,
+  mappingSources,
   licenseeName,
   sampleRows,
   totalRows,
@@ -233,6 +247,13 @@ export default function ColumnMapper({
         </div>
       )}
 
+      {mappingSource === 'ai' && (
+        <div className="flex items-center gap-3 px-4 py-3 bg-violet-50 border border-violet-200 rounded-lg mb-6 text-sm text-violet-700">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>Some columns were matched by AI — review carefully before confirming.</span>
+        </div>
+      )}
+
       {mappingSource === 'none' && (
         <div className="flex items-center gap-3 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg mb-6 text-sm text-gray-700">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -273,6 +294,7 @@ export default function ColumnMapper({
             isLastRow={index === detectedColumns.length - 1}
             onHover={setHoveredColumn}
             sampleValues={sampleRows.slice(0, 3).map((row) => row[col] ?? '')}
+            columnSource={mappingSources?.[col]}
           />
         ))}
       </div>

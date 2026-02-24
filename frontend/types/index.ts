@@ -164,7 +164,7 @@ export type LikhaField =
   | 'metadata'
   | 'ignore'
 
-export type MappingSource = 'saved' | 'suggested' | 'none'
+export type MappingSource = 'saved' | 'suggested' | 'ai' | 'none'
 
 export interface ColumnMapping {
   [detectedColumnName: string]: LikhaField
@@ -180,6 +180,7 @@ export interface UploadPreviewResponse {
   sample_rows: Record<string, string>[]
   suggested_mapping: ColumnMapping
   mapping_source: MappingSource
+  mapping_sources?: Record<string, 'keyword' | 'ai' | 'none'>
   period_start: string
   period_end: string
 }

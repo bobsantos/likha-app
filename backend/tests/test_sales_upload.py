@@ -2393,3 +2393,191 @@ class TestConfirmEndpointMetadataMapping:
             )
 
         assert result.id == "sp-1"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/sales/upload/{contract_id} — mapping_sources in response
+# ---------------------------------------------------------------------------
+
+class TestUploadEndpointMappingSources:
+    """Upload endpoint includes mapping_sources dict in its response.
+
+    mapping_sources maps every detected column to its source:
+    'keyword', 'ai', or 'none'.  When a saved mapping is used the source
+    for those columns is 'saved'.
+    """
+
+    @pytest.mark.asyncio
+    async def test_response_includes_mapping_sources_key(self):
+        """The upload response always contains a 'mapping_sources' key."""
+        rows = [
+            ["Net Sales", "Rev"],
+            [12000, 8500],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.services.spreadsheet_parser.claude_suggest", return_value={"Rev": "net_sales"}):
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import upload_file
+            from fastapi import UploadFile
+
+            upload_file_mock = MagicMock(spec=UploadFile)
+            upload_file_mock.filename = "report.xlsx"
+            upload_file_mock.read = AsyncMock(return_value=xlsx_bytes)
+            upload_file_mock.size = len(xlsx_bytes)
+
+            result = await upload_file(
+                contract_id="contract-123",
+                file=upload_file_mock,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                user_id="user-123",
+            )
+
+        assert "mapping_sources" in result
+
+    @pytest.mark.asyncio
+    async def test_keyword_column_gets_keyword_source(self):
+        """A column resolved by keyword matching has source 'keyword' in mapping_sources."""
+        rows = [
+            ["Net Sales", "Rev"],
+            [12000, 8500],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.services.spreadsheet_parser.claude_suggest", return_value={"Rev": "net_sales"}):
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import upload_file
+            from fastapi import UploadFile
+
+            upload_file_mock = MagicMock(spec=UploadFile)
+            upload_file_mock.filename = "report.xlsx"
+            upload_file_mock.read = AsyncMock(return_value=xlsx_bytes)
+            upload_file_mock.size = len(xlsx_bytes)
+
+            result = await upload_file(
+                contract_id="contract-123",
+                file=upload_file_mock,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                user_id="user-123",
+            )
+
+        assert result["mapping_sources"]["Net Sales"] == "keyword"
+
+    @pytest.mark.asyncio
+    async def test_ai_resolved_column_gets_ai_source(self):
+        """A column resolved by AI has source 'ai' in mapping_sources."""
+        rows = [
+            ["Net Sales", "Rev"],
+            [12000, 8500],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.services.spreadsheet_parser.claude_suggest", return_value={"Rev": "net_sales"}):
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import upload_file
+            from fastapi import UploadFile
+
+            upload_file_mock = MagicMock(spec=UploadFile)
+            upload_file_mock.filename = "report.xlsx"
+            upload_file_mock.read = AsyncMock(return_value=xlsx_bytes)
+            upload_file_mock.size = len(xlsx_bytes)
+
+            result = await upload_file(
+                contract_id="contract-123",
+                file=upload_file_mock,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                user_id="user-123",
+            )
+
+        assert result["mapping_sources"]["Rev"] == "ai"
+
+    @pytest.mark.asyncio
+    async def test_sample_rows_passed_to_suggest_mapping(self):
+        """
+        The router passes parsed.sample_rows to suggest_mapping so that
+        claude_suggest receives actual cell values instead of empty lists.
+        """
+        rows = [
+            ["Net Sales", "Rev"],
+            [12000, 8500],
+            [9000, 7200],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.services.spreadsheet_parser.claude_suggest", return_value={"Rev": "net_sales"}) as mock_claude:
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import upload_file
+            from fastapi import UploadFile
+
+            upload_file_mock = MagicMock(spec=UploadFile)
+            upload_file_mock.filename = "report.xlsx"
+            upload_file_mock.read = AsyncMock(return_value=xlsx_bytes)
+            upload_file_mock.size = len(xlsx_bytes)
+
+            await upload_file(
+                contract_id="contract-123",
+                file=upload_file_mock,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                user_id="user-123",
+            )
+
+        # claude_suggest should have been called with actual sample values,
+        # not empty lists
+        assert mock_claude.called
+        sent_columns = mock_claude.call_args[0][0]
+        rev_col = next((c for c in sent_columns if c["name"] == "Rev"), None)
+        assert rev_col is not None
+        # The sample values from the xlsx rows should be present
+        assert len(rev_col["samples"]) > 0

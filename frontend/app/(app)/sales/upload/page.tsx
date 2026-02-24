@@ -529,6 +529,7 @@ export default function SalesUploadPage() {
               detectedColumns={uploadPreview.detected_columns}
               suggestedMapping={uploadPreview.suggested_mapping}
               mappingSource={uploadPreview.mapping_source}
+              mappingSources={uploadPreview.mapping_sources}
               licenseeName={contract?.licensee_name ?? contractName}
               sampleRows={uploadPreview.sample_rows}
               totalRows={uploadPreview.total_rows}

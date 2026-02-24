@@ -697,6 +697,7 @@ npm install date-fns  # Date formatting
 
 - [ ] Upload a spreadsheet with non-standard column names (e.g. "Rev", "Amt Due", "Sku Group")
 - [ ] Verify the column mapper pre-fills suggestions (mapping_source should be "ai" or "suggested")
+- [ ] Verify per-column badges: violet "AI" pill for AI-mapped columns, blue "Auto" pill for keyword-matched columns
 - [ ] Verify mapped fields are correct or reasonable for ambiguous column names
 - [ ] Verify that columns already recognized by keyword matching are correctly mapped
 - [ ] Upload a second file from the same licensee — verify saved mapping is used (no AI call needed)

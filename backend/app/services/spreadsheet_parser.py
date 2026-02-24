@@ -852,7 +852,8 @@ def suggest_mapping(
     saved_mapping: Optional[dict[str, str]],
     contract_context: Optional[dict] = None,
     return_source: bool = False,
-) -> "dict[str, str] | tuple[dict[str, str], str]":
+    sample_rows: Optional[list[dict]] = None,
+) -> "dict[str, str] | tuple[dict[str, str], str, dict[str, str]]":
     """
     Suggest a column mapping based on keyword synonyms and/or a saved mapping.
 
@@ -871,22 +872,30 @@ def suggest_mapping(
         contract_context: Optional dict with contract metadata for AI mapping.
                           Keys: licensee_name, royalty_base, has_categories,
                           categories.  When None, AI step is skipped.
-        return_source: When True, return a (mapping, source) tuple instead of
-                       just the mapping dict.  source is one of:
-                       "saved", "ai", "suggested", "none".
+        return_source: When True, return a 3-tuple (mapping, source_str,
+                       col_sources) instead of just the mapping dict.
+                       source_str is one of: "saved", "ai", "suggested",
+                       "none".  col_sources maps every column name to its
+                       individual source: "saved", "keyword", "ai", "none".
+        sample_rows: Optional list of sample data rows (dicts keyed by column
+                     name) used to extract per-column sample values that are
+                     sent to Claude.  When None or empty, samples default to [].
 
     Returns:
         When return_source is False (default): dict mapping each column name
         to a canonical Likha field name.
-        When return_source is True: (mapping_dict, source_str) tuple.
+        When return_source is True: (mapping_dict, source_str, col_sources)
+        3-tuple.
     """
     result: dict[str, str] = {}
+    col_sources: dict[str, str] = {}
     any_saved = False
 
     for col in column_names:
         # 1. Check saved mapping first
         if saved_mapping and col in saved_mapping:
             result[col] = saved_mapping[col]
+            col_sources[col] = "saved"
             any_saved = True
             continue
 
@@ -907,6 +916,7 @@ def suggest_mapping(
                 break
 
         result[col] = matched_field
+        col_sources[col] = "keyword" if matched_field != "ignore" else "none"
 
     # 3. AI second-pass: only when contract_context is provided
     ai_resolved_any = False
@@ -914,7 +924,7 @@ def suggest_mapping(
         unresolved = [
             {
                 "name": col,
-                "samples": [],  # samples not available at this layer; router passes them
+                "samples": _extract_column_samples(col, sample_rows),
             }
             for col, val in result.items()
             if val == "ignore" and (not saved_mapping or col not in saved_mapping)
@@ -925,12 +935,13 @@ def suggest_mapping(
             for col, field_val in ai_suggestions.items():
                 if col in result and result[col] == "ignore":
                     result[col] = field_val
+                    col_sources[col] = "ai"
                     ai_resolved_any = True
 
     if not return_source:
         return result
 
-    # Determine source label
+    # Determine overall source label
     all_ignore = all(v == "ignore" for v in result.values())
     if any_saved:
         source = "saved"
@@ -941,4 +952,21 @@ def suggest_mapping(
     else:
         source = "suggested"
 
-    return result, source
+    return result, source, col_sources
+
+
+def _extract_column_samples(col: str, sample_rows: Optional[list[dict]]) -> list[str]:
+    """Return up to 5 non-empty string values for *col* from *sample_rows*."""
+    if not sample_rows:
+        return []
+    samples: list[str] = []
+    for row in sample_rows:
+        val = row.get(col)
+        if val is None:
+            continue
+        s = str(val).strip()
+        if s:
+            samples.append(s)
+        if len(samples) == 5:
+            break
+    return samples
