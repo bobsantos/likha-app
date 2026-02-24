@@ -970,3 +970,156 @@ def _extract_column_samples(col: str, sample_rows: Optional[list[dict]]) -> list
         if len(samples) == 5:
             break
     return samples
+
+
+# ---------------------------------------------------------------------------
+# claude_suggest_categories
+# ---------------------------------------------------------------------------
+
+def claude_suggest_categories(
+    report_categories: list[str],
+    contract_categories: list[str],
+) -> dict[str, str]:
+    """
+    Ask Claude to map report category names to contract category names.
+
+    This is a best-effort function: returns {} on any failure (timeout, API
+    failure, bad JSON, missing API key). Callers must never depend on it
+    succeeding.
+
+    Args:
+        report_categories: Category names found in the uploaded report.
+        contract_categories: Canonical category names from the contract.
+
+    Returns:
+        Dict mapping report_category -> contract_category.
+        Only entries where the suggested contract_category is in
+        contract_categories are included. Returns {} on any failure.
+    """
+    if not report_categories:
+        return {}
+
+    try:
+        import anthropic
+
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+
+        prompt = (
+            "You are a royalty-report data analyst.\n"
+            "A licensee's sales report uses different category names than the contract.\n"
+            "Map each report category to the single best-matching contract category.\n\n"
+            f"Contract categories: {json.dumps(contract_categories)}\n\n"
+            f"Report categories to map: {json.dumps(report_categories)}\n\n"
+            "Respond with ONLY a JSON object mapping each report category to a contract "
+            "category. Use exactly the contract category name as it appears above. "
+            "Example: {\"Tops & Bottoms\": \"Apparel\", \"Footwear\": \"Footwear\"}. "
+            "Do not include any explanation or markdown."
+        )
+
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=512,
+            timeout=_AI_MAPPING_TIMEOUT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw_text = response.content[0].text.strip()
+
+        # Strip markdown code fences if present
+        if raw_text.startswith("```"):
+            lines = raw_text.split("\n")
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
+            raw_text = "\n".join(lines).strip()
+
+        parsed_response: dict = json.loads(raw_text)
+
+        # Only keep entries where the suggested category is a valid contract category
+        valid_set = set(contract_categories)
+        return {
+            report_cat: contract_cat
+            for report_cat, contract_cat in parsed_response.items()
+            if contract_cat in valid_set
+        }
+
+    except Exception:
+        logger.debug("claude_suggest_categories: silent fallback", exc_info=True)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# suggest_category_mapping
+# ---------------------------------------------------------------------------
+
+def suggest_category_mapping(
+    report_categories: list[str],
+    contract_categories: list[str],
+    saved_category_mapping: Optional[dict[str, str]],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """
+    Suggest a mapping from report category names to contract category names.
+
+    Resolution order for each report category:
+    1. Saved alias (from licensee_column_mappings.category_mapping)
+    2. Exact match (case-insensitive)
+    3. Substring match (report cat contains contract cat or vice versa)
+    4. AI suggestion (Claude, for remaining unresolved)
+
+    Args:
+        report_categories: Distinct category values found in the uploaded file.
+        contract_categories: Canonical category names from the contract's royalty_rate.
+        saved_category_mapping: Previously saved aliases for this licensee, or None.
+
+    Returns:
+        A 2-tuple of:
+          - mapping: dict mapping report_category -> contract_category (only
+            resolved entries; unresolved categories are absent or None).
+          - sources: dict mapping report_category -> source string, one of:
+            "saved", "exact", "substring", "ai", "none".
+    """
+    result: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    unresolved: list[str] = []
+
+    contract_lower: dict[str, str] = {c.lower(): c for c in contract_categories}
+
+    for report_cat in report_categories:
+        # 1. Saved alias
+        if saved_category_mapping and report_cat in saved_category_mapping:
+            result[report_cat] = saved_category_mapping[report_cat]
+            sources[report_cat] = "saved"
+            continue
+
+        normalized = report_cat.lower().strip()
+
+        # 2. Exact match (case-insensitive)
+        if normalized in contract_lower:
+            result[report_cat] = contract_lower[normalized]
+            sources[report_cat] = "exact"
+            continue
+
+        # 3. Substring match
+        matched: Optional[str] = None
+        for contract_cat_lower, contract_cat in contract_lower.items():
+            if contract_cat_lower in normalized or normalized in contract_cat_lower:
+                matched = contract_cat
+                break
+
+        if matched is not None:
+            result[report_cat] = matched
+            sources[report_cat] = "substring"
+            continue
+
+        # 4. Needs AI
+        unresolved.append(report_cat)
+        sources[report_cat] = "none"
+
+    # AI pass for unresolved categories
+    if unresolved:
+        ai_suggestions = claude_suggest_categories(unresolved, contract_categories)
+        for report_cat, contract_cat in ai_suggestions.items():
+            if report_cat in sources and sources[report_cat] == "none":
+                result[report_cat] = contract_cat
+                sources[report_cat] = "ai"
+
+    return result, sources

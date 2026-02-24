@@ -15,10 +15,11 @@ import Link from 'next/link'
 import { Upload, FileText, Check, AlertCircle, Loader2 } from 'lucide-react'
 import { getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload } from '@/lib/api'
 import ColumnMapper from '@/components/sales-upload/column-mapper'
+import CategoryMapper from '@/components/sales-upload/category-mapper'
 import UploadPreview, { type MappedHeader } from '@/components/sales-upload/upload-preview'
-import type { Contract, UploadPreviewResponse, SalesPeriod, ColumnMapping, UploadWarning } from '@/types'
+import type { Contract, UploadPreviewResponse, SalesPeriod, ColumnMapping, CategoryMapping, UploadWarning } from '@/types'
 
-type WizardStep = 1 | 2 | 3
+type WizardStep = 'upload' | 'map-columns' | 'map-categories' | 'preview'
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024 // 10 MB
 
@@ -43,52 +44,70 @@ function validateSpreadsheetFile(file: File): string | null {
 
 // --- Step Indicator ---
 
-const STEPS = [
-  { number: 1, label: 'Upload File' },
-  { number: 2, label: 'Map Columns' },
-  { number: 3, label: 'Preview Data' },
+// Map wizard steps to numeric step values for indicator display
+const STEP_ORDER: WizardStep[] = ['upload', 'map-columns', 'map-categories', 'preview']
+
+// Visual steps (3 bubbles). Step 2.5 shows as a sub-label under step 2.
+const VISUAL_STEPS = [
+  { number: 1, label: 'Upload File', step: 'upload' as WizardStep },
+  { number: 2, label: 'Map Columns', step: 'map-columns' as WizardStep },
+  { number: 3, label: 'Preview Data', step: 'preview' as WizardStep },
 ]
 
+function stepToVisualNumber(step: WizardStep): number {
+  if (step === 'upload') return 1
+  if (step === 'map-columns') return 2
+  if (step === 'map-categories') return 2
+  return 3
+}
+
 function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
+  const currentVisual = stepToVisualNumber(currentStep)
   return (
     <nav aria-label="Upload progress" className="mb-8">
       <ol className="flex items-center">
-        {STEPS.map((s, i) => (
+        {VISUAL_STEPS.map((s, i) => (
           <li key={s.number} className="flex items-center flex-1 last:flex-none">
             <div className="flex flex-col items-center">
               <div
                 className={`
                   w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold
-                  ${s.number < currentStep
+                  ${s.number < currentVisual
                     ? 'bg-primary-600 text-white'
-                    : s.number === currentStep
+                    : s.number === currentVisual
                     ? 'bg-primary-600 text-white ring-2 ring-primary-200 ring-offset-2'
                     : 'bg-gray-200 text-gray-500'
                   }
                 `}
                 aria-label={
-                  s.number < currentStep
+                  s.number < currentVisual
                     ? `Step ${s.number}: ${s.label} — completed`
                     : `Step ${s.number}: ${s.label}`
                 }
               >
-                {s.number < currentStep ? <Check className="w-4 h-4" /> : s.number}
+                {s.number < currentVisual ? <Check className="w-4 h-4" /> : s.number}
               </div>
               <span
                 className={`
                   mt-1.5 text-xs font-medium hidden sm:block
-                  ${s.number === currentStep ? 'text-primary-600' : 'text-gray-500'}
+                  ${s.number === currentVisual ? 'text-primary-600' : 'text-gray-500'}
                 `}
               >
                 {s.label}
               </span>
+              {/* Sub-label shown only during Step 2.5 (map-categories) */}
+              {s.number === 2 && currentStep === 'map-categories' && (
+                <span className="mt-0.5 text-xs text-primary-500 hidden sm:block">
+                  Resolve Categories
+                </span>
+              )}
             </div>
 
-            {i < STEPS.length - 1 && (
+            {i < VISUAL_STEPS.length - 1 && (
               <div
                 className={`
                   flex-1 h-0.5 mx-2 mb-5
-                  ${s.number < currentStep ? 'bg-primary-600' : 'bg-gray-200'}
+                  ${s.number < currentVisual ? 'bg-primary-600' : 'bg-gray-200'}
                 `}
               />
             )}
@@ -331,7 +350,7 @@ export default function SalesUploadPage() {
   const searchParams = useSearchParams()
   const contractId = searchParams.get('contract_id') ?? ''
 
-  const [step, setStep] = useState<WizardStep>(1)
+  const [step, setStep] = useState<WizardStep>('upload')
   const [contract, setContract] = useState<Contract | null>(null)
   const [loadingContract, setLoadingContract] = useState(true)
 
@@ -367,7 +386,39 @@ export default function SalesUploadPage() {
 
   const handleUploadSuccess = (preview: UploadPreviewResponse) => {
     setUploadPreview(preview)
-    setStep(2)
+    setStep('map-columns')
+  }
+
+  /**
+   * Shared confirm logic — called either after column mapping (flat-rate contracts)
+   * or after category mapping (category-rate contracts).
+   */
+  const doConfirm = async (
+    mapping: ColumnMapping,
+    save: boolean,
+    categoryMapping?: CategoryMapping
+  ) => {
+    if (!uploadPreview) return
+
+    setConfirming(true)
+    setConfirmError(null)
+    try {
+      const response = await confirmSalesUpload(contractId, {
+        upload_id: uploadPreview.upload_id,
+        column_mapping: mapping,
+        period_start: uploadPreview.period_start,
+        period_end: uploadPreview.period_end,
+        save_mapping: save,
+        ...(categoryMapping ? { category_mapping: categoryMapping } : {}),
+      })
+      setSalesPeriod(response)
+      setUploadWarnings(response.upload_warnings ?? [])
+      setStep('preview')
+    } catch (err) {
+      setConfirmError(err instanceof Error ? err.message : 'Failed to create sales period')
+    } finally {
+      setConfirming(false)
+    }
   }
 
   const handleMappingConfirm = async ({
@@ -382,28 +433,30 @@ export default function SalesUploadPage() {
 
     if (!uploadPreview) return
 
-    setConfirming(true)
-    setConfirmError(null)
-    try {
-      const response = await confirmSalesUpload(contractId, {
-        upload_id: uploadPreview.upload_id,
-        column_mapping: mapping,
-        period_start: uploadPreview.period_start,
-        period_end: uploadPreview.period_end,
-        save_mapping: save,
-      })
-      setSalesPeriod(response)
-      setUploadWarnings(response.upload_warnings ?? [])
-      setStep(3)
-    } catch (err) {
-      setConfirmError(err instanceof Error ? err.message : 'Failed to create sales period')
-    } finally {
-      setConfirming(false)
+    // Check if category resolution is required
+    if (uploadPreview.category_resolution?.required) {
+      // Advance to Step 2.5 — category mapper
+      setStep('map-categories')
+      return
     }
+
+    // No category resolution needed — confirm immediately
+    await doConfirm(mapping, save)
+  }
+
+  const handleCategoryMappingConfirm = async ({
+    categoryMapping,
+    saveAliases,
+  }: {
+    categoryMapping: CategoryMapping
+    saveAliases: boolean
+  }) => {
+    if (!confirmedMapping) return
+    await doConfirm(confirmedMapping, saveAliases, categoryMapping)
   }
 
   const handleConfirmFinal = () => {
-    // Sales period was already created in step 2->3 transition
+    // Sales period was already created in step 2->3 (or 2.5->3) transition
     // Just redirect
     router.push(`/contracts/${contractId}?success=period_created`)
   }
@@ -475,7 +528,7 @@ export default function SalesUploadPage() {
   }
 
   return (
-    <div className={`mx-auto px-4 sm:px-6 lg:px-8 py-8 ${step === 2 ? 'max-w-4xl' : 'max-w-3xl'}`}>
+    <div className={`mx-auto px-4 sm:px-6 lg:px-8 py-8 ${step === 'map-columns' || step === 'map-categories' ? 'max-w-4xl' : 'max-w-3xl'}`}>
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-600 mb-6">
         <Link href="/dashboard" className="hover:text-gray-900">
@@ -500,7 +553,7 @@ export default function SalesUploadPage() {
 
       {/* Step content */}
       <div className="mt-8">
-        {step === 1 && (
+        {step === 'upload' && (
           <StepUpload
             onUploadSuccess={handleUploadSuccess}
             contractId={contractId}
@@ -511,7 +564,7 @@ export default function SalesUploadPage() {
           />
         )}
 
-        {step === 2 && uploadPreview && (
+        {step === 'map-columns' && uploadPreview && (
           <div className="space-y-4">
             {confirmError && (
               <div
@@ -534,12 +587,49 @@ export default function SalesUploadPage() {
               sampleRows={uploadPreview.sample_rows}
               totalRows={uploadPreview.total_rows}
               onMappingConfirm={handleMappingConfirm}
-              onBack={() => setStep(1)}
+              onBack={() => setStep('upload')}
             />
           </div>
         )}
 
-        {step === 3 && salesPeriod && uploadPreview && (
+        {step === 'map-categories' && uploadPreview?.category_resolution && (
+          <div className="space-y-4">
+            {confirmError && (
+              <div
+                role="alert"
+                className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg animate-fade-in"
+              >
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-red-900">Could not create sales period</p>
+                  <p className="text-sm text-red-700 mt-0.5">{confirmError}</p>
+                </div>
+              </div>
+            )}
+            <CategoryMapper
+              reportCategories={uploadPreview.category_resolution.report_categories}
+              contractCategories={uploadPreview.category_resolution.contract_categories.map((name) => {
+                // Extract rate from CategoryRate type if available on the contract
+                const contractRateObj = contract?.royalty_rate
+                const rate =
+                  contractRateObj &&
+                  typeof contractRateObj === 'object' &&
+                  'type' in contractRateObj &&
+                  contractRateObj.type === 'category'
+                    ? (contractRateObj.rates as Record<string, number>)[name] ?? 0
+                    : 0
+                return { name, rate }
+              })}
+              suggestedMapping={uploadPreview.category_resolution.suggested_category_mapping}
+              mappingSources={uploadPreview.category_resolution.category_mapping_sources}
+              licenseeName={contract?.licensee_name ?? contractName}
+              onConfirm={handleCategoryMappingConfirm}
+              onBack={() => setStep('map-columns')}
+            />
+          </div>
+        )}
+
+        {step === 'preview' && salesPeriod && uploadPreview && (
           <UploadPreview
             sampleRows={uploadPreview.sample_rows}
             mappedHeaders={mappedHeaders}
@@ -547,7 +637,7 @@ export default function SalesUploadPage() {
             salesPeriod={salesPeriod}
             uploadWarnings={uploadWarnings}
             onConfirm={handlePreviewConfirm}
-            onBack={() => setStep(2)}
+            onBack={() => setStep('map-columns')}
             confirming={confirming}
             confirmError={confirmError}
           />

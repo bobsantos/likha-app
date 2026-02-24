@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -30,6 +30,7 @@ from app.services.spreadsheet_parser import (
     extract_cross_check_values,
     parse_upload,
     suggest_mapping,
+    suggest_category_mapping,
 )
 
 logger = logging.getLogger(__name__)
@@ -299,6 +300,58 @@ def _build_upload_warnings(
 
 
 # ---------------------------------------------------------------------------
+# Category resolution helper
+# ---------------------------------------------------------------------------
+
+def _resolve_category(
+    report_cat: str,
+    contract_cats: "Iterable[str]",
+    explicit_mapping: dict[str, Optional[str]],
+) -> Optional[str]:
+    """
+    Resolve a report category name to a contract category name.
+
+    Resolution order:
+    1. Explicit mapping from the request body (user-confirmed). A value of None
+       means "Exclude from calculation" — returns None.
+    2. Exact match (case-insensitive).
+    3. Substring match (existing logic).
+    4. None (unresolved).
+
+    Args:
+        report_cat: The category name as it appears in the uploaded file.
+        contract_cats: Iterable of canonical category names from the contract.
+        explicit_mapping: User-confirmed mapping from report cat to contract cat
+                          (or None to exclude). Empty dict means no user mapping.
+
+    Returns:
+        The resolved contract category name, or None if the category is excluded
+        or cannot be resolved.
+    """
+    # 1. Explicit user mapping
+    if report_cat in explicit_mapping:
+        return explicit_mapping[report_cat]  # may be None (exclude)
+
+    contract_cats_list = list(contract_cats)
+    if not contract_cats_list:
+        return None
+
+    normalized = report_cat.lower().strip()
+    contract_lower = {c.lower(): c for c in contract_cats_list}
+
+    # 2. Exact match (case-insensitive)
+    if normalized in contract_lower:
+        return contract_lower[normalized]
+
+    # 3. Substring match
+    for contract_cat_lower, contract_cat in contract_lower.items():
+        if contract_cat_lower in normalized or normalized in contract_cat_lower:
+            return contract_cat
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Pydantic request models
 # ---------------------------------------------------------------------------
 
@@ -308,6 +361,7 @@ class UploadConfirmRequest(BaseModel):
     period_start: str
     period_end: str
     save_mapping: bool = True
+    category_mapping: Optional[dict[str, Optional[str]]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -316,8 +370,12 @@ class UploadConfirmRequest(BaseModel):
 
 def _get_saved_mapping_for_licensee(
     user_id: str, licensee_name: str
-) -> Optional[dict]:
-    """Return the saved column_mapping dict for this user+licensee, or None."""
+) -> tuple[Optional[dict], Optional[dict]]:
+    """
+    Return (saved_column_mapping, saved_category_mapping) for this user+licensee.
+
+    Returns (None, None) if no saved mapping exists or on error.
+    """
     try:
         result = (
             supabase.table("licensee_column_mappings")
@@ -328,10 +386,11 @@ def _get_saved_mapping_for_licensee(
             .execute()
         )
         if result.data:
-            return result.data[0].get("column_mapping")
+            row = result.data[0]
+            return row.get("column_mapping"), row.get("category_mapping")
     except Exception as e:
         logger.warning(f"Could not load saved mapping: {e}")
-    return None
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -387,8 +446,8 @@ async def upload_file(
     contract = contract_result.data[0]
     licensee_name = contract.get("licensee_name", "")
 
-    # Look up saved mapping
-    saved_mapping = _get_saved_mapping_for_licensee(user_id, licensee_name)
+    # Look up saved mapping (column mapping and category mapping)
+    saved_mapping, saved_category_mapping = _get_saved_mapping_for_licensee(user_id, licensee_name)
 
     # Build contract context for AI column mapping
     royalty_rate = contract.get("royalty_rate")
@@ -419,6 +478,40 @@ async def upload_file(
             sample_rows=parsed.sample_rows,
         )
 
+    # Build category_resolution for category-rate contracts
+    category_resolution: Optional[dict] = None
+    if is_category_contract:
+        # Identify the product_category column from the suggested mapping
+        category_col: Optional[str] = None
+        for col, field in suggested.items():
+            if field == "product_category":
+                category_col = col
+                break
+
+        if category_col:
+            # Extract distinct category values from ALL rows (not just sample)
+            report_categories: list[str] = []
+            seen_cats: set[str] = set()
+            for row in parsed.all_rows:
+                cat_val = row.get(category_col, "").strip()
+                if cat_val and cat_val not in seen_cats:
+                    report_categories.append(cat_val)
+                    seen_cats.add(cat_val)
+
+            contract_categories = list(royalty_rate.keys())
+            suggested_cat_mapping, cat_sources = suggest_category_mapping(
+                report_categories=report_categories,
+                contract_categories=contract_categories,
+                saved_category_mapping=saved_category_mapping,
+            )
+            category_resolution = {
+                "required": True,
+                "contract_categories": contract_categories,
+                "report_categories": report_categories,
+                "suggested_category_mapping": suggested_cat_mapping,
+                "category_mapping_sources": cat_sources,
+            }
+
     # Store in memory (including raw bytes for later upload to storage at confirm time)
     upload_id = _store_upload(parsed, contract_id, user_id, raw_bytes=file_content, original_filename=filename)
 
@@ -435,6 +528,7 @@ async def upload_file(
         "mapping_sources": mapping_sources,
         "period_start": period_start,
         "period_end": period_end,
+        "category_resolution": category_resolution,
     }
 
 
@@ -524,27 +618,35 @@ async def confirm_upload(
         logger.warning(f"Cross-check failed (non-blocking): {e}")
         upload_warnings = []
 
-    # Validate unknown categories for category-rate contracts
+    # Resolve and validate categories for category-rate contracts
+    category_breakdown: Optional[dict[str, Decimal]] = None
     if is_category_contract and mapped.category_sales:
-        for category in mapped.category_sales.keys():
-            normalized = category.lower().strip()
-            found = False
-            for rate_cat in royalty_rate.keys():
-                if normalized in rate_cat.lower() or rate_cat.lower() in normalized:
-                    found = True
-                    break
-            if not found:
+        explicit_mapping: dict[str, Optional[str]] = body.category_mapping or {}
+        contract_cats = list(royalty_rate.keys())
+        resolved_sales: dict[str, Decimal] = {}
+
+        for report_cat, sales_amount in mapped.category_sales.items():
+            resolved_cat = _resolve_category(
+                report_cat=report_cat,
+                contract_cats=contract_cats,
+                explicit_mapping=explicit_mapping,
+            )
+            if resolved_cat is None:
+                # Check whether user explicitly excluded this category (mapped to None)
+                if report_cat in explicit_mapping and explicit_mapping[report_cat] is None:
+                    # Excluded — skip (contributes $0 royalty)
+                    continue
+                # Truly unresolved — raise error
                 raise _error(
                     400,
-                    f"Category '{category}' in the uploaded file has no matching rate in this contract. "
+                    f"Category '{report_cat}' in the uploaded file has no matching rate in this contract. "
                     "Update your contract's royalty rates or correct the file.",
                     "unknown_category",
                 )
+            # Accumulate into resolved contract category
+            resolved_sales[resolved_cat] = resolved_sales.get(resolved_cat, Decimal("0")) + sales_amount
 
-    # Build category_breakdown for calculation (convert to Dict[str, Decimal])
-    category_breakdown: Optional[dict[str, Decimal]] = None
-    if is_category_contract and mapped.category_sales:
-        category_breakdown = mapped.category_sales
+        category_breakdown = resolved_sales if resolved_sales else None
 
     # Calculate royalty: sales × rate only.
     # The minimum guarantee is an ANNUAL true-up check, not a per-period floor.
@@ -579,13 +681,17 @@ async def confirm_upload(
     # Save mapping if requested
     if body.save_mapping and licensee_name:
         try:
+            upsert_data: dict = {
+                "user_id": user_id,
+                "licensee_name": licensee_name,
+                "column_mapping": body.column_mapping,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            # Persist category aliases if provided
+            if body.category_mapping is not None:
+                upsert_data["category_mapping"] = body.category_mapping
             supabase.table("licensee_column_mappings").upsert(
-                {
-                    "user_id": user_id,
-                    "licensee_name": licensee_name,
-                    "column_mapping": body.column_mapping,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
+                upsert_data,
                 on_conflict="user_id,licensee_name",
             ).execute()
         except Exception as e:

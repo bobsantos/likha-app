@@ -61,6 +61,20 @@ export class ApiError extends Error {
 }
 
 /**
+ * Extract a human-readable message from a FastAPI error response body.
+ * Handles both `{ detail: "string" }` and `{ detail: { detail: "string", error_code: "..." } }`.
+ */
+function extractErrorMessage(body: Record<string, unknown> | null, fallback: string): string {
+  if (!body?.detail) return fallback
+  if (typeof body.detail === 'string') return body.detail
+  if (typeof body.detail === 'object' && body.detail !== null) {
+    const inner = (body.detail as Record<string, unknown>).detail
+    if (typeof inner === 'string') return inner
+  }
+  return fallback
+}
+
+/**
  * Returns true when the error is an ApiError with a 401 Unauthorized status.
  * Use this in page-level catch blocks to redirect to login instead of showing
  * an error panel.
@@ -106,7 +120,7 @@ export async function uploadContract(file: File) {
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to upload contract',
+      extractErrorMessage(body, 'Failed to upload contract'),
       response.status,
       body
     )
@@ -144,7 +158,7 @@ export async function confirmDraft(contractId: string, data: any): Promise<Contr
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to confirm contract',
+      extractErrorMessage(body, 'Failed to confirm contract'),
       response.status,
       body
     )
@@ -170,7 +184,7 @@ export async function getContracts(options?: { include_drafts?: boolean }) {
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to fetch contracts',
+      extractErrorMessage(body, 'Failed to fetch contracts'),
       response.status,
       body
     )
@@ -191,7 +205,7 @@ export async function getContract(id: string) {
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to fetch contract',
+      extractErrorMessage(body, 'Failed to fetch contract'),
       response.status,
       body
     )
@@ -257,7 +271,7 @@ export async function uploadSalesReport(
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to upload sales report',
+      extractErrorMessage(body, 'Failed to upload sales report'),
       response.status,
       body
     )
@@ -281,7 +295,7 @@ export async function confirmSalesUpload(
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to confirm sales upload',
+      extractErrorMessage(body, 'Failed to confirm sales upload'),
       response.status,
       body
     )
@@ -356,7 +370,7 @@ export async function downloadReportTemplate(contractId: string): Promise<void> 
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to download report template',
+      extractErrorMessage(body, 'Failed to download report template'),
       response.status,
       body
     )
@@ -392,7 +406,7 @@ export async function getInboundReports(): Promise<InboundReport[]> {
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to fetch inbound reports',
+      extractErrorMessage(body, 'Failed to fetch inbound reports'),
       response.status,
       body
     )
@@ -436,7 +450,7 @@ export async function rejectReport(reportId: string): Promise<void> {
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to reject report',
+      extractErrorMessage(body, 'Failed to reject report'),
       response.status,
       body
     )
@@ -480,7 +494,7 @@ export async function getInboundAddress(): Promise<InboundAddressResponse> {
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     throw new ApiError(
-      typeof body?.detail === 'string' ? body.detail : 'Failed to fetch inbound address',
+      extractErrorMessage(body, 'Failed to fetch inbound address'),
       response.status,
       body
     )

@@ -170,6 +170,18 @@ export interface ColumnMapping {
   [detectedColumnName: string]: LikhaField
 }
 
+export interface CategoryMapping {
+  [reportCategory: string]: string  // report_cat -> contract_cat (empty string means "Exclude")
+}
+
+export interface CategoryResolution {
+  required: boolean
+  contract_categories: string[]
+  report_categories: string[]
+  suggested_category_mapping: CategoryMapping
+  category_mapping_sources: Record<string, 'saved' | 'exact' | 'ai' | 'none'>
+}
+
 export interface UploadPreviewResponse {
   upload_id: string
   filename: string
@@ -183,6 +195,7 @@ export interface UploadPreviewResponse {
   mapping_sources?: Record<string, 'keyword' | 'ai' | 'none'>
   period_start: string
   period_end: string
+  category_resolution?: CategoryResolution | null
 }
 
 export interface UploadConfirmRequest {
@@ -191,6 +204,7 @@ export interface UploadConfirmRequest {
   period_start: string
   period_end: string
   save_mapping: boolean
+  category_mapping?: CategoryMapping
 }
 
 export interface SavedMappingResponse {

@@ -422,4 +422,107 @@ describe('Sales Upload Wizard Page', () => {
       expect(screen.getByText(/10MB/i)).toBeInTheDocument()
     })
   })
+
+  // --- Category mismatch: Step 2.5 integration tests ---
+
+  const mockCategoryPreview: UploadPreviewResponse = {
+    ...mockUploadPreview,
+    category_resolution: {
+      required: true,
+      contract_categories: ['Apparel', 'Accessories', 'Footwear'],
+      report_categories: ['Tops & Bottoms', 'Hard Accessories', 'Footwear'],
+      suggested_category_mapping: {
+        'Tops & Bottoms': 'Apparel',
+        'Hard Accessories': 'Accessories',
+        'Footwear': 'Footwear',
+      },
+      category_mapping_sources: {
+        'Tops & Bottoms': 'ai',
+        'Hard Accessories': 'ai',
+        'Footwear': 'exact',
+      },
+    },
+  }
+
+  async function goToStep2WithCategoryMismatch() {
+    mockUploadSalesReport.mockResolvedValue(mockCategoryPreview)
+    render(<SalesUploadPage />)
+    await waitFor(() => expect(screen.getByLabelText(/period start/i)).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+    fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+    const fileInput = screen.getByTestId('spreadsheet-file-input')
+    const file = new File(['test'], 'sales.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: /upload.*parse/i })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /upload.*parse/i }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /map columns/i })).toBeInTheDocument())
+  }
+
+  it('shows CategoryMapper (Step 2.5) after column mapping confirm when category_resolution.required is true', async () => {
+    await goToStep2WithCategoryMismatch()
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /map category names/i })).toBeInTheDocument()
+    })
+  })
+
+  it('skips Step 2.5 and goes straight to Step 3 for flat-rate contracts (no category_resolution)', async () => {
+    // mockUploadPreview has no category_resolution
+    mockUploadSalesReport.mockResolvedValue(mockUploadPreview)
+    mockConfirmSalesUpload.mockResolvedValue(mockSalesPeriod)
+    render(<SalesUploadPage />)
+    await waitFor(() => expect(screen.getByLabelText(/period start/i)).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+    fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+    const fileInput = screen.getByTestId('spreadsheet-file-input')
+    const file = new File(['test'], 'sales.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: /upload.*parse/i })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /upload.*parse/i }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /map columns/i })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    // Should go to Step 3 (preview), not Step 2.5
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: /map category names/i })).not.toBeInTheDocument()
+      expect(screen.getByText(/preview/i)).toBeInTheDocument()
+    })
+  })
+
+  it('includes category_mapping in confirmSalesUpload payload when Step 2.5 is confirmed', async () => {
+    await goToStep2WithCategoryMismatch()
+    mockConfirmSalesUpload.mockResolvedValue(mockSalesPeriod)
+
+    // Step 2: confirm column mapping -> goes to Step 2.5
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /map category names/i })).toBeInTheDocument())
+
+    // Step 2.5: confirm category mapping -> should call confirmSalesUpload with category_mapping
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+    await waitFor(() => {
+      expect(mockConfirmSalesUpload).toHaveBeenCalledWith(
+        'contract-1',
+        expect.objectContaining({
+          category_mapping: expect.objectContaining({
+            'Tops & Bottoms': 'Apparel',
+            'Hard Accessories': 'Accessories',
+          }),
+        })
+      )
+    })
+  })
+
+  it('Back button on Step 2.5 returns to Step 2 (column mapper)', async () => {
+    await goToStep2WithCategoryMismatch()
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /map category names/i })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /back/i }))
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /map columns/i })).toBeInTheDocument()
+    })
+  })
 })
