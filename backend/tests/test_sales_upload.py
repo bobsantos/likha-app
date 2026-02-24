@@ -2175,3 +2175,221 @@ class TestConfirmEndpointCrossCheckWarnings:
         # Should have warnings but still return a valid period
         assert result.id == "sp-1"
         assert len(result.upload_warnings) >= 2  # at least licensee + royalty_rate warnings
+
+
+# ---------------------------------------------------------------------------
+# Confirm endpoint: "metadata" column mapping value (Phase 1.1.1)
+# ---------------------------------------------------------------------------
+
+class TestConfirmEndpointMetadataMapping:
+    """confirm_upload handles 'metadata' in column_mapping without errors."""
+
+    @pytest.mark.asyncio
+    async def test_metadata_in_column_mapping_does_not_cause_error(self):
+        """confirm_upload succeeds when column_mapping contains 'metadata' values."""
+        rows = [
+            ["Net Sales", "SKU", "Internal Ref"],
+            [10000, "APP-001", "REF-001"],
+            [8000, "APP-002", "REF-002"],
+        ]
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+            "Internal Ref": "metadata",
+        }
+        contract = _make_db_contract(royalty_rate="8%")
+        inserted_period = _make_db_sales_period(net_sales="18000", royalty_calculated="1440")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.routers.sales_upload.upload_sales_report", return_value=None):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                if name == "licensee_column_mappings":
+                    return MagicMock()
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        assert result.id == "sp-1"
+
+    @pytest.mark.asyncio
+    async def test_metadata_columns_excluded_from_royalty_calculation(self):
+        """Metadata-mapped columns do not inflate net_sales or affect royalty calculation."""
+        rows = [
+            ["Net Sales", "SKU"],
+            [10000, "APP-001"],
+            [8000, "APP-002"],
+        ]
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+        }
+        contract = _make_db_contract(royalty_rate="8%")
+        inserted_period = _make_db_sales_period(net_sales="18000", royalty_calculated="1440")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.routers.sales_upload.upload_sales_report", return_value=None):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            captured_insert: list[dict] = []
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    t = _mock_periods_table(inserted_period)
+                    # Wrap insert to capture the data
+                    original_insert = t.insert
+
+                    def capture_insert(data):
+                        captured_insert.append(data)
+                        return original_insert(data)
+
+                    t.insert = capture_insert
+                    return t
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        # net_sales in the inserted row should be 18000 (not inflated by SKU metadata)
+        assert result.id == "sp-1"
+        if captured_insert:
+            assert captured_insert[0]["net_sales"] == "18000"
+
+    @pytest.mark.asyncio
+    async def test_metadata_mapping_with_category_contract_does_not_conflict(self):
+        """Metadata columns do not interfere with category-rate contract processing."""
+        rows = [
+            ["Category", "Net Sales", "SKU"],
+            ["Apparel", 10000, "APP-001"],
+            ["Apparel", 8000, "APP-002"],
+        ]
+        column_mapping = {
+            "Category": "product_category",
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+        }
+        contract = _make_db_contract(royalty_rate={"Apparel": "8%"})
+        inserted_period = _make_db_sales_period(net_sales="18000", royalty_calculated="1440")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.routers.sales_upload.upload_sales_report", return_value=None):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        assert result.id == "sp-1"
+
+    @pytest.mark.asyncio
+    async def test_existing_behavior_unchanged_when_no_metadata_columns(self):
+        """Confirm endpoint works identically when no metadata columns are in the mapping."""
+        rows = [
+            ["Net Sales", "Category"],
+            [10000, "Apparel"],
+            [8000, "Footwear"],
+        ]
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "Category": "ignore",
+        }
+        contract = _make_db_contract(royalty_rate="8%")
+        inserted_period = _make_db_sales_period(net_sales="18000", royalty_calculated="1440")
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.routers.sales_upload.upload_sales_report", return_value=None):
+
+            upload_id, _ = _make_confirm_context(rows, column_mapping, contract, inserted_period)
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "sales_periods":
+                    return _mock_periods_table(inserted_period)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import confirm_upload, UploadConfirmRequest
+
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping=column_mapping,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                save_mapping=False,
+            )
+
+            result = await confirm_upload(
+                contract_id="contract-123",
+                body=request,
+                user_id="user-123",
+            )
+
+        assert result.id == "sp-1"

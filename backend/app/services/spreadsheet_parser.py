@@ -61,6 +61,7 @@ class MappedData:
     licensee_reported_royalty: Optional[Decimal]
     gross_sales: Optional[Decimal] = None
     returns: Optional[Decimal] = None
+    metadata: Optional[dict[str, list[str]]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +84,7 @@ VALID_FIELDS = {
     "licensee_name",
     "report_period",
     "royalty_rate",
+    "metadata",
     "ignore",
 }
 
@@ -594,9 +596,13 @@ def apply_mapping(
         MappingError: If net_sales cannot be determined or the result is negative.
     """
     # Reverse map: field_name -> list of column names mapped to it
+    # "metadata" and "ignore" are both excluded from calculation field grouping.
     field_to_columns: dict[str, list[str]] = {}
+    metadata_cols: list[str] = []
     for col, field in column_mapping.items():
-        if field and field != "ignore":
+        if field == "metadata":
+            metadata_cols.append(col)
+        elif field and field != "ignore":
             field_to_columns.setdefault(field, []).append(col)
 
     has_net_sales_col = "net_sales" in field_to_columns
@@ -618,6 +624,8 @@ def apply_mapping(
     category_sales: dict[str, Decimal] = {}
     licensee_royalty_total = Decimal("0")
     has_royalty_values = False
+    # Metadata: col_name -> list of raw string values collected across all rows
+    metadata_values: dict[str, list[str]] = {col: [] for col in metadata_cols}
 
     net_sales_cols = field_to_columns.get("net_sales", [])
     gross_sales_cols = field_to_columns.get("gross_sales", [])
@@ -680,6 +688,11 @@ def apply_mapping(
                 licensee_royalty_total += val
                 has_royalty_values = True
 
+        # Metadata: collect raw cell values (pass-through, no calculation)
+        for col in metadata_cols:
+            cell_val = _cell_to_str(row.get(col))
+            metadata_values[col].append(cell_val)
+
     # Validate net_sales
     if net_sales_total < Decimal("0"):
         raise MappingError(
@@ -694,6 +707,7 @@ def apply_mapping(
         licensee_reported_royalty=licensee_royalty_total if has_royalty_values else None,
         gross_sales=gross_sales_total if gross_sales_total else None,
         returns=returns_total if returns_total else None,
+        metadata=metadata_values if metadata_cols else None,
     )
 
 

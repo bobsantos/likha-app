@@ -3,7 +3,7 @@
  * TDD: written before the implementation
  */
 
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import ColumnMapper from '@/components/sales-upload/column-mapper'
 import type { ColumnMapping, MappingSource } from '@/types'
 
@@ -216,10 +216,11 @@ describe('ColumnMapper component', () => {
 
   it('preview table shows sample row data', () => {
     render(<ColumnMapper {...defaultProps} />)
-    expect(screen.getByText('12000.00')).toBeInTheDocument()
-    expect(screen.getByText('8500.00')).toBeInTheDocument()
-    expect(screen.getByText('APP-001')).toBeInTheDocument()
-    expect(screen.getByText('960.00')).toBeInTheDocument()
+    // Values appear in both the inline sample strip and the preview table
+    expect(screen.getAllByText('12000.00').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('8500.00').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('APP-001').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('960.00').length).toBeGreaterThanOrEqual(1)
   })
 
   it('preview table shows up to 5 sample rows', () => {
@@ -246,15 +247,15 @@ describe('ColumnMapper component', () => {
 
   it('preview table does not update when mapping dropdown values change', () => {
     render(<ColumnMapper {...defaultProps} />)
-    // Raw value should be present before any change
-    expect(screen.getByText('12000.00')).toBeInTheDocument()
+    // Raw value should be present before any change (may appear in inline strip + preview table)
+    expect(screen.getAllByText('12000.00').length).toBeGreaterThanOrEqual(1)
 
     // Change a dropdown
     const selects = screen.getAllByRole('combobox')
     fireEvent.change(selects[0], { target: { value: 'gross_sales' } })
 
     // Raw data should still be present unchanged
-    expect(screen.getByText('12000.00')).toBeInTheDocument()
+    expect(screen.getAllByText('12000.00').length).toBeGreaterThanOrEqual(1)
     // The column header in the raw table should still show the original file column name
     const tableHeaders = screen.getAllByRole('columnheader')
     const headerTexts = tableHeaders.map((th) => th.textContent)
@@ -307,6 +308,154 @@ describe('ColumnMapper component', () => {
     expect(onMappingConfirm).toHaveBeenCalledWith(
       expect.objectContaining({
         mapping: expect.objectContaining({ SKU: 'royalty_rate' }),
+      })
+    )
+  })
+
+  // --- Phase 1.1.1: Inline sample values, metadata option, dedup ---
+
+  it('shows sample values inline in a third column for each mapping row', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    // First 3 values for 'Net Sales Amount' column should appear in the inline strip
+    // They also appear in the preview table, so just check they are present
+    expect(screen.getAllByText('12000.00').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('8500.00').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('5200.00').length).toBeGreaterThanOrEqual(1)
+  })
+
+  it('shows "Keep as additional data" option in each dropdown', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    const selects = screen.getAllByRole('combobox')
+    expect(selects[0]).toContainHTML('Keep as additional data')
+    expect(selects[1]).toContainHTML('Keep as additional data')
+  })
+
+  it('dropdown contains optgroup elements for Royalty Fields and Other', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    // optgroup labels render as text content in the select's HTML
+    const selects = screen.getAllByRole('combobox')
+    expect(selects[0]).toContainHTML('Royalty Fields')
+    expect(selects[0]).toContainHTML('Other')
+  })
+
+  it('select element has violet styling classes when mapped to metadata', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    const selects = screen.getAllByRole('combobox')
+    // Change SKU (index 2) to metadata
+    fireEvent.change(selects[2], { target: { value: 'metadata' } })
+    // After change, the select for SKU should have violet styling
+    const updatedSelects = screen.getAllByRole('combobox')
+    expect(updatedSelects[2].className).toMatch(/violet/)
+  })
+
+  it('metadata callout appears when at least one column is mapped to metadata', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    // Initially no metadata mapping — callout should not be visible
+    expect(
+      screen.queryByText(/columns marked "keep as additional data" will be saved/i)
+    ).not.toBeInTheDocument()
+
+    // Map SKU to metadata
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[2], { target: { value: 'metadata' } })
+
+    // Callout should now appear
+    expect(
+      screen.getByText(/columns marked "keep as additional data" will be saved/i)
+    ).toBeInTheDocument()
+  })
+
+  it('metadata callout disappears when the last metadata column is re-mapped', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    const selects = screen.getAllByRole('combobox')
+
+    // Map SKU to metadata
+    fireEvent.change(selects[2], { target: { value: 'metadata' } })
+    expect(
+      screen.getByText(/columns marked "keep as additional data" will be saved/i)
+    ).toBeInTheDocument()
+
+    // Re-map SKU back to ignore
+    fireEvent.change(selects[2], { target: { value: 'ignore' } })
+    expect(
+      screen.queryByText(/columns marked "keep as additional data" will be saved/i)
+    ).not.toBeInTheDocument()
+  })
+
+  it('deduplication: selecting a unique field on a 2nd column clears the 1st column', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    // Initially: Net Sales Amount = net_sales (index 0), SKU = ignore (index 2)
+    const selects = screen.getAllByRole('combobox')
+    expect(selects[0]).toHaveValue('net_sales')
+    expect(selects[2]).toHaveValue('ignore')
+
+    // Map SKU to net_sales — should clear Net Sales Amount back to ignore
+    fireEvent.change(selects[2], { target: { value: 'net_sales' } })
+
+    const updatedSelects = screen.getAllByRole('combobox')
+    expect(updatedSelects[2]).toHaveValue('net_sales')
+    expect(updatedSelects[0]).toHaveValue('ignore')
+  })
+
+  it('metadata is exempt from dedup — multiple columns can be mapped to metadata', () => {
+    render(<ColumnMapper {...defaultProps} />)
+    const selects = screen.getAllByRole('combobox')
+
+    // Map SKU to metadata
+    fireEvent.change(selects[2], { target: { value: 'metadata' } })
+    // Map Royalty Due to metadata as well
+    fireEvent.change(selects[3], { target: { value: 'metadata' } })
+
+    const updatedSelects = screen.getAllByRole('combobox')
+    // Both should remain as metadata without clearing each other
+    expect(updatedSelects[2]).toHaveValue('metadata')
+    expect(updatedSelects[3]).toHaveValue('metadata')
+  })
+
+  it('ignore is exempt from dedup — multiple columns can be mapped to ignore', () => {
+    render(
+      <ColumnMapper
+        {...defaultProps}
+        suggestedMapping={{
+          'Net Sales Amount': 'net_sales',
+          'Product Category': 'ignore',
+          SKU: 'ignore',
+          'Royalty Due': 'ignore',
+        }}
+      />
+    )
+    // Three columns mapped to ignore — all should remain ignored
+    const selects = screen.getAllByRole('combobox')
+    expect(selects[1]).toHaveValue('ignore')
+    expect(selects[2]).toHaveValue('ignore')
+    expect(selects[3]).toHaveValue('ignore')
+  })
+
+  it('aria-live region announces deduplication when it occurs', async () => {
+    render(<ColumnMapper {...defaultProps} />)
+    // Initially no dedup message
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+
+    // Trigger dedup: SKU -> net_sales (clears Net Sales Amount)
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[2], { target: { value: 'net_sales' } })
+
+    // An aria-live status region should appear
+    const statusRegion = screen.getByRole('status')
+    expect(statusRegion).toBeInTheDocument()
+    // Should contain some text describing the dedup
+    expect(statusRegion.textContent).toBeTruthy()
+  })
+
+  it('can map a column to metadata and submit', () => {
+    const onMappingConfirm = jest.fn()
+    render(<ColumnMapper {...defaultProps} onMappingConfirm={onMappingConfirm} />)
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[2], { target: { value: 'metadata' } })
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    expect(onMappingConfirm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mapping: expect.objectContaining({ SKU: 'metadata' }),
       })
     )
   })

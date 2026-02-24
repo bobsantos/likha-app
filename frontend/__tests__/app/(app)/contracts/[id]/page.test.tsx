@@ -800,6 +800,18 @@ describe('Contract Detail Page', () => {
       const downloadButtons = screen.getAllByRole('button', { name: /download source report/i })
       expect(downloadButtons).toHaveLength(1)
     })
+
+    it('download button has tooltip title', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([periodWithSourceFile])
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        const downloadButton = screen.getByRole('button', { name: /download source report/i })
+        expect(downloadButton).toHaveAttribute('title', 'Download source file')
+      })
+    })
   })
 
 })

@@ -899,3 +899,262 @@ class TestExtractCrossCheckValues:
         result = extract_cross_check_values(parsed, column_mapping)
 
         assert result["licensee_name"] == "Sunrise Apparel Co."
+
+
+# ---------------------------------------------------------------------------
+# apply_mapping — "metadata" column mapping value (Phase 1.1.1)
+# ---------------------------------------------------------------------------
+
+class TestApplyMappingMetadataExcludedFromNetSales:
+    """Columns mapped to 'metadata' must not contribute to net_sales aggregation."""
+
+    def test_metadata_column_excluded_from_net_sales_sum(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "SKU", "Internal Ref"],
+            [10000, "APP-001", "REF-001"],
+            [8000, "APP-002", "REF-002"],
+            [7000, "APP-003", "REF-003"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        # SKU and Internal Ref are mapped to metadata — they must not affect net_sales
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+            "Internal Ref": "metadata",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        assert result.net_sales == Decimal("25000")
+
+    def test_multiple_metadata_columns_do_not_cause_double_counting(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "SKU", "Region Code", "PO Number"],
+            [5000, "A-01", "US-W", "PO-9001"],
+            [3000, "A-02", "US-E", "PO-9002"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+            "Region Code": "metadata",
+            "PO Number": "metadata",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        assert result.net_sales == Decimal("8000")
+
+
+class TestApplyMappingMetadataExcludedFromCategoryBreakdown:
+    """Columns mapped to 'metadata' must not affect category_breakdown."""
+
+    def test_metadata_column_alongside_product_category_does_not_affect_breakdown(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Category", "Net Sales", "SKU"],
+            ["Apparel", 10000, "APP-001"],
+            ["Apparel", 8000, "APP-002"],
+            ["Footwear", 5000, "FW-001"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Category": "product_category",
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        assert result.category_sales == {
+            "Apparel": Decimal("18000"),
+            "Footwear": Decimal("5000"),
+        }
+        assert result.net_sales == Decimal("23000")
+
+    def test_metadata_column_not_treated_as_product_category(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "Tag"],
+            [10000, "promo"],
+            [8000, "regular"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "Tag": "metadata",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        # "Tag" mapped to metadata must not produce a category breakdown
+        assert result.category_sales is None
+
+
+class TestApplyMappingMetadataCapturesRawValues:
+    """apply_mapping() collects raw cell values for metadata-mapped columns."""
+
+    def test_metadata_field_present_on_mapped_data(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "SKU"],
+            [10000, "APP-001"],
+            [8000, "APP-002"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        assert hasattr(result, "metadata")
+
+    def test_metadata_contains_values_from_metadata_mapped_columns(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "SKU", "Internal Ref"],
+            [10000, "APP-001", "REF-001"],
+            [8000, "APP-002", "REF-002"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+            "Internal Ref": "metadata",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        # metadata should be a dict containing the captured column values
+        assert result.metadata is not None
+        assert "SKU" in result.metadata
+        assert "Internal Ref" in result.metadata
+
+    def test_metadata_values_are_lists_of_row_values(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "SKU"],
+            [10000, "APP-001"],
+            [8000, "APP-002"],
+            [7000, "APP-003"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        assert result.metadata["SKU"] == ["APP-001", "APP-002", "APP-003"]
+
+    def test_metadata_is_none_when_no_metadata_columns_mapped(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "SKU"],
+            [10000, "APP-001"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "ignore",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        assert result.metadata is None
+
+
+class TestApplyMappingMetadataNoErrors:
+    """apply_mapping() does not raise errors when 'metadata' appears in column_mapping."""
+
+    def test_metadata_in_mapping_does_not_cause_error(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "SKU", "PO Number"],
+            [10000, "APP-001", "PO-9001"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "SKU": "metadata",
+            "PO Number": "metadata",
+        }
+        # Must not raise any exception
+        result = apply_mapping(parsed, column_mapping)
+        assert result.net_sales == Decimal("10000")
+
+    def test_all_columns_are_metadata_except_net_sales(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "A", "B", "C", "D"],
+            [5000, "x1", "x2", "x3", "x4"],
+            [3000, "y1", "y2", "y3", "y4"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "A": "metadata",
+            "B": "metadata",
+            "C": "metadata",
+            "D": "metadata",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        assert result.net_sales == Decimal("8000")
+        assert result.category_sales is None
+
+    def test_metadata_mixed_with_ignore_and_named_fields(self):
+        from app.services.spreadsheet_parser import parse_upload, apply_mapping
+
+        rows = [
+            ["Net Sales", "Category", "SKU", "Noise"],
+            [10000, "Apparel", "APP-001", "junk1"],
+            [8000, "Footwear", "FW-001", "junk2"],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        parsed = parse_upload(xlsx_bytes, "report.xlsx")
+
+        column_mapping = {
+            "Net Sales": "net_sales",
+            "Category": "product_category",
+            "SKU": "metadata",
+            "Noise": "ignore",
+        }
+        result = apply_mapping(parsed, column_mapping)
+
+        assert result.net_sales == Decimal("18000")
+        assert result.category_sales == {
+            "Apparel": Decimal("10000"),
+            "Footwear": Decimal("8000"),
+        }
+        assert result.metadata is not None
+        assert "SKU" in result.metadata
+        # "Noise" was ignored — must not appear in metadata
+        assert "Noise" not in result.metadata

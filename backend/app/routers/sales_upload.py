@@ -10,7 +10,7 @@ Endpoints:
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -143,14 +143,13 @@ def _parse_contract_flat_rate(royalty_rate: Any) -> Optional[Decimal]:
     return _parse_rate_to_decimal(str(royalty_rate))
 
 
-def _parse_period_string(period_str: str) -> Optional[tuple["date", "date"]]:
+def _parse_period_string(period_str: str) -> Optional[tuple[date, date]]:
     """
     Attempt to parse a period string like "Q1 2025", "Jan-Mar 2025",
     "2025-01-01", "January 2025" into a (start_date, end_date) tuple.
 
     Returns None if the string cannot be parsed.
     """
-    from datetime import date
     import re
 
     s = str(period_str).strip()
@@ -225,8 +224,8 @@ def _parse_period_string(period_str: str) -> Optional[tuple["date", "date"]]:
 def _build_upload_warnings(
     cross_check_values: dict,
     contract: dict,
-    period_start: "date",
-    period_end: "date",
+    period_start: date,
+    period_end: date,
 ) -> list[dict]:
     """
     Compare cross-check values against contract data and return a list of warnings.
@@ -234,7 +233,6 @@ def _build_upload_warnings(
     Each warning is a dict with keys: field, extracted_value, contract_value, message.
     Returns an empty list when no mismatches are found.
     """
-    from datetime import date
     warnings: list[dict] = []
 
     # --- licensee_name cross-check ---
@@ -582,6 +580,10 @@ async def confirm_upload(
     if category_breakdown:
         category_breakdown_for_db = {k: str(v) for k, v in category_breakdown.items()}
 
+    # Build metadata for storage: dict[str, list[str]] from metadata-mapped columns.
+    # Stored as a JSON column; the metadata is a pass-through and does not affect any royalty calculations.
+    upload_metadata: Optional[dict] = mapped.metadata  # None when no metadata columns mapped
+
     # Upload the original spreadsheet to Supabase Storage (best-effort)
     source_file_path: Optional[str] = None
     if entry.raw_bytes:
@@ -609,6 +611,8 @@ async def confirm_upload(
         insert_data["licensee_reported_royalty"] = str(mapped.licensee_reported_royalty)
     if source_file_path is not None:
         insert_data["source_file_path"] = source_file_path
+    if upload_metadata is not None:
+        insert_data["metadata"] = upload_metadata
 
     result_db = supabase.table("sales_periods").insert(insert_data).execute()
 

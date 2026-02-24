@@ -161,6 +161,7 @@ export type LikhaField =
   | 'report_period'
   | 'licensee_name'
   | 'royalty_rate'
+  | 'metadata'
   | 'ignore'
 
 export type MappingSource = 'saved' | 'suggested' | 'none'

@@ -649,6 +649,7 @@ export default function ContractDetailPage() {
                             onClick={() => handleDownloadSourceFile(period.id)}
                             disabled={downloadingPeriodId === period.id}
                             aria-label="Download source report"
+                            title="Download source file"
                             className="text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                           >
                             <Download className="w-4 h-4" />

@@ -9,7 +9,7 @@
 'use client'
 
 import { useState } from 'react'
-import { AlertCircle, CheckCircle, ArrowLeft, ArrowRight } from 'lucide-react'
+import { AlertCircle, CheckCircle, ArrowLeft, ArrowRight, Info } from 'lucide-react'
 import type { ColumnMapping, LikhaField, MappingSource } from '@/types'
 
 export interface ColumnMapperProps {
@@ -23,17 +23,28 @@ export interface ColumnMapperProps {
   onBack: () => void
 }
 
-const FIELD_OPTIONS: { value: LikhaField; label: string }[] = [
-  { value: 'net_sales', label: 'Net Sales' },
-  { value: 'gross_sales', label: 'Gross Sales' },
-  { value: 'returns', label: 'Returns / Allowances' },
-  { value: 'product_category', label: 'Product Category' },
-  { value: 'licensee_reported_royalty', label: 'Licensee Reported Royalty' },
-  { value: 'territory', label: 'Territory' },
-  { value: 'report_period', label: 'Report Period' },
-  { value: 'licensee_name', label: 'Licensee Name' },
-  { value: 'royalty_rate', label: 'Royalty Rate' },
-  { value: 'ignore', label: 'Ignore this column' },
+const FIELD_OPTIONS: { value: LikhaField; label: string; group: string }[] = [
+  // --- Royalty calculation fields ---
+  { value: 'net_sales',                 label: 'Net Sales',                  group: 'Royalty Fields' },
+  { value: 'gross_sales',               label: 'Gross Sales',                group: 'Royalty Fields' },
+  { value: 'returns',                   label: 'Returns / Allowances',       group: 'Royalty Fields' },
+  { value: 'product_category',          label: 'Product Category',           group: 'Royalty Fields' },
+  { value: 'licensee_reported_royalty', label: 'Licensee Reported Royalty',  group: 'Royalty Fields' },
+  { value: 'territory',                 label: 'Territory',                  group: 'Royalty Fields' },
+  { value: 'report_period',             label: 'Report Period',              group: 'Royalty Fields' },
+  { value: 'licensee_name',             label: 'Licensee Name',              group: 'Royalty Fields' },
+  { value: 'royalty_rate',              label: 'Royalty Rate',               group: 'Royalty Fields' },
+  // --- Capture without calculation ---
+  { value: 'metadata',                  label: 'Keep as additional data',    group: 'Other' },
+  // --- Discard ---
+  { value: 'ignore',                    label: 'Ignore this column',         group: 'Other' },
+]
+
+// Fields that can only be mapped to one column at a time
+const UNIQUE_FIELDS: LikhaField[] = [
+  'net_sales', 'gross_sales', 'returns',
+  'product_category', 'licensee_reported_royalty', 'territory',
+  'report_period', 'licensee_name', 'royalty_rate',
 ]
 
 const MAX_PREVIEW_ROWS = 5
@@ -44,13 +55,24 @@ interface MappingRowProps {
   onChange: (field: LikhaField) => void
   isLastRow: boolean
   onHover: (column: string | null) => void
+  sampleValues: string[]
 }
 
-function MappingRow({ detectedColumn, selectedField, onChange, isLastRow, onHover }: MappingRowProps) {
+function MappingRow({
+  detectedColumn,
+  selectedField,
+  onChange,
+  isLastRow,
+  onHover,
+  sampleValues,
+}: MappingRowProps) {
+  const isIgnored = selectedField === 'ignore'
+  const isMetadata = selectedField === 'metadata'
+
   return (
     <div
       className={`
-        flex flex-col sm:grid sm:grid-cols-2 items-start sm:items-center
+        flex flex-col sm:grid sm:grid-cols-[1fr_1fr_160px] items-start sm:items-center
         px-4 py-3 gap-2 sm:gap-4
         ${!isLastRow ? 'border-b border-gray-100' : ''}
         hover:bg-gray-50
@@ -58,14 +80,14 @@ function MappingRow({ detectedColumn, selectedField, onChange, isLastRow, onHove
       onMouseEnter={() => onHover(detectedColumn)}
       onMouseLeave={() => onHover(null)}
     >
-      {/* Detected column name */}
+      {/* Col 1: Detected column name */}
       <div className="flex items-center gap-2 min-w-0 w-full">
         <code className="text-sm text-gray-800 font-mono bg-gray-100 px-2 py-0.5 rounded truncate max-w-full">
           {detectedColumn}
         </code>
       </div>
 
-      {/* Field dropdown */}
+      {/* Col 2: Field dropdown */}
       <div className="w-full">
         <select
           value={selectedField}
@@ -73,19 +95,48 @@ function MappingRow({ detectedColumn, selectedField, onChange, isLastRow, onHove
           className={`
             w-full px-3 py-2 text-sm border rounded-lg
             focus:ring-2 focus:ring-primary-500 focus:border-transparent
-            ${selectedField === 'ignore'
+            ${isIgnored
               ? 'border-gray-200 bg-gray-50 text-gray-500'
+              : isMetadata
+              ? 'border-violet-200 bg-violet-50 text-violet-700'
               : 'border-gray-300 bg-white text-gray-900'
             }
           `}
           aria-label={`Map column "${detectedColumn}" to Likha field`}
         >
-          {FIELD_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
+          <optgroup label="Royalty Fields">
+            <option value="net_sales">Net Sales</option>
+            <option value="gross_sales">Gross Sales</option>
+            <option value="returns">Returns / Allowances</option>
+            <option value="product_category">Product Category</option>
+            <option value="licensee_reported_royalty">Licensee Reported Royalty</option>
+            <option value="territory">Territory</option>
+            <option value="report_period">Report Period</option>
+            <option value="licensee_name">Licensee Name</option>
+            <option value="royalty_rate">Royalty Rate</option>
+          </optgroup>
+          <optgroup label="Other">
+            <option value="metadata">Keep as additional data</option>
+            <option value="ignore">Ignore this column</option>
+          </optgroup>
         </select>
+      </div>
+
+      {/* Col 3: Sample values — desktop inline, mobile hidden */}
+      <div className="hidden sm:flex flex-col gap-0.5 min-w-0">
+        {sampleValues.length === 0 ? (
+          <span className="text-xs text-gray-400 italic">no data</span>
+        ) : (
+          sampleValues.map((val, i) => (
+            <span
+              key={i}
+              className="text-xs text-gray-500 truncate max-w-[152px]"
+              title={val}
+            >
+              {val === '' ? <span className="italic text-gray-400">empty</span> : val}
+            </span>
+          ))
+        )}
       </div>
     </div>
   )
@@ -111,14 +162,36 @@ export default function ColumnMapper({
   })
   const [saveMapping, setSaveMapping] = useState(true)
   const [hoveredColumn, setHoveredColumn] = useState<string | null>(null)
+  const [dedupMessage, setDedupMessage] = useState<string>('')
 
   // Limit preview to at most MAX_PREVIEW_ROWS rows
   const previewRows = sampleRows.slice(0, MAX_PREVIEW_ROWS)
 
   const hasNetSalesMapped = Object.values(mappings).includes('net_sales')
+  const hasMetadataMapped = Object.values(mappings).includes('metadata')
 
   const handleMappingChange = (column: string, field: LikhaField) => {
-    setMappings((prev) => ({ ...prev, [column]: field }))
+    setMappings((prev) => {
+      const next = { ...prev }
+
+      // If the field is a unique Likha field (not metadata or ignore),
+      // clear any existing column already mapped to that field
+      if (UNIQUE_FIELDS.includes(field)) {
+        for (const col of Object.keys(next)) {
+          if (next[col] === field && col !== column) {
+            // Announce dedup to screen readers
+            const fieldLabel = FIELD_OPTIONS.find((o) => o.value === field)?.label ?? field
+            const message = `${fieldLabel} reassigned from "${col}" to "Ignore"`
+            setDedupMessage(message)
+            setTimeout(() => setDedupMessage(''), 1000)
+            next[col] = 'ignore'
+          }
+        }
+      }
+
+      next[column] = field
+      return next
+    })
   }
 
   const handleContinue = () => {
@@ -134,6 +207,13 @@ export default function ColumnMapper({
           represents.
         </p>
       </div>
+
+      {/* Deduplication announcement — visually hidden, screen-reader only */}
+      {dedupMessage && (
+        <div role="status" aria-live="polite" className="sr-only">
+          {dedupMessage}
+        </div>
+      )}
 
       {/* Mapping source banner */}
       {mappingSource === 'saved' && (
@@ -171,12 +251,15 @@ export default function ColumnMapper({
       {/* Mapping table */}
       <div className="border border-gray-200 rounded-lg overflow-hidden mb-6">
         {/* Table header */}
-        <div className="hidden sm:grid grid-cols-2 bg-gray-50 border-b border-gray-200 px-4 py-2">
+        <div className="hidden sm:grid sm:grid-cols-[1fr_1fr_160px] bg-gray-50 border-b border-gray-200 px-4 py-2">
           <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
             Column in your file
           </span>
           <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
             Maps to
+          </span>
+          <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
+            Sample values
           </span>
         </div>
 
@@ -189,9 +272,22 @@ export default function ColumnMapper({
             onChange={(field) => handleMappingChange(col, field)}
             isLastRow={index === detectedColumns.length - 1}
             onHover={setHoveredColumn}
+            sampleValues={sampleRows.slice(0, 3).map((row) => row[col] ?? '')}
           />
         ))}
       </div>
+
+      {/* Metadata callout */}
+      {hasMetadataMapped && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-violet-50 border border-violet-200
+                        rounded-lg mb-6 text-sm text-violet-800">
+          <Info className="w-4 h-4 flex-shrink-0 mt-0.5 text-violet-600" />
+          <span>
+            Columns marked &quot;Keep as additional data&quot; will be saved with this sales
+            period. They won&apos;t affect royalty calculations but will be available for reference.
+          </span>
+        </div>
+      )}
 
       {/* Raw data preview table */}
       <div className="mb-6">

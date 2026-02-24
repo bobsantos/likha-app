@@ -453,6 +453,7 @@ export default function SalesUploadPage() {
             report_period: 'Report Period',
             licensee_name: 'Licensee Name',
             royalty_rate: 'Royalty Rate',
+            metadata: 'Additional Data',
           }
           return {
             originalColumn: col,
@@ -474,7 +475,7 @@ export default function SalesUploadPage() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className={`mx-auto px-4 sm:px-6 lg:px-8 py-8 ${step === 2 ? 'max-w-4xl' : 'max-w-3xl'}`}>
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-600 mb-6">
         <Link href="/dashboard" className="hover:text-gray-900">
