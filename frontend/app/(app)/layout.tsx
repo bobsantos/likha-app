@@ -22,15 +22,20 @@ export default function AppLayout({
 
   useEffect(() => {
     async function checkAuth() {
-      const { user, error } = await getCurrentUser()
+      try {
+        const { user, error } = await getCurrentUser()
 
-      if (!user || error) {
+        if (!user || error) {
+          router.push('/login')
+          return
+        }
+
+        setUser(user)
+        setLoading(false)
+      } catch {
+        // Unexpected error (e.g. network failure during session check) — treat as unauthenticated
         router.push('/login')
-        return
       }
-
-      setUser(user)
-      setLoading(false)
     }
 
     checkAuth()

@@ -2,7 +2,7 @@
  * Tests for API client — Phase 2: ApiError.data and confirmDraft
  */
 
-import { ApiError, confirmDraft } from '@/lib/api'
+import { ApiError, confirmDraft, getContracts, getContract, isUnauthorizedError } from '@/lib/api'
 import type { Contract, ContractStatus } from '@/types'
 
 // Mock supabase
@@ -50,6 +50,149 @@ describe('ApiError', () => {
   it('is an instance of Error', () => {
     const err = new ApiError('Bad request', 400)
     expect(err).toBeInstanceOf(Error)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// isUnauthorizedError
+// ---------------------------------------------------------------------------
+
+describe('isUnauthorizedError', () => {
+  it('returns true for ApiError with status 401', () => {
+    const err = new ApiError('Unauthorized', 401)
+    expect(isUnauthorizedError(err)).toBe(true)
+  })
+
+  it('returns false for ApiError with status 404', () => {
+    const err = new ApiError('Not found', 404)
+    expect(isUnauthorizedError(err)).toBe(false)
+  })
+
+  it('returns false for ApiError with status 500', () => {
+    const err = new ApiError('Server error', 500)
+    expect(isUnauthorizedError(err)).toBe(false)
+  })
+
+  it('returns false for plain Error', () => {
+    const err = new Error('Network error')
+    expect(isUnauthorizedError(err)).toBe(false)
+  })
+
+  it('returns false for non-Error values', () => {
+    expect(isUnauthorizedError('some string')).toBe(false)
+    expect(isUnauthorizedError(null)).toBe(false)
+    expect(isUnauthorizedError(undefined)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getContracts — should throw ApiError with status code
+// ---------------------------------------------------------------------------
+
+describe('getContracts', () => {
+  it('throws ApiError with status 401 when backend returns 401', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'Not authenticated' }),
+    })
+
+    await expect(getContracts()).rejects.toBeInstanceOf(ApiError)
+
+    try {
+      await getContracts()
+    } catch (err) {
+      // reset mock and try again — need two calls total
+    }
+  })
+
+  it('thrown ApiError from getContracts has status 401', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'Not authenticated' }),
+    })
+
+    let caught: unknown
+    try {
+      await getContracts()
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(401)
+  })
+
+  it('thrown ApiError from getContracts has status 500', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => ({ detail: 'Internal server error' }),
+    })
+
+    let caught: unknown
+    try {
+      await getContracts()
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(500)
+  })
+
+  it('returns data on success', async () => {
+    const mockContracts = [{ id: 'c1', licensee_name: 'Acme' }]
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockContracts,
+    })
+
+    const result = await getContracts()
+    expect(result).toEqual(mockContracts)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// getContract — should throw ApiError with status code
+// ---------------------------------------------------------------------------
+
+describe('getContract', () => {
+  it('thrown ApiError from getContract has status 401', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ detail: 'Not authenticated' }),
+    })
+
+    let caught: unknown
+    try {
+      await getContract('some-id')
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(401)
+  })
+
+  it('thrown ApiError from getContract has status 404', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ detail: 'Not found' }),
+    })
+
+    let caught: unknown
+    try {
+      await getContract('some-id')
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(404)
   })
 })
 

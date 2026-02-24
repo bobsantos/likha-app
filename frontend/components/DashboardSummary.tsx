@@ -7,11 +7,13 @@ import { FileText, Banknote } from 'lucide-react'
 interface DashboardSummaryProps {
   totalContracts: number
   ytdRoyalties: number
+  currentYear: number
 }
 
 export default function DashboardSummary({
   totalContracts,
   ytdRoyalties,
+  currentYear,
 }: DashboardSummaryProps) {
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-US', {
@@ -40,11 +42,15 @@ export default function DashboardSummary({
       <div className="card group">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-gray-600 mb-1">YTD Royalties</p>
-            <p className="text-3xl font-bold text-gray-900">
+            <p className="text-sm text-gray-600 mb-1">YTD Royalties ({currentYear})</p>
+            <p className="text-3xl font-bold text-gray-900 tabular-nums">
               {formatCurrency(ytdRoyalties)}
             </p>
-            <p className="text-xs text-gray-500 mt-1">Total earnings this year</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {ytdRoyalties === 0
+                ? `No royalties recorded in ${currentYear}`
+                : 'Across all active contracts'}
+            </p>
           </div>
           <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
             <Banknote className="w-6 h-6 text-green-600 group-hover:scale-110 transition-transform" />

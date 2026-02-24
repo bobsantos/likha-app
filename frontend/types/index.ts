@@ -208,3 +208,21 @@ export interface UploadWarning {
 export interface ConfirmSalesUploadResponse extends SalesPeriod {
   upload_warnings: UploadWarning[]
 }
+
+// --- Total Royalties Summary Types ---
+
+export interface DashboardSummary {
+  ytd_royalties: number
+  current_year: number
+}
+
+export interface YearlyRoyalties {
+  year: number
+  royalties: number
+}
+
+export interface ContractTotals {
+  contract_id: string
+  total_royalties: number
+  by_year: YearlyRoyalties[]
+}

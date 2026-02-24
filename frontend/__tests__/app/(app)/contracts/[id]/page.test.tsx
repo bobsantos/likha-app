@@ -4,14 +4,15 @@
 
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import ContractDetailPage from '@/app/(app)/contracts/[id]/page'
-import { getContract, getSalesPeriods, getSalesReportDownloadUrl } from '@/lib/api'
-import type { Contract, SalesPeriod } from '@/types'
+import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals } from '@/lib/api'
+import type { Contract, SalesPeriod, ContractTotals } from '@/types'
 
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
   useParams: jest.fn(),
+  useRouter: jest.fn(),
 }))
 
 // Mock API
@@ -19,13 +20,30 @@ jest.mock('@/lib/api', () => ({
   getContract: jest.fn(),
   getSalesPeriods: jest.fn(),
   getSalesReportDownloadUrl: jest.fn(),
+  getContractTotals: jest.fn(),
+  ApiError: class ApiError extends Error {
+    status: number
+    data?: unknown
+    constructor(message: string, status: number, data?: unknown) {
+      super(message)
+      this.name = 'ApiError'
+      this.status = status
+      this.data = data
+    }
+  },
+  isUnauthorizedError: (err: unknown) =>
+    err instanceof Error &&
+    err.name === 'ApiError' &&
+    (err as { status: number }).status === 401,
 }))
 
 
 describe('Contract Detail Page', () => {
+  const mockPush = jest.fn()
   const mockGetContract = getContract as jest.MockedFunction<typeof getContract>
   const mockGetSalesPeriods = getSalesPeriods as jest.MockedFunction<typeof getSalesPeriods>
   const mockGetSalesReportDownloadUrl = getSalesReportDownloadUrl as jest.MockedFunction<typeof getSalesReportDownloadUrl>
+  const mockGetContractTotals = getContractTotals as jest.MockedFunction<typeof getContractTotals>
 
   // mockContract uses the correct Contract type field names:
   //   contract_start_date / contract_end_date (NOT contract_start / contract_end)
@@ -69,14 +87,22 @@ describe('Contract Detail Page', () => {
     },
   ]
 
+  const mockContractTotals: ContractTotals = {
+    contract_id: 'contract-1',
+    total_royalties: 15000,
+    by_year: [{ year: 2024, royalties: 15000 }],
+  }
+
   beforeEach(() => {
     jest.clearAllMocks()
     ;(useParams as jest.Mock).mockReturnValue({ id: 'contract-1' })
+    ;(useRouter as jest.Mock).mockReturnValue({ push: mockPush })
   })
 
   it('shows loading skeleton initially', () => {
     mockGetContract.mockImplementation(() => new Promise(() => {}))
     mockGetSalesPeriods.mockImplementation(() => new Promise(() => {}))
+    mockGetContractTotals.mockImplementation(() => new Promise(() => {}))
 
     render(<ContractDetailPage />)
     // Loading skeletons render (no specific text to check, just no crash)
@@ -86,6 +112,7 @@ describe('Contract Detail Page', () => {
   it('displays contract details when loaded', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue(mockSalesPeriods)
+    mockGetContractTotals.mockResolvedValue(mockContractTotals)
 
     render(<ContractDetailPage />)
 
@@ -98,6 +125,7 @@ describe('Contract Detail Page', () => {
   it('shows breadcrumb navigation', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -112,6 +140,7 @@ describe('Contract Detail Page', () => {
   it('displays contract terms', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -128,6 +157,7 @@ describe('Contract Detail Page', () => {
   it('displays sales periods table', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue(mockSalesPeriods)
+    mockGetContractTotals.mockResolvedValue(mockContractTotals)
 
     render(<ContractDetailPage />)
 
@@ -140,6 +170,7 @@ describe('Contract Detail Page', () => {
   it('shows empty state when no sales periods exist', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -151,6 +182,7 @@ describe('Contract Detail Page', () => {
   it('shows View PDF button when pdf_url exists', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -162,6 +194,7 @@ describe('Contract Detail Page', () => {
   it('hides View PDF button when no pdf_url', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, pdf_url: null })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -175,6 +208,7 @@ describe('Contract Detail Page', () => {
   it('displays error on fetch failure', async () => {
     mockGetContract.mockRejectedValue(new Error('Failed to fetch contract'))
     mockGetSalesPeriods.mockRejectedValue(new Error('Failed'))
+    mockGetContractTotals.mockRejectedValue(new Error('Failed'))
 
     render(<ContractDetailPage />)
 
@@ -183,14 +217,191 @@ describe('Contract Detail Page', () => {
     })
   })
 
-  it('shows total royalties summary', async () => {
-    mockGetContract.mockResolvedValue(mockContract)
-    mockGetSalesPeriods.mockResolvedValue(mockSalesPeriods)
+  it('redirects to /login when getContract returns a 401', async () => {
+    const { ApiError: MockApiError } = jest.requireMock('@/lib/api')
+    mockGetContract.mockRejectedValue(new MockApiError('Unauthorized', 401))
+    mockGetSalesPeriods.mockRejectedValue(new MockApiError('Unauthorized', 401))
+    mockGetContractTotals.mockRejectedValue(new MockApiError('Unauthorized', 401))
 
     render(<ContractDetailPage />)
 
     await waitFor(() => {
-      expect(screen.getByText('Total Royalties (YTD)')).toBeInTheDocument()
+      expect(mockPush).toHaveBeenCalledWith('/login')
+    })
+  })
+
+  it('does not show error panel when getContract returns a 401 (redirects instead)', async () => {
+    const { ApiError: MockApiError } = jest.requireMock('@/lib/api')
+    mockGetContract.mockRejectedValue(new MockApiError('Unauthorized', 401))
+    mockGetSalesPeriods.mockRejectedValue(new MockApiError('Unauthorized', 401))
+    mockGetContractTotals.mockRejectedValue(new MockApiError('Unauthorized', 401))
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/login')
+    })
+
+    expect(screen.queryByText(/error loading contract/i)).not.toBeInTheDocument()
+  })
+
+  it('shows "Total Royalties" heading (not YTD)', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue(mockSalesPeriods)
+    mockGetContractTotals.mockResolvedValue(mockContractTotals)
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Total Royalties')).toBeInTheDocument()
+      expect(screen.queryByText('Total Royalties (YTD)')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows correct total royalties from getContractTotals backend response', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue(mockSalesPeriods)
+    mockGetContractTotals.mockResolvedValue(mockContractTotals)
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      // mockContractTotals has total_royalties: 15000
+      // The amount appears in both the summary card and the table row
+      const amounts = screen.getAllByText('$15,000.00')
+      expect(amounts.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  it('shows per-year breakdown from getContractTotals by_year field', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue(mockSalesPeriods)
+    mockGetContractTotals.mockResolvedValue(mockContractTotals)
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      // by_year has { year: 2024, royalties: 15000 }
+      expect(screen.getByText('2024: $15,000.00')).toBeInTheDocument()
+    })
+  })
+
+  it('shows per-year breakdown for multiple years in descending order from backend', async () => {
+    const totalsMultiYear: ContractTotals = {
+      contract_id: 'contract-1',
+      total_royalties: 27000,
+      // Backend returns sorted descending
+      by_year: [
+        { year: 2025, royalties: 12000 },
+        { year: 2024, royalties: 15000 },
+      ],
+    }
+
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue(totalsMultiYear)
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('$27,000.00')).toBeInTheDocument()
+      expect(screen.getByText('2025: $12,000.00')).toBeInTheDocument()
+      expect(screen.getByText('2024: $15,000.00')).toBeInTheDocument()
+    })
+
+    // 2025 should appear before 2024 in the DOM
+    const yearLines = screen.getAllByText(/^\d{4}: \$/)
+    expect(yearLines[0]).toHaveTextContent('2025')
+    expect(yearLines[1]).toHaveTextContent('2024')
+  })
+
+  it('shows $0.00 total royalties when getContractTotals fails (graceful fallback)', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockRejectedValue(new Error('Network error'))
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Total Royalties')).toBeInTheDocument()
+      // Fallback to $0.00 when totals endpoint fails
+      expect(screen.getByText('$0.00')).toBeInTheDocument()
+    })
+  })
+
+  it('shows no per-year rows when getContractTotals fails', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockRejectedValue(new Error('Network error'))
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+    })
+
+    // No year breakdown lines should appear
+    expect(screen.queryByText(/^\d{4}: \$/)).not.toBeInTheDocument()
+  })
+
+  it('shows no per-year rows when by_year is empty', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Total Royalties')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/^\d{4}: \$/)).not.toBeInTheDocument()
+  })
+
+  it('still loads contract when getContractTotals fails', async () => {
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue(mockSalesPeriods)
+    mockGetContractTotals.mockRejectedValue(new Error('Network error'))
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByText('$100,000.00')).toBeInTheDocument()
+    })
+  })
+
+  it('coerces string discrepancy_amount to number for totalUnderReported', async () => {
+    const periodWithStringDiscrepancy: SalesPeriod = {
+      id: 'sp-str-disc',
+      contract_id: 'contract-1',
+      period_start: '2024-01-01',
+      period_end: '2024-03-31',
+      net_sales: 100000,
+      category_breakdown: null,
+      royalty_calculated: 15000,
+      minimum_applied: false,
+      licensee_reported_royalty: 14500,
+      discrepancy_amount: '500' as unknown as number,
+      has_discrepancy: true,
+      created_at: '2024-04-01T00:00:00Z',
+    }
+
+    mockGetContract.mockResolvedValue(mockContract)
+    mockGetSalesPeriods.mockResolvedValue([periodWithStringDiscrepancy])
+    mockGetContractTotals.mockResolvedValue({
+      contract_id: 'contract-1',
+      total_royalties: 15000,
+      by_year: [{ year: 2024, royalties: 15000 }],
+    })
+
+    render(<ContractDetailPage />)
+
+    await waitFor(() => {
+      // Discrepancy summary card should show $500.00 (not NaN or concat)
+      expect(screen.getByText('Open Discrepancies')).toBeInTheDocument()
+      const amounts = screen.getAllByText('$500.00')
+      expect(amounts.length).toBeGreaterThanOrEqual(1)
     })
   })
 
@@ -201,6 +412,7 @@ describe('Contract Detail Page', () => {
   it('displays contract period using contract_start_date and contract_end_date', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -218,6 +430,7 @@ describe('Contract Detail Page', () => {
       contract_end_date: null,
     })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -229,6 +442,7 @@ describe('Contract Detail Page', () => {
   it('does not show "N/A - N/A" for contract period when dates are present', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -246,6 +460,7 @@ describe('Contract Detail Page', () => {
   it('displays string royalty_rate directly (e.g. "8%")', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: '8%' })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -257,6 +472,7 @@ describe('Contract Detail Page', () => {
   it('displays string royalty_rate with decimal (e.g. "10.0%")', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: '10.0%' })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -269,6 +485,7 @@ describe('Contract Detail Page', () => {
   it('appends "%" to bare integer string royalty_rate (e.g. "8")', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: '8' })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -280,6 +497,7 @@ describe('Contract Detail Page', () => {
   it('appends "%" to bare decimal string royalty_rate (e.g. "10.5")', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: '10.5' })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -291,6 +509,7 @@ describe('Contract Detail Page', () => {
   it('does not double-append "%" to string royalty_rate that already contains "%"', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: '8%' })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -303,6 +522,7 @@ describe('Contract Detail Page', () => {
   it('displays numeric royalty_rate as percentage', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: 0.15 })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -314,6 +534,7 @@ describe('Contract Detail Page', () => {
   it('shows "N/A" for null royalty_rate', async () => {
     mockGetContract.mockResolvedValue({ ...mockContract, royalty_rate: null })
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -326,6 +547,7 @@ describe('Contract Detail Page', () => {
   it('shows "Active" badge for active contracts', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -345,6 +567,7 @@ describe('Contract Detail Page', () => {
     }
     mockGetContract.mockResolvedValue(draftContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -365,6 +588,7 @@ describe('Contract Detail Page', () => {
     }
     mockGetContract.mockResolvedValue(draftContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -376,6 +600,7 @@ describe('Contract Detail Page', () => {
   it('does not show review banner for active contracts', async () => {
     mockGetContract.mockResolvedValue(mockContract)
     mockGetSalesPeriods.mockResolvedValue([])
+    mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
 
     render(<ContractDetailPage />)
 
@@ -454,6 +679,11 @@ describe('Contract Detail Page', () => {
     it('displays "Reported Royalty" column header', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithMatch])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 13500,
+        by_year: [{ year: 2024, royalties: 13500 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -465,6 +695,11 @@ describe('Contract Detail Page', () => {
     it('displays "Discrepancy" column header', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithMatch])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 13500,
+        by_year: [{ year: 2024, royalties: 13500 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -476,6 +711,11 @@ describe('Contract Detail Page', () => {
     it('shows licensee_reported_royalty as currency when present', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithUnderReport])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -487,6 +727,11 @@ describe('Contract Detail Page', () => {
     it('shows em dash for reported royalty when null', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithNullReported])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 10500,
+        by_year: [{ year: 2024, royalties: 10500 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -500,6 +745,11 @@ describe('Contract Detail Page', () => {
     it('shows under-reported indicator for discrepancy_amount > 0', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithUnderReport])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -512,6 +762,11 @@ describe('Contract Detail Page', () => {
     it('shows the discrepancy amount for under-reported period', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithUnderReport])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -525,6 +780,11 @@ describe('Contract Detail Page', () => {
     it('shows over-reported indicator for discrepancy_amount < 0', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithOverReport])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 12000,
+        by_year: [{ year: 2024, royalties: 12000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -536,6 +796,11 @@ describe('Contract Detail Page', () => {
     it('shows match indicator when has_discrepancy is false and reported royalty is present', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithMatch])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 13500,
+        by_year: [{ year: 2024, royalties: 13500 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -547,6 +812,11 @@ describe('Contract Detail Page', () => {
     it('shows em dash in discrepancy cell when licensee_reported_royalty is null', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithNullReported])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 10500,
+        by_year: [{ year: 2024, royalties: 10500 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -591,6 +861,11 @@ describe('Contract Detail Page', () => {
     it('shows discrepancy summary card when at least one period is under-reported', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([underReportedPeriod])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -602,6 +877,11 @@ describe('Contract Detail Page', () => {
     it('shows correct total amount in discrepancy summary card', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([underReportedPeriod])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -616,6 +896,11 @@ describe('Contract Detail Page', () => {
     it('shows correct period count in discrepancy summary card', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([underReportedPeriod])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -628,6 +913,11 @@ describe('Contract Detail Page', () => {
     it('hides discrepancy summary card when no periods are under-reported', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([matchingPeriod])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 12000,
+        by_year: [{ year: 2024, royalties: 12000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -656,6 +946,11 @@ describe('Contract Detail Page', () => {
 
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([nullPeriod])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -684,6 +979,11 @@ describe('Contract Detail Page', () => {
 
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([underReportedPeriod, secondUnderReported])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 28500,
+        by_year: [{ year: 2024, royalties: 28500 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -731,6 +1031,11 @@ describe('Contract Detail Page', () => {
     it('shows download button when source_file_path is present', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithSourceFile])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -744,6 +1049,11 @@ describe('Contract Detail Page', () => {
     it('does not show download button when source_file_path is null', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithoutSourceFile])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 12000,
+        by_year: [{ year: 2024, royalties: 12000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -762,6 +1072,11 @@ describe('Contract Detail Page', () => {
       const signedUrl = 'https://storage.example.com/signed/acme-q1-2024.xlsx?token=abc'
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithSourceFile])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
       mockGetSalesReportDownloadUrl.mockResolvedValue(signedUrl)
 
       const windowOpenSpy = jest.spyOn(window, 'open').mockImplementation(() => null)
@@ -787,6 +1102,11 @@ describe('Contract Detail Page', () => {
     it('shows download button only for rows that have a source file when rows are mixed', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithSourceFile, periodWithoutSourceFile])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 27000,
+        by_year: [{ year: 2024, royalties: 27000 }],
+      })
 
       render(<ContractDetailPage />)
 
@@ -804,6 +1124,11 @@ describe('Contract Detail Page', () => {
     it('download button has tooltip title', async () => {
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([periodWithSourceFile])
+      mockGetContractTotals.mockResolvedValue({
+        contract_id: 'contract-1',
+        total_royalties: 15000,
+        by_year: [{ year: 2024, royalties: 15000 }],
+      })
 
       render(<ContractDetailPage />)
 

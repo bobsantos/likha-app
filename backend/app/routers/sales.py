@@ -5,8 +5,16 @@ Sales period management API endpoints.
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
 from decimal import Decimal
+from datetime import datetime, timezone
 
-from app.models.sales import SalesPeriod, SalesPeriodCreate, RoyaltySummary
+from app.models.sales import (
+    SalesPeriod,
+    SalesPeriodCreate,
+    RoyaltySummary,
+    DashboardSummary,
+    ContractTotals,
+    YearlyRoyalties,
+)
 from app.services.royalty_calc import (
     calculate_royalty,
     calculate_royalty_with_minimum,
@@ -75,6 +83,101 @@ async def create_sales_period(
         raise HTTPException(status_code=500, detail="Failed to create sales period")
 
     return SalesPeriod(**result_db.data[0])
+
+
+@router.get("/dashboard-summary", response_model=DashboardSummary)
+async def get_dashboard_summary(
+    user_id: str = Depends(get_current_user),
+) -> DashboardSummary:
+    """
+    Return the authenticated user's YTD royalties for the current calendar year
+    across all their active contracts.
+
+    Uses two queries:
+      1. Fetch the user's active contract IDs.
+      2. Fetch royalty_calculated for sales periods starting in the current year,
+         filtered to those contract IDs.
+
+    Requires authentication.
+    """
+    current_year = datetime.now(timezone.utc).year
+    ytd_start = f"{current_year}-01-01"
+
+    # 1. Fetch the user's active contract IDs
+    contracts_result = (
+        supabase.table("contracts")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("status", "active")
+        .execute()
+    )
+    contract_ids = [row["id"] for row in (contracts_result.data or [])]
+
+    if not contract_ids:
+        return DashboardSummary(ytd_royalties=Decimal("0"), current_year=current_year)
+
+    # 2. Fetch royalty_calculated for periods starting in the current year
+    #    across all active contracts (single query using `in` filter)
+    periods_result = (
+        supabase.table("sales_periods")
+        .select("royalty_calculated")
+        .in_("contract_id", contract_ids)
+        .gte("period_start", ytd_start)
+        .execute()
+    )
+    rows = periods_result.data or []
+
+    ytd_royalties = sum(
+        (Decimal(str(row["royalty_calculated"])) for row in rows),
+        Decimal("0"),
+    )
+
+    return DashboardSummary(ytd_royalties=ytd_royalties, current_year=current_year)
+
+
+@router.get("/contract/{contract_id}/totals", response_model=ContractTotals)
+async def get_contract_totals(
+    contract_id: str,
+    user_id: str = Depends(get_current_user),
+) -> ContractTotals:
+    """
+    Return all-time total royalties for a single contract with a per-calendar-year
+    breakdown. Years are sorted descending (most recent first).
+
+    Fetches only royalty_calculated and period_start to keep the payload minimal.
+
+    Requires authentication. User must own the contract.
+    """
+    await verify_contract_ownership(contract_id, user_id)
+
+    result = (
+        supabase.table("sales_periods")
+        .select("royalty_calculated, period_start")
+        .eq("contract_id", contract_id)
+        .execute()
+    )
+    rows = result.data or []
+
+    total = Decimal("0")
+    by_year: dict[int, Decimal] = {}
+
+    for row in rows:
+        amount = Decimal(str(row["royalty_calculated"]))
+        total += amount
+        # period_start is "YYYY-MM-DD"; extract year without datetime parsing overhead
+        year = int(str(row["period_start"])[:4])
+        by_year[year] = by_year.get(year, Decimal("0")) + amount
+
+    sorted_years = [
+        YearlyRoyalties(year=y, royalties=v)
+        for y, v in sorted(by_year.items(), reverse=True)
+    ]
+
+    return ContractTotals(
+        contract_id=contract_id,
+        total_royalties=total,
+        by_year=sorted_years,
+    )
 
 
 @router.get("/contract/{contract_id}", response_model=List[SalesPeriod])

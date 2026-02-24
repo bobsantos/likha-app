@@ -8,6 +8,28 @@ from typing import Any, Optional, Dict, List
 from pydantic import BaseModel, Field, computed_field
 
 
+class DashboardSummary(BaseModel):
+    """YTD royalties summary returned by GET /api/sales/dashboard-summary."""
+
+    ytd_royalties: Decimal
+    current_year: int
+
+
+class YearlyRoyalties(BaseModel):
+    """Royalties total for a single calendar year."""
+
+    year: int
+    royalties: Decimal
+
+
+class ContractTotals(BaseModel):
+    """All-time royalty totals for a contract, broken down by calendar year."""
+
+    contract_id: str
+    total_royalties: Decimal
+    by_year: List[YearlyRoyalties]
+
+
 class SalesPeriodCreate(BaseModel):
     """Request to create a new sales period."""
     contract_id: str

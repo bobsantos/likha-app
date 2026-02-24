@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import {
@@ -22,9 +22,9 @@ import {
   TrendingUp,
   Download,
 } from 'lucide-react'
-import { getContract, getSalesPeriods, getSalesReportDownloadUrl } from '@/lib/api'
+import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, isUnauthorizedError } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
-import type { Contract, SalesPeriod, TieredRate, CategoryRate } from '@/types'
+import type { Contract, SalesPeriod, TieredRate, CategoryRate, ContractTotals } from '@/types'
 
 // ---------------------------------------------------------------------------
 // DiscrepancyCell — inline presentational component, no state, no API calls
@@ -98,29 +98,38 @@ function DiscrepancyCell({
 
 export default function ContractDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const contractId = params.id as string
 
   const [contract, setContract] = useState<Contract | null>(null)
   const [salesPeriods, setSalesPeriods] = useState<SalesPeriod[]>([])
+  const [contractTotals, setContractTotals] = useState<ContractTotals | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [downloadingPeriodId, setDownloadingPeriodId] = useState<string | null>(null)
 
   const fetchData = async () => {
-    try {
-      setLoading(true)
-      setError(null)
+    setLoading(true)
+    setError(null)
 
-      const [contractData, salesData] = await Promise.all([
+    try {
+      const [contractData, salesData, totalsData] = await Promise.all([
         getContract(contractId),
         getSalesPeriods(contractId),
+        getContractTotals(contractId).catch(() => null),
       ])
 
       setContract(contractData)
       setSalesPeriods(salesData)
+      setContractTotals(totalsData)
+      setLoading(false)
     } catch (err) {
+      if (isUnauthorizedError(err)) {
+        router.push('/login')
+        // Keep loading=true so no error panel flashes before navigation
+        return
+      }
       setError(err instanceof Error ? err.message : 'Failed to load contract data')
-    } finally {
       setLoading(false)
     }
   }
@@ -271,11 +280,12 @@ export default function ContractDetailPage() {
     )
   }
 
-  const totalRoyalties = salesPeriods.reduce((sum, period) => sum + period.royalty_calculated, 0)
+  const totalRoyalties = contractTotals?.total_royalties ?? 0
+  const royaltiesByYear = contractTotals?.by_year ?? []
 
   const totalUnderReported = salesPeriods
-    .filter((p) => (p.discrepancy_amount ?? 0) > 0.01)
-    .reduce((sum, p) => sum + (p.discrepancy_amount ?? 0), 0)
+    .filter((p) => (Number(p.discrepancy_amount) ?? 0) > 0.01)
+    .reduce((sum, p) => sum + Number(p.discrepancy_amount ?? 0), 0)
 
   const underReportedCount = salesPeriods.filter(
     (p) => (p.discrepancy_amount ?? 0) > 0.01,
@@ -506,8 +516,15 @@ export default function ContractDetailPage() {
         {/* Summary Stats */}
         <div className="space-y-6">
           <div className="card animate-fade-in">
-            <h3 className="text-sm font-medium text-gray-600 mb-1">Total Royalties (YTD)</h3>
-            <p className="text-3xl font-bold text-gray-900">{formatCurrency(totalRoyalties)}</p>
+            <h3 className="text-sm font-medium text-gray-600 mb-1">Total Royalties</h3>
+            <p className="text-3xl font-bold text-gray-900 tabular-nums">{formatCurrency(totalRoyalties)}</p>
+            <div className="mt-2 space-y-0.5">
+              {royaltiesByYear.map(({ year, royalties }) => (
+                <p key={year} className="text-xs text-gray-500 tabular-nums">
+                  {year}: {formatCurrency(royalties)}
+                </p>
+              ))}
+            </div>
           </div>
 
           <div className="card animate-fade-in">

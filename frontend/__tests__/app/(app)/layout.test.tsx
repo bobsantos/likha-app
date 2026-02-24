@@ -63,6 +63,37 @@ describe('App Layout', () => {
     })
   })
 
+  it('redirects to login when getCurrentUser returns an error', async () => {
+    mockGetCurrentUser.mockResolvedValue({
+      user: null,
+      error: { message: 'JWT expired', status: 401 } as unknown as import('@supabase/supabase-js').AuthError,
+    })
+
+    render(
+      <AppLayout>
+        <div>Test Content</div>
+      </AppLayout>
+    )
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/login')
+    })
+  })
+
+  it('redirects to login when getCurrentUser throws unexpectedly', async () => {
+    mockGetCurrentUser.mockRejectedValue(new Error('Network error'))
+
+    render(
+      <AppLayout>
+        <div>Test Content</div>
+      </AppLayout>
+    )
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith('/login')
+    })
+  })
+
   it('renders children with nav when authenticated', async () => {
     mockGetCurrentUser.mockResolvedValue({
       user: { id: 'user-1', email: 'test@example.com' },

@@ -6,28 +6,47 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Upload, AlertCircle, RefreshCw } from 'lucide-react'
-import { getContracts } from '@/lib/api'
+import { getContracts, getDashboardSummary, isUnauthorizedError } from '@/lib/api'
 import ContractCard from '@/components/ContractCard'
 import DashboardSummary from '@/components/DashboardSummary'
 import EmptyState from '@/components/EmptyState'
 import type { Contract } from '@/types'
 
 export default function DashboardPage() {
+  const router = useRouter()
   const [contracts, setContracts] = useState<Contract[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [ytdRoyalties, setYtdRoyalties] = useState(0)
+  const [currentYear, setCurrentYear] = useState(new Date().getFullYear())
 
   const fetchContracts = async () => {
+    setLoading(true)
+    setError(null)
+
     try {
-      setLoading(true)
-      setError(null)
-      const data = await getContracts()
+      const [data, summary] = await Promise.all([
+        getContracts(),
+        getDashboardSummary().catch(() => ({
+          ytd_royalties: 0,
+          current_year: new Date().getFullYear(),
+        })),
+      ])
+
       setContracts(data)
+      setYtdRoyalties(summary.ytd_royalties)
+      setCurrentYear(summary.current_year)
+      setLoading(false)
     } catch (err) {
+      if (isUnauthorizedError(err)) {
+        router.push('/login')
+        // Keep loading=true so no error panel flashes before navigation
+        return
+      }
       setError('Failed to load contracts. Please try again.')
       console.error('Error fetching contracts:', err)
-    } finally {
       setLoading(false)
     }
   }
@@ -35,9 +54,6 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchContracts()
   }, [])
-
-  // Calculate YTD royalties (placeholder - will be replaced with actual data)
-  const ytdRoyalties = 0 // TODO: Fetch from sales periods in future
 
   if (loading) {
     return (
@@ -108,6 +124,7 @@ export default function DashboardPage() {
           <DashboardSummary
             totalContracts={contracts.length}
             ytdRoyalties={ytdRoyalties}
+            currentYear={currentYear}
           />
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

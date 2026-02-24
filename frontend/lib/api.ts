@@ -4,7 +4,7 @@
 
 import { supabase } from './supabase'
 import { getApiUrl } from './url-utils'
-import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse, ConfirmSalesUploadResponse } from '@/types'
+import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse, ConfirmSalesUploadResponse, DashboardSummary, ContractTotals } from '@/types'
 
 // Re-export so existing imports of getApiUrl from '@/lib/api' keep working.
 export { getApiUrl } from './url-utils'
@@ -25,6 +25,15 @@ export class ApiError extends Error {
     this.status = status
     this.data = data
   }
+}
+
+/**
+ * Returns true when the error is an ApiError with a 401 Unauthorized status.
+ * Use this in page-level catch blocks to redirect to login instead of showing
+ * an error panel.
+ */
+export function isUnauthorizedError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401
 }
 
 /**
@@ -124,7 +133,12 @@ export async function getContracts(options?: { include_drafts?: boolean }) {
   })
 
   if (!response.ok) {
-    throw new Error('Failed to fetch contracts')
+    const body = await response.json().catch(() => null)
+    throw new ApiError(
+      typeof body?.detail === 'string' ? body.detail : 'Failed to fetch contracts',
+      response.status,
+      body
+    )
   }
 
   return response.json()
@@ -138,7 +152,12 @@ export async function getContract(id: string) {
   })
 
   if (!response.ok) {
-    throw new Error('Failed to fetch contract')
+    const body = await response.json().catch(() => null)
+    throw new ApiError(
+      typeof body?.detail === 'string' ? body.detail : 'Failed to fetch contract',
+      response.status,
+      body
+    )
   }
 
   return response.json()
@@ -245,6 +264,27 @@ export async function getSavedMapping(contractId: string): Promise<SavedMappingR
     throw new ApiError('Failed to fetch saved mapping', response.status)
   }
 
+  return response.json()
+}
+
+export async function getDashboardSummary(): Promise<DashboardSummary> {
+  const headers = await getAuthHeaders()
+  const response = await fetch(`${getResolvedApiUrl()}/api/sales/dashboard-summary`, { headers })
+  if (!response.ok) {
+    throw new ApiError('Failed to fetch dashboard summary', response.status)
+  }
+  return response.json()
+}
+
+export async function getContractTotals(contractId: string): Promise<ContractTotals> {
+  const headers = await getAuthHeaders()
+  const response = await fetch(
+    `${getResolvedApiUrl()}/api/sales/contract/${contractId}/totals`,
+    { headers }
+  )
+  if (!response.ok) {
+    throw new ApiError('Failed to fetch contract totals', response.status)
+  }
   return response.json()
 }
 
