@@ -113,7 +113,7 @@ describe('ContractCard Component', () => {
     expect(screen.getByText('10-15% of Net Sales')).toBeInTheDocument()
   })
 
-  it('handles category-specific rates, with base context', () => {
+  it('handles category-specific rates (typed CategoryRate shape), shows min-max range without base suffix', () => {
     const categoryContract = {
       ...mockContract,
       royalty_rate: {
@@ -123,11 +123,23 @@ describe('ContractCard Component', () => {
           'Merchandise': 0.10,
         },
       },
-      // royalty_base: 'net_sales' from mockContract
+      // royalty_base: 'net_sales' from mockContract — suppressed for category rates
     }
 
     render(<ContractCard contract={categoryContract} />)
-    expect(screen.getByText('Category Rates of Net Sales')).toBeInTheDocument()
+    // Shows the range from the rates values; base suffix is intentionally omitted
+    expect(screen.getByText('10-15% (Per Category)')).toBeInTheDocument()
+  })
+
+  it('handles plain dict category rates from the backend, shows min-max range without base suffix', () => {
+    const plainDictContract = {
+      ...mockContract,
+      royalty_rate: { Apparel: '10%', Accessories: '12%', Footwear: '8%' } as unknown as import('@/types').RoyaltyRate,
+      // royalty_base: 'net_sales' from mockContract — suppressed for category rates
+    }
+
+    render(<ContractCard contract={plainDictContract} />)
+    expect(screen.getByText('8-12% (Per Category)')).toBeInTheDocument()
   })
 
   it('links to contract detail page', () => {

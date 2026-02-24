@@ -20,7 +20,13 @@ Extract these fields:
 - licensor_name: The entity granting the license
 - licensee_name: The entity receiving the license
 - royalty_rate: The royalty percentage or rate structure. Capture the exact structure — flat rate, tiered rates, or category-specific rates. Include all tiers if applicable.
-- royalty_base: What royalties are calculated on (e.g., net sales, gross sales, FOB price, wholesale price)
+- royalty_base: What royalties are calculated on. Use the defined term the contract uses
+  as the royalty base (e.g. "Net Sales", "Gross Sales", "FOB price").
+  IMPORTANT: If the contract defines "Net Sales" as "gross invoiced sales less returns,
+  credits, or allowances", the royalty base is "Net Sales" — not "Gross Sales".
+  A definition that explains how net sales are derived from gross figures is still a
+  net sales base. Look for the term being defined (e.g. "'Net Sales' means..."),
+  not words inside the definition body.
 - territories: List of regions or countries where the license applies
 - product_categories: List of licensed product types/categories
 - contract_start_date: When the agreement begins (ISO format if possible)

@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, DollarSign, Calendar, Loader2 } from 'lucide-react'
+import { X, Banknote, Calendar, Loader2 } from 'lucide-react'
 import { createSalesPeriod } from '@/lib/api'
 import type { Contract, TieredRate, CategoryRate } from '@/types'
 
@@ -193,7 +193,7 @@ export default function SalesPeriodModal({
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <div className="flex items-center gap-2">
-                  <DollarSign className="w-4 h-4" />
+                  <Banknote className="w-4 h-4" />
                   Net Sales Amount *
                 </div>
               </label>

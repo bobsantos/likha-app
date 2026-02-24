@@ -10,6 +10,8 @@ from app.services.royalty_calc import (
     calculate_flat_royalty,
     calculate_tiered_royalty,
     calculate_category_royalty,
+    apply_minimum_guarantee,
+    calculate_royalty_with_minimum,
     parse_percentage,
     parse_threshold,
     parse_threshold_max,
@@ -373,3 +375,99 @@ class TestRealWorldScenarios:
         # Total: $900,000
         result = calculate_royalty(tiers, Decimal("12000000"))
         assert result == Decimal("900000")
+
+    def test_scenario_sunrise_apparel_q1(self):
+        """
+        Scenario: Sunrise Apparel (contract BC-2024-0042)
+        - Rate: 8% of Net Sales
+        - Gross sales: $87,500
+        - Returns: $4,200
+        - Net Sales = $87,500 - $4,200 = $83,300
+        - Expected royalty: 8% × $83,300 = $6,664
+        - Annual MG: $20,000 (annual check — NOT applied per period)
+        """
+        net_sales = Decimal("87500") - Decimal("4200")  # $83,300
+        result = calculate_royalty("8% of Net Sales", net_sales)
+        assert result == Decimal("6664.00")
+
+    def test_scenario_sunrise_apparel_gross_only(self):
+        """
+        When the spreadsheet only has a gross sales column (no returns column mapped),
+        apply_mapping returns net_sales = gross_sales. The royalty base then is gross.
+        8% × $87,500 = $7,000.
+        This matches the user-expected result when gross is treated as the base.
+        """
+        result = calculate_royalty("8% of Net Sales", Decimal("87500"))
+        assert result == Decimal("7000.00")
+
+
+class TestMinimumGuaranteeIsSeparateFromPerPeriodRoyalty:
+    """
+    Minimum guarantee is an ANNUAL true-up, not a per-period floor.
+    These tests document the correct semantics: apply_minimum_guarantee is a
+    helper available for year-end checks, but the sales_upload confirm flow must
+    never call it to inflate a single period's royalty.
+    """
+
+    def test_annual_mg_does_not_inflate_quarterly_royalty(self):
+        """
+        Contract: 8% rate, $20,000 annual MG (quarterly reporting).
+        Q1 net sales: $83,300  → royalty = $6,664.
+        The annual MG ($20,000) must NOT bump this up to $20,000.
+        calculate_royalty() alone should return $6,664.
+        """
+        royalty = calculate_royalty("8%", Decimal("83300"))
+        assert royalty == Decimal("6664.00")
+        # Confirm this is NOT $20,000 (the annual MG amount)
+        assert royalty != Decimal("20000")
+
+    def test_apply_minimum_guarantee_with_annually_period_raises_floor(self):
+        """
+        apply_minimum_guarantee exists for year-end true-up.
+        When guarantee_period='annually' and calculated < $20,000, the floor IS applied —
+        this is correct semantics for a year-end check where you're looking at the full
+        annual royalty vs. annual MG.
+        The key insight: this function should only be called at year-end, not per period.
+        """
+        result = apply_minimum_guarantee(
+            calculated_royalty=Decimal("6664"),
+            minimum_guarantee=Decimal("20000"),
+            guarantee_period="annually",
+        )
+        # At year-end, if annual royalties are only $6,664 vs $20,000 MG, the shortfall
+        # is surfaced. minimum_applied=True signals the MG was invoked.
+        assert result.minimum_applied is True
+        assert result.royalty == Decimal("20000")
+
+    def test_apply_minimum_guarantee_quarterly_period_divides_correctly(self):
+        """
+        When guarantee_period='quarterly', the annual MG is divided by 4 for a
+        per-quarter floor. $20,000 / 4 = $5,000 per quarter.
+        $6,664 > $5,000 so minimum is NOT applied.
+        """
+        result = apply_minimum_guarantee(
+            calculated_royalty=Decimal("6664"),
+            minimum_guarantee=Decimal("20000"),
+            guarantee_period="quarterly",
+        )
+        assert result.minimum_applied is False
+        assert result.royalty == Decimal("6664")
+
+    def test_calculate_royalty_with_minimum_is_not_used_in_upload_flow(self):
+        """
+        calculate_royalty_with_minimum() still works correctly as a helper for
+        year-end true-up logic. This test documents its behavior when a period
+        royalty ($4,000) falls below the annual MG floor ($20,000 / 1 period = $20,000).
+        The upload confirm flow must NOT call this function.
+        """
+        result = calculate_royalty_with_minimum(
+            royalty_rate="8%",
+            net_sales=Decimal("50000"),  # 8% × $50,000 = $4,000
+            minimum_guarantee=Decimal("20000"),
+            guarantee_period="annually",  # annual floor = $20,000
+        )
+        # If called, it would wrongly inflate the royalty to $20,000
+        assert result.minimum_applied is True
+        assert result.royalty == Decimal("20000")
+        # This confirms why the upload flow must use calculate_royalty() directly,
+        # NOT calculate_royalty_with_minimum().

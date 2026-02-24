@@ -94,9 +94,13 @@ export interface SalesPeriod {
   period_start: string
   period_end: string
   net_sales: number
-  category_sales: CategorySales | null
-  calculated_royalty: number
+  category_breakdown: CategorySales | null   // backend field name
+  royalty_calculated: number                 // backend field name
   minimum_applied: boolean
+  licensee_reported_royalty?: number | null   // Phase 1
+  discrepancy_amount?: number | null           // Phase 1
+  has_discrepancy?: boolean                    // Phase 1
+  source_file_path?: string | null             // storage path for the uploaded sales report spreadsheet
   created_at: string
 }
 
@@ -143,4 +147,82 @@ export interface DuplicateContractInfo {
   licensee_name?: string   // present for active contracts, absent for drafts
   created_at: string
   status: ContractStatus
+}
+
+// --- Phase 1.1: Spreadsheet Upload ---
+
+export type LikhaField =
+  | 'net_sales'
+  | 'gross_sales'
+  | 'returns'
+  | 'product_category'
+  | 'licensee_reported_royalty'
+  | 'territory'
+  | 'report_period'
+  | 'licensee_name'
+  | 'royalty_rate'
+  | 'metadata'
+  | 'ignore'
+
+export type MappingSource = 'saved' | 'suggested' | 'none'
+
+export interface ColumnMapping {
+  [detectedColumnName: string]: LikhaField
+}
+
+export interface UploadPreviewResponse {
+  upload_id: string
+  filename: string
+  sheet_name: string
+  total_rows: number
+  data_rows: number
+  detected_columns: string[]
+  sample_rows: Record<string, string>[]
+  suggested_mapping: ColumnMapping
+  mapping_source: MappingSource
+  period_start: string
+  period_end: string
+}
+
+export interface UploadConfirmRequest {
+  upload_id: string
+  column_mapping: ColumnMapping
+  period_start: string
+  period_end: string
+  save_mapping: boolean
+}
+
+export interface SavedMappingResponse {
+  licensee_name: string
+  column_mapping: ColumnMapping | null
+  updated_at: string | null
+}
+
+export interface UploadWarning {
+  field: string
+  extracted_value: string
+  contract_value: string
+  message: string
+}
+
+export interface ConfirmSalesUploadResponse extends SalesPeriod {
+  upload_warnings: UploadWarning[]
+}
+
+// --- Total Royalties Summary Types ---
+
+export interface DashboardSummary {
+  ytd_royalties: number
+  current_year: number
+}
+
+export interface YearlyRoyalties {
+  year: number
+  royalties: number
+}
+
+export interface ContractTotals {
+  contract_id: string
+  total_royalties: number
+  by_year: YearlyRoyalties[]
 }

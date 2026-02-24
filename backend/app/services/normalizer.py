@@ -143,6 +143,9 @@ def parse_royalty_base(
     # Try the explicit royalty_base field first (guard against non-string values)
     if isinstance(base, str) and base:
         lower = base.lower()
+        # Check net first: "gross invoiced sales less deductions" containing "net" is net_sales
+        if "net" in lower:
+            return "net_sales"
         if "gross" in lower:
             return "gross_sales"
         return "net_sales"
@@ -150,6 +153,8 @@ def parse_royalty_base(
     # Fall back to inspecting the royalty_rate string (only when it really is a str)
     if isinstance(rate, str) and rate:
         lower = rate.lower()
+        if "net" in lower:
+            return "net_sales"
         if "gross" in lower:
             return "gross_sales"
 
