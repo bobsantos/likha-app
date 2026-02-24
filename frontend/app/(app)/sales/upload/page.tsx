@@ -9,15 +9,15 @@
 
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Upload, FileText, Check, AlertCircle, Loader2 } from 'lucide-react'
-import { getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload } from '@/lib/api'
+import { Upload, FileText, Check, AlertCircle, Loader2, ExternalLink } from 'lucide-react'
+import { ApiError, getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload, checkPeriodOverlap } from '@/lib/api'
 import ColumnMapper from '@/components/sales-upload/column-mapper'
 import CategoryMapper from '@/components/sales-upload/category-mapper'
 import UploadPreview, { type MappedHeader } from '@/components/sales-upload/upload-preview'
-import type { Contract, UploadPreviewResponse, SalesPeriod, ColumnMapping, CategoryMapping, UploadWarning } from '@/types'
+import type { Contract, UploadPreviewResponse, SalesPeriod, ColumnMapping, CategoryMapping, UploadWarning, OverlapRecord } from '@/types'
 
 type WizardStep = 'upload' | 'map-columns' | 'map-categories' | 'preview'
 
@@ -120,6 +120,31 @@ function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
 
 // --- Step 1: File Upload ---
 
+type PeriodCheckState = 'idle' | 'loading' | 'overlap' | 'clear'
+
+/** Format an ISO date string as "Jan 1, 2025" */
+function formatDate(iso: string): string {
+  const d = new Date(iso + 'T00:00:00')
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/** Format a number as USD currency */
+function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount)
+}
+
+/** Format an ISO datetime as a relative date description ("3 days ago", "Apr 15") */
+function formatRelativeDate(iso: string): string {
+  const then = new Date(iso)
+  const now = new Date()
+  const diffMs = now.getTime() - then.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  if (diffDays === 0) return 'today'
+  if (diffDays === 1) return 'yesterday'
+  if (diffDays < 30) return `${diffDays} days ago`
+  return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
 interface StepUploadProps {
   onUploadSuccess: (preview: UploadPreviewResponse) => void
   contractId: string
@@ -127,6 +152,8 @@ interface StepUploadProps {
   periodEnd: string
   setPeriodStart: (v: string) => void
   setPeriodEnd: (v: string) => void
+  overrideIntent: boolean
+  setOverrideIntent: (v: boolean) => void
 }
 
 function StepUpload({
@@ -136,12 +163,59 @@ function StepUpload({
   periodEnd,
   setPeriodStart,
   setPeriodEnd,
+  overrideIntent,
+  setOverrideIntent,
 }: StepUploadProps) {
   const [file, setFile] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
+
+  // Period overlap check state
+  const [periodCheckState, setPeriodCheckState] = useState<PeriodCheckState>('idle')
+  const [overlappingRecords, setOverlappingRecords] = useState<OverlapRecord[]>([])
+  const periodStartRef = useRef<HTMLInputElement>(null)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Derived: blocks the drop zone while the overlap card is unacknowledged
+  const overlapPending = periodCheckState === 'overlap' && !overrideIntent
+
+  // Run period-check whenever both dates are filled and end >= start
+  useEffect(() => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current)
+    }
+
+    if (!periodStart || !periodEnd || periodEnd < periodStart) {
+      setPeriodCheckState('idle')
+      setOverlappingRecords([])
+      return
+    }
+
+    debounceTimerRef.current = setTimeout(async () => {
+      setPeriodCheckState('loading')
+      try {
+        const result = await checkPeriodOverlap(contractId, periodStart, periodEnd)
+        if (result.has_overlap) {
+          setOverlappingRecords(result.overlapping_periods)
+          setPeriodCheckState('overlap')
+        } else {
+          setOverlappingRecords([])
+          setPeriodCheckState('clear')
+        }
+      } catch {
+        // Silently swallow errors — the confirm-time 409 is the safety net
+        setPeriodCheckState('idle')
+      }
+    }, 400)
+
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current)
+      }
+    }
+  }, [periodStart, periodEnd, contractId])
 
   const handleFileSelect = useCallback((selected: File | null) => {
     if (!selected) return
@@ -210,6 +284,7 @@ function StepUpload({
               Period Start <span className="text-red-500">*</span>
             </label>
             <input
+              ref={periodStartRef}
               id="period_start"
               type="date"
               required
@@ -232,6 +307,98 @@ function StepUpload({
             />
           </div>
         </div>
+
+        {/* Loading indicator while period check is in-flight */}
+        {periodCheckState === 'loading' && (
+          <div className="flex items-center gap-2 mt-3 text-sm text-gray-500">
+            <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+            <span>Checking for existing records…</span>
+          </div>
+        )}
+
+        {/* Amber overlap warning card */}
+        {periodCheckState === 'overlap' && !overrideIntent && (
+          <div
+            role="alert"
+            className="mt-4 bg-amber-50 border border-amber-200 rounded-lg overflow-hidden"
+          >
+            {/* Header */}
+            <div className="flex items-start gap-3 px-4 py-3 border-b border-amber-200">
+              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-900">
+                  {overlappingRecords.length === 1
+                    ? 'A sales record already exists for this period.'
+                    : `${overlappingRecords.length} existing records overlap this period.`}
+                </p>
+                <p className="text-sm text-amber-700 mt-0.5">
+                  Uploading will replace{' '}
+                  {overlappingRecords.length === 1 ? 'it' : 'them'}.
+                  {' '}Review {overlappingRecords.length === 1 ? 'the record' : 'the records'} below before continuing.
+                </p>
+              </div>
+            </div>
+
+            {/* Overlap preview rows */}
+            <div className="px-4 py-3 space-y-0">
+              {overlappingRecords.slice(0, 3).map((record) => (
+                <div
+                  key={record.id}
+                  className="flex items-center justify-between text-sm py-2 border-b border-amber-100 last:border-0"
+                >
+                  <span className="text-amber-900 font-medium tabular-nums">
+                    {formatDate(record.period_start)} – {formatDate(record.period_end)}
+                  </span>
+                  <div className="flex items-center gap-4 text-amber-800">
+                    <span className="tabular-nums font-medium">
+                      {formatCurrency(record.net_sales)} net sales
+                    </span>
+                    <span className="text-amber-600 text-xs whitespace-nowrap">
+                      uploaded {formatRelativeDate(record.created_at)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {overlappingRecords.length > 3 && (
+                <p className="text-xs text-amber-600 pt-2">
+                  + {overlappingRecords.length - 3} more record
+                  {overlappingRecords.length - 3 > 1 ? 's' : ''} will also be replaced.
+                </p>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-3 px-4 py-3 bg-amber-100/60 border-t border-amber-200">
+              <button
+                onClick={() => setOverrideIntent(true)}
+                className="btn-primary text-sm"
+              >
+                Replace existing record{overlappingRecords.length > 1 ? 's' : ''}
+              </button>
+              <button
+                onClick={() => {
+                  setPeriodStart('')
+                  setPeriodEnd('')
+                  setPeriodCheckState('idle')
+                  setOverlappingRecords([])
+                  periodStartRef.current?.focus()
+                }}
+                className="btn-secondary text-sm"
+              >
+                Change reporting period
+              </button>
+              <a
+                href={`/contracts/${contractId}#sales-periods`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-auto flex items-center gap-1 text-sm text-amber-700 hover:text-amber-900 underline underline-offset-2"
+              >
+                View existing report
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Upload error banner */}
@@ -250,8 +417,10 @@ function StepUpload({
 
       {/* Drag-and-drop file zone */}
       <div
+        data-testid="drop-zone"
         className={`
           relative border-2 border-dashed rounded-xl p-8 sm:p-12 text-center transition-colors duration-300
+          ${overlapPending ? 'pointer-events-none opacity-50' : ''}
           ${dragActive
             ? 'border-primary-500 bg-primary-50'
             : validationError
@@ -292,7 +461,7 @@ function StepUpload({
               <div className="flex items-center gap-3 justify-center">
                 <button
                   onClick={handleUploadClick}
-                  disabled={uploading || !periodStart || !periodEnd}
+                  disabled={uploading || !periodStart || !periodEnd || overlapPending}
                   className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {uploading ? (
@@ -355,8 +524,9 @@ export default function SalesUploadPage() {
   const [loadingContract, setLoadingContract] = useState(true)
 
   // Wizard state across steps
-  const [periodStart, setPeriodStart] = useState('')
-  const [periodEnd, setPeriodEnd] = useState('')
+  const [periodStart, setPeriodStartRaw] = useState('')
+  const [periodEnd, setPeriodEndRaw] = useState('')
+  const [overrideIntent, setOverrideIntentRaw] = useState(false)
   const [uploadPreview, setUploadPreview] = useState<UploadPreviewResponse | null>(null)
   const [confirmedMapping, setConfirmedMapping] = useState<ColumnMapping | null>(null)
   const [saveMapping, setSaveMapping] = useState(true)
@@ -364,6 +534,23 @@ export default function SalesUploadPage() {
   const [uploadWarnings, setUploadWarnings] = useState<UploadWarning[]>([])
   const [confirming, setConfirming] = useState(false)
   const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [duplicatePeriodError, setDuplicatePeriodError] = useState(false)
+  const [lastCategoryMapping, setLastCategoryMapping] = useState<CategoryMapping | undefined>(undefined)
+
+  // Reset overrideIntent whenever the user changes either date field
+  const setPeriodStart = useCallback((v: string) => {
+    setPeriodStartRaw(v)
+    setOverrideIntentRaw(false)
+  }, [])
+
+  const setPeriodEnd = useCallback((v: string) => {
+    setPeriodEndRaw(v)
+    setOverrideIntentRaw(false)
+  }, [])
+
+  const setOverrideIntent = useCallback((v: boolean) => {
+    setOverrideIntentRaw(v)
+  }, [])
 
   useEffect(() => {
     if (!contractId) return
@@ -392,16 +579,23 @@ export default function SalesUploadPage() {
   /**
    * Shared confirm logic — called either after column mapping (flat-rate contracts)
    * or after category mapping (category-rate contracts).
+   * Pass `overrideDuplicate: true` to replace an existing record for the same period.
+   * When called without an explicit override, the current `overrideIntent` state is used.
    */
   const doConfirm = async (
     mapping: ColumnMapping,
     save: boolean,
-    categoryMapping?: CategoryMapping
+    categoryMapping?: CategoryMapping,
+    overrideDuplicate?: boolean
   ) => {
     if (!uploadPreview) return
 
+    // Use the explicit override argument if provided, otherwise fall back to parent state
+    const shouldOverride = overrideDuplicate ?? overrideIntent
+
     setConfirming(true)
     setConfirmError(null)
+    setDuplicatePeriodError(false)
     try {
       const response = await confirmSalesUpload(contractId, {
         upload_id: uploadPreview.upload_id,
@@ -410,12 +604,23 @@ export default function SalesUploadPage() {
         period_end: uploadPreview.period_end,
         save_mapping: save,
         ...(categoryMapping ? { category_mapping: categoryMapping } : {}),
+        ...(shouldOverride ? { override_duplicate: true } : {}),
       })
       setSalesPeriod(response)
       setUploadWarnings(response.upload_warnings ?? [])
       setStep('preview')
     } catch (err) {
-      setConfirmError(err instanceof Error ? err.message : 'Failed to create sales period')
+      if (
+        err instanceof ApiError &&
+        err.status === 409 &&
+        typeof err.data === 'object' &&
+        err.data !== null &&
+        (err.data as Record<string, unknown>).error_code === 'duplicate_period'
+      ) {
+        setDuplicatePeriodError(true)
+      } else {
+        setConfirmError(err instanceof Error ? err.message : 'Failed to create sales period')
+      }
     } finally {
       setConfirming(false)
     }
@@ -430,6 +635,7 @@ export default function SalesUploadPage() {
   }) => {
     setConfirmedMapping(mapping)
     setSaveMapping(save)
+    setLastCategoryMapping(undefined)
 
     if (!uploadPreview) return
 
@@ -452,6 +658,7 @@ export default function SalesUploadPage() {
     saveAliases: boolean
   }) => {
     if (!confirmedMapping) return
+    setLastCategoryMapping(categoryMapping)
     await doConfirm(confirmedMapping, saveAliases, categoryMapping)
   }
 
@@ -561,11 +768,51 @@ export default function SalesUploadPage() {
             periodEnd={periodEnd}
             setPeriodStart={setPeriodStart}
             setPeriodEnd={setPeriodEnd}
+            overrideIntent={overrideIntent}
+            setOverrideIntent={setOverrideIntent}
           />
         )}
 
         {step === 'map-columns' && uploadPreview && (
           <div className="space-y-4">
+            {duplicatePeriodError && (
+              <div
+                role="alert"
+                className="flex items-start gap-3 px-4 py-4 bg-amber-50 border border-amber-300 rounded-lg animate-fade-in"
+              >
+                <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-amber-900">
+                    A sales record already exists for this contract and period.
+                  </p>
+                  <p className="text-sm text-amber-700 mt-0.5">
+                    You can replace the existing record or go back to change the reporting period.
+                  </p>
+                  <div className="flex items-center gap-3 mt-3">
+                    <button
+                      onClick={() => {
+                        if (confirmedMapping) {
+                          doConfirm(confirmedMapping, saveMapping, lastCategoryMapping, true)
+                        }
+                      }}
+                      disabled={confirming}
+                      className="btn-primary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Replace existing record
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDuplicatePeriodError(false)
+                        setStep('upload')
+                      }}
+                      className="btn-secondary text-sm"
+                    >
+                      Go back
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
             {confirmError && (
               <div
                 role="alert"

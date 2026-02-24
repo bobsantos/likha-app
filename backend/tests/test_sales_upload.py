@@ -129,14 +129,16 @@ def _mock_periods_table(insert_result):
       - select("id").eq(...).eq(...).execute() -> data=[] (no dupe)
       - insert({...}).execute() -> data=[insert_result]
     """
-    # Duplicate check chain: .select("id").eq("contract_id",...).eq("period_start",...).execute()
+    # Overlap check chain: .select("id, ...").eq("contract_id",...).lte("period_start",...).gte("period_end",...).execute()
     mock_dupe_exec = MagicMock()
     mock_dupe_exec.execute.return_value = Mock(data=[])
 
     mock_dupe_chain = MagicMock()
-    # Any .eq() call on mock_dupe_chain returns another mock with no data
+    # Any .eq()/.lte()/.gte() call on the chain returns another mock with no data
     mock_dupe_chain.eq.return_value = mock_dupe_exec
-    mock_dupe_exec.eq.return_value = mock_dupe_exec  # chain continues with no data
+    mock_dupe_exec.eq.return_value = mock_dupe_exec
+    mock_dupe_exec.lte.return_value = mock_dupe_exec
+    mock_dupe_exec.gte.return_value = mock_dupe_exec
 
     mock_insert_result = MagicMock()
     mock_insert_result.execute.return_value = Mock(data=[insert_result])

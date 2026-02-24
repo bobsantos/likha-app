@@ -110,6 +110,14 @@ export default function ContractDetailPage() {
   const [downloadingTemplate, setDownloadingTemplate] = useState(false)
   const [templateDownloadError, setTemplateDownloadError] = useState<string | null>(null)
 
+  // Scroll to hash anchor after data loads (e.g., #sales-periods from upload wizard link)
+  useEffect(() => {
+    if (!loading && window.location.hash) {
+      const el = document.querySelector(window.location.hash)
+      el?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [loading])
+
   const fetchData = async () => {
     setLoading(true)
     setError(null)
@@ -578,7 +586,7 @@ export default function ContractDetailPage() {
       </div>
 
       {/* Sales Periods Section */}
-      <div className="card mt-6 animate-fade-in">
+      <div id="sales-periods" className="card mt-6 animate-fade-in">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">

@@ -148,6 +148,8 @@ def _mock_periods_table(insert_result):
     mock_dupe_chain = MagicMock()
     mock_dupe_chain.eq.return_value = mock_dupe_exec
     mock_dupe_exec.eq.return_value = mock_dupe_exec
+    mock_dupe_exec.lte.return_value = mock_dupe_exec
+    mock_dupe_exec.gte.return_value = mock_dupe_exec
 
     mock_insert_result = MagicMock()
     mock_insert_result.execute.return_value = Mock(data=[insert_result])

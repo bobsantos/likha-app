@@ -4,7 +4,7 @@
 
 import { supabase } from './supabase'
 import { getApiUrl } from './url-utils'
-import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse, ConfirmSalesUploadResponse, DashboardSummary, ContractTotals, InboundReport, InboundAddressResponse } from '@/types'
+import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse, ConfirmSalesUploadResponse, DashboardSummary, ContractTotals, InboundReport, InboundAddressResponse, PeriodCheckResponse } from '@/types'
 
 // Re-export so existing imports of getApiUrl from '@/lib/api' keep working.
 export { getApiUrl } from './url-utils'
@@ -455,6 +455,37 @@ export async function rejectReport(reportId: string): Promise<void> {
       body
     )
   }
+}
+
+/**
+ * Check whether any existing sales_periods for the given contract overlap the
+ * requested date range.  Called from the Step 1 date fields with a 400 ms
+ * debounce.  Errors are expected to be swallowed by the caller — the confirm-
+ * time 409 is the safety net.
+ */
+export async function checkPeriodOverlap(
+  contractId: string,
+  start: string,
+  end: string
+): Promise<PeriodCheckResponse> {
+  const headers = await getAuthHeaders()
+
+  const url = new URL(`${getResolvedApiUrl()}/api/sales/upload/${contractId}/period-check`)
+  url.searchParams.set('start', start)
+  url.searchParams.set('end', end)
+
+  const response = await fetch(url.toString(), { headers })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new ApiError(
+      extractErrorMessage(body, 'Failed to check period overlap'),
+      response.status,
+      body
+    )
+  }
+
+  return response.json()
 }
 
 /**

@@ -14,7 +14,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.auth import get_current_user, verify_contract_ownership
@@ -227,12 +227,18 @@ def _build_upload_warnings(
     contract: dict,
     period_start: date,
     period_end: date,
+    metadata_period_start: Optional[str] = None,
+    metadata_period_end: Optional[str] = None,
 ) -> list[dict]:
     """
     Compare cross-check values against contract data and return a list of warnings.
 
     Each warning is a dict with keys: field, extracted_value, contract_value, message.
     Returns an empty list when no mismatches are found.
+
+    When metadata_period_start and/or metadata_period_end are provided, they are
+    compared against the user-entered period.  If there is no date overlap, an
+    amber warning is emitted.
     """
     warnings: list[dict] = []
 
@@ -293,6 +299,49 @@ def _build_upload_warnings(
                         f"Uploaded file reports period '{extracted_period_str}' — "
                         f"you entered {period_start} to {period_end} in Step 1. "
                         "Verify the dates are correct."
+                    ),
+                })
+
+    # --- metadata period mismatch check ---
+    if metadata_period_start is not None or metadata_period_end is not None:
+        # Only check when we have at least one metadata period value to compare
+        meta_start_parsed = _parse_period_string(metadata_period_start) if metadata_period_start else None
+        meta_end_parsed = _parse_period_string(metadata_period_end) if metadata_period_end else None
+
+        # Build a unified metadata date range from what we have
+        # Each parsed result is a (start, end) tuple for that single value
+        meta_range_start: Optional[date] = None
+        meta_range_end: Optional[date] = None
+
+        if meta_start_parsed is not None:
+            meta_range_start = meta_start_parsed[0]
+        if meta_end_parsed is not None:
+            meta_range_end = meta_end_parsed[1]
+
+        # Fill in whichever side is missing from the other
+        if meta_range_start is not None and meta_range_end is None:
+            meta_range_end = meta_start_parsed[1]  # type: ignore[index]
+        if meta_range_end is not None and meta_range_start is None:
+            meta_range_start = meta_end_parsed[0]  # type: ignore[index]
+
+        if meta_range_start is not None and meta_range_end is not None:
+            # Check overlap with user-entered period
+            overlaps = (meta_range_start <= period_end) and (period_start <= meta_range_end)
+            if not overlaps:
+                extracted_label = (
+                    f"{metadata_period_start} to {metadata_period_end}"
+                    if metadata_period_start and metadata_period_end
+                    else (metadata_period_start or metadata_period_end)
+                )
+                user_label = f"{period_start} to {period_end}"
+                warnings.append({
+                    "field": "metadata_period",
+                    "extracted_value": extracted_label,
+                    "contract_value": user_label,
+                    "message": (
+                        f"The spreadsheet metadata indicates a period of {extracted_label} "
+                        f"but you entered {user_label}. "
+                        "Verify the file is for the correct reporting period."
                     ),
                 })
 
@@ -362,6 +411,7 @@ class UploadConfirmRequest(BaseModel):
     period_end: str
     save_mapping: bool = True
     category_mapping: Optional[dict[str, Optional[str]]] = None
+    override_duplicate: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -618,6 +668,8 @@ async def confirm_upload(
             contract=contract,
             period_start=period_start,
             period_end=period_end,
+            metadata_period_start=entry.parsed.metadata_period_start,
+            metadata_period_end=entry.parsed.metadata_period_end,
         )
     except Exception as e:
         logger.warning(f"Cross-check failed (non-blocking): {e}")
@@ -668,20 +720,27 @@ async def confirm_upload(
     except Exception as e:
         raise _error(400, f"Royalty calculation failed: {e}", "royalty_calculation_failed")
 
-    # Check for duplicate period (exact match only)
-    dupe_result = (
+    # Check for overlapping periods (matches the DB exclusion constraint)
+    # A period [A, B] overlaps [C, D] when A <= D and C <= B
+    overlap_result = (
         supabase.table("sales_periods")
-        .select("id")
+        .select("id, period_start, period_end")
         .eq("contract_id", contract_id)
-        .eq("period_start", str(period_start))
+        .lte("period_start", str(period_end))
+        .gte("period_end", str(period_start))
         .execute()
     )
-    if dupe_result.data:
-        raise _error(
-            409,
-            "A sales period for this contract already exists with the same start date.",
-            "duplicate_period",
-        )
+    if overlap_result.data:
+        if body.override_duplicate:
+            # Delete overlapping record(s) before inserting the replacement
+            for existing in overlap_result.data:
+                supabase.table("sales_periods").delete().eq("id", existing["id"]).execute()
+        else:
+            raise _error(
+                409,
+                "A sales period for this contract already exists that overlaps with the selected dates.",
+                "duplicate_period",
+            )
 
     # Save mapping if requested
     if body.save_mapping and licensee_name:
@@ -800,6 +859,51 @@ async def get_saved_mapping(
         "licensee_name": licensee_name,
         "column_mapping": None,
         "updated_at": None,
+    }
+
+
+@router.get("/upload/{contract_id}/period-check")
+async def period_check(
+    contract_id: str,
+    start: str = Query(..., description="Period start date (YYYY-MM-DD)"),
+    end: str = Query(..., description="Period end date (YYYY-MM-DD)"),
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """
+    Check for existing sales_periods that overlap the requested date range.
+
+    Returns has_overlap and the list of overlapping period records so the
+    frontend can show an early inline warning before the user picks a file.
+    """
+    # Auth + ownership
+    await verify_contract_ownership(contract_id, user_id)
+
+    # Validate dates
+    try:
+        from datetime import date as _date
+        period_start = _date.fromisoformat(start)
+        period_end = _date.fromisoformat(end)
+    except ValueError:
+        raise _error(400, "Invalid date format. Use YYYY-MM-DD.", "invalid_date")
+
+    if period_end < period_start:
+        raise _error(400, "end must be on or after start.", "period_end_before_start")
+
+    # Query for overlapping periods: period_start <= end AND period_end >= start
+    overlap_result = (
+        supabase.table("sales_periods")
+        .select("id, period_start, period_end, net_sales, royalty_calculated, created_at")
+        .eq("contract_id", contract_id)
+        .lte("period_start", str(period_end))
+        .gte("period_end", str(period_start))
+        .execute()
+    )
+
+    overlapping = overlap_result.data or []
+
+    return {
+        "has_overlap": len(overlapping) > 0,
+        "overlapping_periods": overlapping,
     }
 
 

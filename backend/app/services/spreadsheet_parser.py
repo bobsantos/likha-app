@@ -53,6 +53,8 @@ class ParsedSheet:
     data_rows: int                    # total data rows (excl. header + summary rows)
     sheet_name: str = "Sheet1"
     total_rows: int = 0               # total rows in file including header
+    metadata_period_start: Optional[str] = None  # period start extracted from file metadata rows
+    metadata_period_end: Optional[str] = None    # period end extracted from file metadata rows
 
 
 @dataclass
@@ -446,6 +448,71 @@ def _parse_xls_bytes(file_content: bytes) -> tuple[list[list[list]], list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Metadata period extraction
+# ---------------------------------------------------------------------------
+
+# Label sets for extracting reporting period start/end from metadata rows.
+_PERIOD_START_LABELS: frozenset[str] = frozenset({
+    "reporting period start",
+    "period start",
+    "from",
+    "start date",
+    "period from",
+})
+
+_PERIOD_END_LABELS: frozenset[str] = frozenset({
+    "reporting period end",
+    "period end",
+    "through",
+    "end date",
+    "period through",
+    "to",
+    "period to",
+})
+
+
+def _extract_metadata_periods(
+    raw_rows: list[list],
+    header_idx: int,
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Scan rows before the detected header (indices 0..header_idx-1) for period
+    label/value pairs and return (period_start, period_end).
+
+    For each row, each cell (lowercased and stripped) is checked against the
+    known start and end label sets.  When a match is found the next cell in
+    the same row is used as the value.
+
+    Returns:
+        A 2-tuple (start_value, end_value).  Either or both may be None if
+        the corresponding label was not found.
+    """
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+
+    for row in raw_rows[:header_idx]:
+        for col_idx, cell in enumerate(row):
+            if cell is None:
+                continue
+            label = str(cell).strip().lower()
+            # Look at the next cell in the same row for the value
+            next_idx = col_idx + 1
+            if next_idx >= len(row):
+                continue
+            next_cell = row[next_idx]
+            if next_cell is None or str(next_cell).strip() == "":
+                continue
+            value = str(next_cell).strip()
+
+            if label in _PERIOD_START_LABELS and period_start is None:
+                period_start = value
+            elif label in _PERIOD_END_LABELS and period_end is None:
+                period_end = value
+
+    return period_start, period_end
+
+
+# ---------------------------------------------------------------------------
 # Core parse_upload
 # ---------------------------------------------------------------------------
 
@@ -501,6 +568,9 @@ def parse_upload(file_content: bytes, filename: str) -> ParsedSheet:
     # Detect header row
     header_idx = _detect_header_row(raw_rows)
     header_row = raw_rows[header_idx]
+
+    # Extract metadata periods from rows before the detected header
+    metadata_period_start, metadata_period_end = _extract_metadata_periods(raw_rows, header_idx)
 
     # Forward-fill None headers (merged header cells)
     filled_headers: list[Optional[str]] = []
@@ -568,6 +638,8 @@ def parse_upload(file_content: bytes, filename: str) -> ParsedSheet:
         data_rows=len(data_rows_list),
         sheet_name=sheet_name,
         total_rows=total_rows,
+        metadata_period_start=metadata_period_start,
+        metadata_period_end=metadata_period_end,
     )
 
 

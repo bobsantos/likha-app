@@ -3,11 +3,11 @@
  * TDD: written before the implementation
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import SalesUploadPage from '@/app/(app)/sales/upload/page'
-import { getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload } from '@/lib/api'
-import type { Contract, UploadPreviewResponse, SalesPeriod } from '@/types'
+import { ApiError, getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload, checkPeriodOverlap } from '@/lib/api'
+import type { Contract, UploadPreviewResponse, SalesPeriod, PeriodCheckResponse } from '@/types'
 
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
@@ -15,12 +15,14 @@ jest.mock('next/navigation', () => ({
   useSearchParams: jest.fn(),
 }))
 
-// Mock API
+// Mock API — keep ApiError as the real class so tests can instantiate it
 jest.mock('@/lib/api', () => ({
+  ...jest.requireActual('@/lib/api'),
   getContract: jest.fn(),
   getSavedMapping: jest.fn(),
   uploadSalesReport: jest.fn(),
   confirmSalesUpload: jest.fn(),
+  checkPeriodOverlap: jest.fn(),
 }))
 
 const mockContract: Contract = {
@@ -88,6 +90,7 @@ describe('Sales Upload Wizard Page', () => {
   const mockGetSavedMapping = getSavedMapping as jest.MockedFunction<typeof getSavedMapping>
   const mockUploadSalesReport = uploadSalesReport as jest.MockedFunction<typeof uploadSalesReport>
   const mockConfirmSalesUpload = confirmSalesUpload as jest.MockedFunction<typeof confirmSalesUpload>
+  const mockCheckPeriodOverlap = checkPeriodOverlap as jest.MockedFunction<typeof checkPeriodOverlap>
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -101,6 +104,8 @@ describe('Sales Upload Wizard Page', () => {
       column_mapping: null,
       updated_at: null,
     })
+    // Default: no overlap
+    mockCheckPeriodOverlap.mockResolvedValue({ has_overlap: false, overlapping_periods: [] })
   })
 
   it('renders Step 1 (file upload) on initial load', async () => {
@@ -523,6 +528,380 @@ describe('Sales Upload Wizard Page', () => {
     fireEvent.click(screen.getByRole('button', { name: /back/i }))
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: /map columns/i })).toBeInTheDocument()
+    })
+  })
+
+  // --- Duplicate period (Gap 2) tests ---
+
+  /**
+   * Helper: advance the wizard to the map-columns step so tests can trigger
+   * a confirm from there.
+   */
+  async function goToStep2() {
+    mockUploadSalesReport.mockResolvedValue(mockUploadPreview)
+    render(<SalesUploadPage />)
+    await waitFor(() => expect(screen.getByLabelText(/period start/i)).toBeInTheDocument())
+    fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+    fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+    const fileInput = screen.getByTestId('spreadsheet-file-input')
+    const file = new File(['test'], 'sales.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    fireEvent.change(fileInput, { target: { files: [file] } })
+    await waitFor(() => expect(screen.getByRole('button', { name: /upload.*parse/i })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /upload.*parse/i }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: /map columns/i })).toBeInTheDocument())
+  }
+
+  it('shows duplicate period conflict card on 409 error', async () => {
+    mockConfirmSalesUpload.mockRejectedValue(
+      new ApiError('A sales record already exists for this period', 409, {
+        detail: 'A sales record already exists for this period',
+        error_code: 'duplicate_period',
+      })
+    )
+    await goToStep2()
+
+    // Trigger the confirm
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+    // Amber conflict card should appear with the warning message
+    await waitFor(() => {
+      expect(
+        screen.getByText(/a sales record already exists for this contract and period/i)
+      ).toBeInTheDocument()
+    })
+
+    // Both action buttons should be visible
+    expect(screen.getByRole('button', { name: /replace existing record/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /go back/i })).toBeInTheDocument()
+
+    // Generic red error should NOT appear
+    expect(screen.queryByText(/could not create sales period/i)).not.toBeInTheDocument()
+  })
+
+  it('replace existing record re-submits with override_duplicate: true', async () => {
+    // First call → 409 duplicate_period; second call → success
+    mockConfirmSalesUpload
+      .mockRejectedValueOnce(
+        new ApiError('A sales record already exists for this period', 409, {
+          detail: 'A sales record already exists for this period',
+          error_code: 'duplicate_period',
+        })
+      )
+      .mockResolvedValueOnce({ ...mockSalesPeriod, upload_warnings: [] })
+
+    await goToStep2()
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+    // Wait for conflict card
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /replace existing record/i })).toBeInTheDocument()
+    })
+
+    // Click the override button
+    fireEvent.click(screen.getByRole('button', { name: /replace existing record/i }))
+
+    // Second API call must include override_duplicate: true
+    await waitFor(() => {
+      expect(mockConfirmSalesUpload).toHaveBeenCalledTimes(2)
+      expect(mockConfirmSalesUpload).toHaveBeenLastCalledWith(
+        'contract-1',
+        expect.objectContaining({ override_duplicate: true })
+      )
+    })
+  })
+
+  it('go back from duplicate conflict card returns to upload step', async () => {
+    mockConfirmSalesUpload.mockRejectedValue(
+      new ApiError('A sales record already exists for this period', 409, {
+        detail: 'A sales record already exists for this period',
+        error_code: 'duplicate_period',
+      })
+    )
+    await goToStep2()
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+    // Wait for conflict card
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /go back/i })).toBeInTheDocument()
+    })
+
+    // Click Go back
+    fireEvent.click(screen.getByRole('button', { name: /go back/i }))
+
+    // Should navigate back to Step 1 (upload step), not stay on map-columns
+    await waitFor(() => {
+      expect(screen.getByLabelText(/period start/i)).toBeInTheDocument()
+      expect(screen.queryByRole('heading', { name: /map columns/i })).not.toBeInTheDocument()
+    })
+
+    // Conflict card is gone
+    expect(
+      screen.queryByText(/a sales record already exists for this contract and period/i)
+    ).not.toBeInTheDocument()
+  })
+
+  // --- Early period overlap check (Gap 2 — new inline warning in Step 1) ---
+
+  /** Helper: render and wait for Step 1 to be ready */
+  async function renderAndWaitForStep1() {
+    render(<SalesUploadPage />)
+    await waitFor(() => {
+      expect(screen.getByLabelText(/period start/i)).toBeInTheDocument()
+    })
+  }
+
+  it('calls period-check API when both dates are filled', async () => {
+    jest.useFakeTimers()
+    try {
+      await renderAndWaitForStep1()
+
+      fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+      fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+
+      // Advance the 400ms debounce
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+
+      await waitFor(() => {
+        expect(mockCheckPeriodOverlap).toHaveBeenCalledWith('contract-1', '2025-01-01', '2025-03-31')
+      })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('shows loading state while period check is in-flight', async () => {
+    jest.useFakeTimers()
+    // Keep the promise pending so we can observe the loading state
+    let resolveOverlap!: (val: PeriodCheckResponse) => void
+    mockCheckPeriodOverlap.mockReturnValue(
+      new Promise<PeriodCheckResponse>((resolve) => { resolveOverlap = resolve })
+    )
+
+    try {
+      await renderAndWaitForStep1()
+
+      fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+      fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+
+      // Advance debounce — API call starts but does not resolve yet
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+
+      // Loading indicator should be visible
+      expect(screen.getByText(/checking for existing records/i)).toBeInTheDocument()
+
+      // Resolve the promise and confirm loading state goes away
+      await act(async () => {
+        resolveOverlap({ has_overlap: false, overlapping_periods: [] })
+      })
+
+      await waitFor(() => {
+        expect(screen.queryByText(/checking for existing records/i)).not.toBeInTheDocument()
+      })
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('shows amber overlap card when overlapping periods found', async () => {
+    jest.useFakeTimers()
+    mockCheckPeriodOverlap.mockResolvedValue({
+      has_overlap: true,
+      overlapping_periods: [
+        {
+          id: 'sp-existing-1',
+          period_start: '2025-01-01',
+          period_end: '2025-03-31',
+          net_sales: 95000,
+          royalty_calculated: 7600,
+          created_at: '2025-04-15T10:23:00Z',
+        },
+      ],
+    })
+
+    try {
+      await renderAndWaitForStep1()
+
+      fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+      fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+        expect(screen.getByText(/a sales record already exists for this period/i)).toBeInTheDocument()
+      })
+
+      // Record details shown
+      expect(screen.getByText(/net sales/i)).toBeInTheDocument()
+      // Action buttons
+      expect(screen.getByRole('button', { name: /replace existing record/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /change reporting period/i })).toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('Replace existing record(s) sets override intent and dismisses card', async () => {
+    jest.useFakeTimers()
+    mockCheckPeriodOverlap.mockResolvedValue({
+      has_overlap: true,
+      overlapping_periods: [
+        {
+          id: 'sp-existing-1',
+          period_start: '2025-01-01',
+          period_end: '2025-03-31',
+          net_sales: 95000,
+          royalty_calculated: 7600,
+          created_at: '2025-04-15T10:23:00Z',
+        },
+      ],
+    })
+
+    try {
+      await renderAndWaitForStep1()
+
+      fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+      fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+
+      // Wait for the overlap card
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /replace existing record/i })).toBeInTheDocument()
+      })
+
+      // Click "Replace existing record"
+      fireEvent.click(screen.getByRole('button', { name: /replace existing record/i }))
+
+      // Card should be dismissed
+      await waitFor(() => {
+        expect(screen.queryByText(/a sales record already exists for this period/i)).not.toBeInTheDocument()
+      })
+
+      // Drop zone should no longer be disabled (overlap card gone)
+      const dropZone = screen.getByTestId('drop-zone')
+      expect(dropZone.className).not.toContain('pointer-events-none')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('Change reporting period clears dates and dismisses card', async () => {
+    jest.useFakeTimers()
+    mockCheckPeriodOverlap.mockResolvedValue({
+      has_overlap: true,
+      overlapping_periods: [
+        {
+          id: 'sp-existing-1',
+          period_start: '2025-01-01',
+          period_end: '2025-03-31',
+          net_sales: 95000,
+          royalty_calculated: 7600,
+          created_at: '2025-04-15T10:23:00Z',
+        },
+      ],
+    })
+
+    try {
+      await renderAndWaitForStep1()
+
+      fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+      fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /change reporting period/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /change reporting period/i }))
+
+      // Dates should be cleared
+      await waitFor(() => {
+        expect((screen.getByLabelText(/period start/i) as HTMLInputElement).value).toBe('')
+        expect((screen.getByLabelText(/period end/i) as HTMLInputElement).value).toBe('')
+      })
+
+      // Card dismissed
+      expect(screen.queryByText(/a sales record already exists for this period/i)).not.toBeInTheDocument()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('file drop zone is disabled while overlap card is unacknowledged', async () => {
+    jest.useFakeTimers()
+    mockCheckPeriodOverlap.mockResolvedValue({
+      has_overlap: true,
+      overlapping_periods: [
+        {
+          id: 'sp-existing-1',
+          period_start: '2025-01-01',
+          period_end: '2025-03-31',
+          net_sales: 95000,
+          royalty_calculated: 7600,
+          created_at: '2025-04-15T10:23:00Z',
+        },
+      ],
+    })
+
+    try {
+      await renderAndWaitForStep1()
+
+      fireEvent.change(screen.getByLabelText(/period start/i), { target: { value: '2025-01-01' } })
+      fireEvent.change(screen.getByLabelText(/period end/i), { target: { value: '2025-03-31' } })
+
+      await act(async () => {
+        jest.advanceTimersByTime(400)
+      })
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+
+      // Drop zone should be visually disabled
+      const dropZone = screen.getByTestId('drop-zone')
+      expect(dropZone.className).toContain('pointer-events-none')
+      expect(dropZone.className).toContain('opacity-50')
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('Go back from 409 fallback conflict card navigates to upload step', async () => {
+    mockConfirmSalesUpload.mockRejectedValue(
+      new ApiError('A sales record already exists for this period', 409, {
+        detail: 'A sales record already exists for this period',
+        error_code: 'duplicate_period',
+      })
+    )
+    await goToStep2()
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /go back/i })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /go back/i }))
+
+    // Should navigate to the upload step (Step 1), not stay on map-columns
+    await waitFor(() => {
+      // Step 1 shows the period date fields
+      expect(screen.getByLabelText(/period start/i)).toBeInTheDocument()
+      // And the map-columns heading is gone
+      expect(screen.queryByRole('heading', { name: /map columns/i })).not.toBeInTheDocument()
     })
   })
 })

@@ -205,6 +205,7 @@ export interface UploadConfirmRequest {
   period_end: string
   save_mapping: boolean
   category_mapping?: CategoryMapping
+  override_duplicate?: boolean
 }
 
 export interface SavedMappingResponse {
@@ -260,4 +261,21 @@ export interface InboundReport {
   match_confidence: 'high' | 'none'
   status: 'pending' | 'confirmed' | 'rejected'
   contract_name: string | null
+}
+
+// --- Period overlap check ---
+
+/** One existing sales_period record returned by GET /api/upload/{contract_id}/period-check */
+export interface OverlapRecord {
+  id: string
+  period_start: string           // ISO date string
+  period_end: string             // ISO date string
+  net_sales: number
+  royalty_calculated: number
+  created_at: string             // ISO datetime string
+}
+
+export interface PeriodCheckResponse {
+  has_overlap: boolean
+  overlapping_periods: OverlapRecord[]
 }
