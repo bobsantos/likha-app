@@ -625,10 +625,11 @@ class TestUploadEndpointCategoryResolution:
         assert "category_mapping_sources" in cr
 
     @pytest.mark.asyncio
-    async def test_exact_match_categories_included_in_resolution(self):
-        """Exact-matching categories appear in the resolution with source='exact'."""
+    async def test_all_exact_match_categories_not_required(self):
+        """When all categories match exactly, required is False — skip Step 2.5."""
         rows = [
             ["Product Category", "Net Sales"],
+            ["Apparel", 50000],
             ["Footwear", 20000],
         ]
         xlsx_bytes = _make_xlsx_bytes(rows)
@@ -666,8 +667,11 @@ class TestUploadEndpointCategoryResolution:
             )
 
         cr = result["category_resolution"]
+        assert cr["required"] is False
         assert cr["category_mapping_sources"]["Footwear"] == "exact"
+        assert cr["category_mapping_sources"]["Apparel"] == "exact"
         assert cr["suggested_category_mapping"]["Footwear"] == "Footwear"
+        assert cr["suggested_category_mapping"]["Apparel"] == "Apparel"
 
     @pytest.mark.asyncio
     async def test_flat_rate_contract_has_no_category_resolution(self):

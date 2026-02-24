@@ -504,8 +504,13 @@ async def upload_file(
                 contract_categories=contract_categories,
                 saved_category_mapping=saved_category_mapping,
             )
+            # Only require manual resolution if there are actual mismatches
+            has_mismatch = any(
+                src not in ("exact", "saved")
+                for src in cat_sources.values()
+            )
             category_resolution = {
-                "required": True,
+                "required": has_mismatch,
                 "contract_categories": contract_categories,
                 "report_categories": report_categories,
                 "suggested_category_mapping": suggested_cat_mapping,
