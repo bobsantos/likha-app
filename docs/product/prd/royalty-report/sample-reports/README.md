@@ -1,6 +1,6 @@
 # Sample Licensee Royalty Reports
 
-Nine realistic sample reports (3 original + 6 additional) for testing Likha's Phase 1.1 spreadsheet upload and column mapping feature. Each contract has 3 reports covering different quarters and scenarios.
+Twelve realistic sample reports (3 original + 6 additional + 3 AI mapping tests) for testing Likha's Phase 1.1 spreadsheet upload and column mapping feature. Each contract has 4 reports covering different quarters and scenarios.
 
 ---
 
@@ -17,10 +17,15 @@ Use these to:
 1. Manually test the Phase 1.1 spreadsheet upload flow during development
 2. Validate the spreadsheet parser handles edge cases (header detection, multi-row aggregation, summary rows)
 3. Demonstrate to beta users what Likha can ingest
+4. Test AI-assisted column mapping against columns that fail keyword synonym matching
 
 ---
 
 ## File Inventory
+
+---
+
+## Sunrise Apparel Co. — BC-2024-0042 (8% flat on net sales)
 
 ### sample-1-flat-rate.csv (original)
 
@@ -53,102 +58,6 @@ Use these to:
 - Header row detection past metadata rows
 - Summary row exclusion
 - Discrepancy detection: system calculates $6,664.00 vs. licensee reported $6,384.00
-
----
-
-### sample-2-category-rates.csv (original)
-
-**Represents:** A multi-category report with one row per SKU. Requires aggregation before rate application.
-The most structurally complex of the three samples for the parser.
-
-**Contract context:**
-- Licensee: Meridian Goods LLC
-- Contract: BC-2024-0078
-- Period: Q2 2025 (April 1 - June 30)
-- Rate structure: Apparel 10%, Accessories 12%, Footwear 8%
-
-**Verified math:**
-- Apparel (SKU-APP-001 through 004): net sales $61,800.00 x 10% = $6,180.00
-- Accessories (SKU-ACC-001 through 004): net sales $29,450.00 x 12% = $3,534.00
-- Footwear (SKU-FTW-001 through 003): net sales $55,200.00 x 8% = $4,416.00
-- Total net sales: $146,450.00
-- Total royalty: $14,130.00
-- Licensee reported royalty: $14,130.00 (matches system calculation — no discrepancy)
-
-**Parsing challenges:**
-- 11 data rows across 3 categories. The parser must aggregate by category before applying rates.
-  Failure to aggregate and instead applying one rate to each row would give incorrect results for
-  any contract where rates differ by category.
-- The TOTAL row at the bottom must be excluded from aggregation. If accidentally included,
-  net sales would be double-counted.
-- Column names are standard ("Product Category," "Net Sales," "Royalty Rate," "Royalty Due").
-  Keyword matching should handle these.
-- The "Licensee Reported Royalty" freestanding row (same pattern as Sample 1) appears below the data.
-
-**Tests this covers:**
-- Multi-row aggregation by category (core requirement from PRD Section 3c)
-- Category-rate calculation: each category bucket gets its own rate applied to aggregated net sales
-- TOTAL row exclusion from aggregation
-- Correct royalty is the sum of per-category calculations, not a single rate on total net sales
-
----
-
-### sample-3-messy-real-world.csv (original)
-
-**Represents:** A real-world report from a licensee who uses their own format and did not receive (or ignored)
-any template from the licensor. This is the format that defeats static keyword matching and validates the
-need for Phase 2 AI-assisted column mapping.
-
-**Contract context:**
-- Licensee: Vantage Retail Partners
-- Contract: BC-2025-0011
-- Period: Q3 2025 (July 1 - September 30)
-- Rate structure: 9% flat on net sales (stored as decimal 0.09 in the report, not as "9%")
-
-**Verified math:**
-- 10 data rows across 3 product lines (Kitchen & Home, Wall Decor, Soft Goods)
-- Individual row net sales sum: $101,950.00
-- Correct royalty (9% of $101,950): $9,175.50
-- Licensee reported amount: $9,175.50 (matches — no discrepancy in royalty)
-- DELIBERATE BUG IN SUMMARY ROW: the TOTAL row shows net sales as $102,050.00 (off by $100).
-  This is a real-world copy-paste error in the summary. The individual row data is correct;
-  the summary row has a typo in the net sales column. Parser should aggregate from data rows,
-  not trust the summary row total.
-
-**Parsing challenges (this sample is intentionally the hardest):**
-
-1. Title rows above the real header. The first 5 rows are:
-   - "VANTAGE RETAIL PARTNERS"
-   - "ROYALTY STATEMENT - Q3 2025"
-   - "AGREEMENT REF: VRP / BC-2025-0011"
-   - "PREPARED BY: Finance Dept."
-   - (blank row)
-   The real header row is row 6. The parser must detect this rather than treating row 1 as the header.
-
-2. Non-standard column names that are outside the keyword synonym list:
-   - "Total Revenue" instead of "Net Sales" — not in the synonym list
-   - "Refunds" instead of "Returns / Allowances" — not in the synonym list
-   - "Amount Owed" instead of "Royalty Due" — not in the synonym list
-   - "Gross Revenue" instead of "Gross Sales" — "Gross Revenue" IS in the synonym list (borderline case)
-   - "Rate (%)" instead of "Royalty Rate" — borderline; "Rate" is in the synonym list but "Rate (%)" may not match
-
-3. Rate stored as decimal (0.09) not as percentage string ("9%").
-   The parser must handle both representations.
-
-4. Summary rows below data that must be excluded:
-   - The TOTAL data row
-   - Two freestanding text rows ("Amount Owed This Period: $9,175.50" and "Please remit payment...")
-
-5. Summary row contains an arithmetic error in the net sales column ($102,050 vs. actual $101,950).
-   Likha should catch this discrepancy between its aggregated calculation and the summary row total.
-
-**What this sample demonstrates for Phase 2 planning:**
-- Static keyword matching (Phase 1.1) will fail to auto-map "Total Revenue," "Refunds," and "Amount Owed."
-  The user will need to map these manually on first upload.
-- AI-assisted mapping (Phase 2) should be able to infer "Total Revenue" = Net Sales and "Amount Owed" =
-  Royalty Due from column names plus sample values.
-- After the first upload with manual mapping, the saved mapping for "Vantage Retail Partners" will
-  auto-apply on all future uploads — so the pain is one-time per licensee.
 
 ---
 
@@ -219,6 +128,101 @@ the over-reporting edge case.
 - Over-reporting detection (licensee pays more than owed — rare but handled)
 - Row-level rounding by the licensee accumulating a $1.00 overage at the total level
 - Seasonal volume variation: Q3 net sales ($99,400) vs. Q1 ($83,300) and Q2 ($96,400)
+
+---
+
+### sample-ai-test-1-sunrise-flat.csv
+
+**Represents:** A flat-rate Sunrise Apparel report using entirely non-standard column names. No column in
+the file matches the keyword synonym list. This is the baseline AI mapping test: a familiar licensee
+(same contract as samples 1, 1b, 1c) submitting a report in a format that keyword matching cannot resolve
+at all.
+
+**Contract context:**
+- Licensee: Sunrise Apparel Co.
+- Contract: BC-2024-0042
+- Period: Q3 2025 (July 1 - September 30)
+- Rate structure: 8% flat on net sales
+
+**Verified math:**
+- 8 data rows. "Revenue" column = net sales (Invoice $ minus Refund $ per row).
+- Row totals: 18,250 + 15,100 + 25,200 + 18,550 + 12,900 + 15,100 + 11,000 + 12,225 = $128,325.00
+- Correct royalty (8% of $128,325): $10,266.00
+- Licensee reported (Amt Owed sum): $10,266.00
+- Discrepancy: none — math is exact
+
+**Parsing challenges (AI mapping focus):**
+
+1. Every column fails keyword matching. Against FIELD_SYNONYMS in spreadsheet_parser.py:
+   - "Item Description" — no synonym match → `ignore`
+   - "Style #" — no synonym match → `ignore`
+   - "Qty Sold" — no synonym match → `ignore`
+   - "Invoice $" — not a recognized gross_sales synonym ("invoice" is not in the list) → `ignore`
+   - "Refund $" — "refunds" is not in the returns synonym list (only "returns," "allowances,"
+     "deductions," "credits," "returns and allowances," "r&a") → `ignore`
+   - "Revenue" — neither "net revenue" nor "gross revenue" is a substring of "revenue" (synonym
+     matching checks whether the synonym string appears inside the column name, not the reverse);
+     "total sales" is also not a substring of "revenue" → `ignore`
+   - "Amt Owed" — "amount owed" is in the licensee_reported_royalty synonym list, but "amount owed"
+     is not a substring of "amt owed" (abbreviation breaks the match) → `ignore`
+   - Keyword mapping produces all-`ignore` result. AI must infer all mappings from column names and
+     sample values.
+
+2. Metadata rows at the top use a two-cell key/value layout but without a colon in the first cell
+   ("Submitted By" has no trailing colon). The `_looks_like_metadata_row` helper requires the first
+   cell to end with `:` or contain `:`. These rows will not be flagged as metadata and may compete
+   with the real header row in `_detect_header_row` scoring. The real header row (row 9) has 7 string
+   columns and should outscore the 2-cell metadata rows.
+
+3. There is no explicit royalty rate column. The rate (8%) must be inferred from the contract record,
+   not from the spreadsheet. AI mapping should classify "Amt Owed" as `licensee_reported_royalty`
+   from sample values (small dollar amounts consistent with 8% of the Revenue column).
+
+**Tests this covers:**
+- Complete AI mapping fallback: zero keyword matches require AI to classify every meaningful column
+- Abbreviation sensitivity: "Amt Owed" vs. "amount owed" demonstrates that minor variations break
+  substring keyword matching and must be caught by AI
+- Flat-rate happy path with AI-resolved column mapping: no discrepancy once columns are correctly mapped
+- Header detection with non-colon metadata rows at the top
+
+---
+
+## Meridian Goods LLC — BC-2024-0078 (Apparel 10%, Accessories 12%, Footwear 8%)
+
+### sample-2-category-rates.csv (original)
+
+**Represents:** A multi-category report with one row per SKU. Requires aggregation before rate application.
+The most structurally complex of the three samples for the parser.
+
+**Contract context:**
+- Licensee: Meridian Goods LLC
+- Contract: BC-2024-0078
+- Period: Q2 2025 (April 1 - June 30)
+- Rate structure: Apparel 10%, Accessories 12%, Footwear 8%
+
+**Verified math:**
+- Apparel (SKU-APP-001 through 004): net sales $61,800.00 x 10% = $6,180.00
+- Accessories (SKU-ACC-001 through 004): net sales $29,450.00 x 12% = $3,534.00
+- Footwear (SKU-FTW-001 through 003): net sales $55,200.00 x 8% = $4,416.00
+- Total net sales: $146,450.00
+- Total royalty: $14,130.00
+- Licensee reported royalty: $14,130.00 (matches system calculation — no discrepancy)
+
+**Parsing challenges:**
+- 11 data rows across 3 categories. The parser must aggregate by category before applying rates.
+  Failure to aggregate and instead applying one rate to each row would give incorrect results for
+  any contract where rates differ by category.
+- The TOTAL row at the bottom must be excluded from aggregation. If accidentally included,
+  net sales would be double-counted.
+- Column names are standard ("Product Category," "Net Sales," "Royalty Rate," "Royalty Due").
+  Keyword matching should handle these.
+- The "Licensee Reported Royalty" freestanding row (same pattern as Sample 1) appears below the data.
+
+**Tests this covers:**
+- Multi-row aggregation by category (core requirement from PRD Section 3c)
+- Category-rate calculation: each category bucket gets its own rate applied to aggregated net sales
+- TOTAL row exclusion from aggregation
+- Correct royalty is the sum of per-category calculations, not a single rate on total net sales
 
 ---
 
@@ -318,6 +322,136 @@ under-report. This is the most financially significant discrepancy across all sa
 
 ---
 
+### sample-ai-test-2-meridian-category.csv
+
+**Represents:** A category-rate Meridian Goods report where column names fail keyword matching and the
+category values use internal grouping names that do not match the contract's configured category names.
+This tests AI mapping combined with category name reconciliation — the toughest scenario for a
+category-rate contract.
+
+**Contract context:**
+- Licensee: Meridian Goods LLC
+- Contract: BC-2024-0078
+- Period: Q4 2025 (October 1 - December 31)
+- Rate structure: Apparel 10%, Accessories 12%, Footwear 8%
+- Note: the licensee's Notes row explicitly maps their grouping names to contract categories
+
+**Verified math:**
+- 11 data rows across 3 Sku Groups. "Sales $" column = net sales.
+- Tops & Bottoms (Apparel at 10%): 21,300 + 30,100 + 17,600 + 26,700 = $95,700.00 → royalty $9,570.00
+- Hard Accessories (Accessories at 12%): 19,300 + 14,050 + 20,200 + 8,500 = $62,050.00 → royalty $7,446.00
+- Footwear (Footwear at 8%): 36,600 + 28,000 + 12,100 = $76,700.00 → royalty $6,136.00
+- Total net sales: $234,450.00
+- Correct total royalty: $23,152.00
+- Licensee reported royalty (Calculated Fee sum): $23,152.00
+- Discrepancy: none — math and rates are correct
+
+**Parsing challenges (AI mapping focus):**
+
+1. Column names that fail keyword matching against FIELD_SYNONYMS:
+   - "Invoice #" — no synonym match → `ignore`
+   - "Merchandise Description" — no synonym match → `ignore`
+   - "Sku Group" — "segment," "division," "collection," "line," "category," "product line,"
+     "product type" are all product_category synonyms, but none of these strings appear inside
+     "sku group" → `ignore`
+   - "Invoice Amt" — "gross amount" is in the gross_sales synonym list, but "gross amount" is not
+     a substring of "invoice amt" → `ignore`
+   - "Returned Goods" — "returns" is in the returns synonym list, but "returns" is not a substring
+     of "returned goods" (the column contains "return" without the trailing 's') → `ignore`
+   - "Sales $" — none of the net_sales or gross_sales synonyms ("net sales," "gross sales,"
+     "net revenue," "total sales," etc.) are substrings of "sales $" → `ignore`
+   - "Calculated Fee" — "calculated royalty" is in the licensee_reported_royalty synonym list, but
+     "calculated royalty" is not a substring of "calculated fee" → `ignore`
+   - Result: all-`ignore` from keyword matching. AI must classify all columns.
+
+2. Category name mismatch between the report and the contract:
+   - Report uses "Tops & Bottoms," "Hard Accessories," "Footwear"
+   - Contract categories are "Apparel," "Accessories," "Footwear"
+   - "Footwear" matches directly. "Tops & Bottoms" and "Hard Accessories" do not.
+   - The licensee's Notes row ("Tops & Bottoms = Apparel (10%). Hard Accessories = Accessories (12%)")
+     provides the mapping key, but the parser does not read freestanding text rows.
+   - The system must either prompt the user to confirm category mapping or AI must infer the
+     equivalences from the notes text and sample values with their per-row Calculated Fee amounts.
+
+3. Metadata rows at the top use two-cell key/value layout without colons. Same header detection
+   challenge as sample-ai-test-1: "Operator," "Submitted To," "Ref #," "From," "Through,"
+   "Submission Date" rows will not be caught by `_looks_like_metadata_row`. The real header row
+   (row 8) has 7 string columns and should score highest.
+
+4. The TOTAL row ("TOTAL,...") must be excluded. Likha calculates correct royalty as $23,152.00;
+   if the TOTAL row were included, net sales would double to $468,900.00.
+
+**Tests this covers:**
+- Complete AI mapping fallback for a category-rate contract
+- "Returned Goods" vs. "returns" demonstrates that morphological variations (plural/gerund) break
+  substring keyword matching
+- Category name aliasing: same licensee uses different names for the same contract categories,
+  requiring either AI inference or a user-confirmed category mapping step
+- No discrepancy on correctly classified data validates the end-to-end category mapping path
+
+---
+
+## Vantage Retail Partners — BC-2025-0011 (9% flat on net sales)
+
+### sample-3-messy-real-world.csv (original)
+
+**Represents:** A real-world report from a licensee who uses their own format and did not receive (or ignored)
+any template from the licensor. This is the format that defeats static keyword matching and validates the
+need for Phase 2 AI-assisted column mapping.
+
+**Contract context:**
+- Licensee: Vantage Retail Partners
+- Contract: BC-2025-0011
+- Period: Q3 2025 (July 1 - September 30)
+- Rate structure: 9% flat on net sales (stored as decimal 0.09 in the report, not as "9%")
+
+**Verified math:**
+- 10 data rows across 3 product lines (Kitchen & Home, Wall Decor, Soft Goods)
+- Individual row net sales sum: $101,950.00
+- Correct royalty (9% of $101,950): $9,175.50
+- Licensee reported amount: $9,175.50 (matches — no discrepancy in royalty)
+- DELIBERATE BUG IN SUMMARY ROW: the TOTAL row shows net sales as $102,050.00 (off by $100).
+  This is a real-world copy-paste error in the summary. The individual row data is correct;
+  the summary row has a typo in the net sales column. Parser should aggregate from data rows,
+  not trust the summary row total.
+
+**Parsing challenges (this sample is intentionally the hardest):**
+
+1. Title rows above the real header. The first 5 rows are:
+   - "VANTAGE RETAIL PARTNERS"
+   - "ROYALTY STATEMENT - Q3 2025"
+   - "AGREEMENT REF: VRP / BC-2025-0011"
+   - "PREPARED BY: Finance Dept."
+   - (blank row)
+   The real header row is row 6. The parser must detect this rather than treating row 1 as the header.
+
+2. Non-standard column names that are outside the keyword synonym list:
+   - "Total Revenue" instead of "Net Sales" — not in the synonym list
+   - "Refunds" instead of "Returns / Allowances" — not in the synonym list
+   - "Amount Owed" instead of "Royalty Due" — not in the synonym list
+   - "Gross Revenue" instead of "Gross Sales" — "Gross Revenue" IS in the synonym list (borderline case)
+   - "Rate (%)" instead of "Royalty Rate" — borderline; "Rate" is in the synonym list but "Rate (%)" may not match
+
+3. Rate stored as decimal (0.09) not as percentage string ("9%").
+   The parser must handle both representations.
+
+4. Summary rows below data that must be excluded:
+   - The TOTAL data row
+   - Two freestanding text rows ("Amount Owed This Period: $9,175.50" and "Please remit payment...")
+
+5. Summary row contains an arithmetic error in the net sales column ($102,050 vs. actual $101,950).
+   Likha should catch this discrepancy between its aggregated calculation and the summary row total.
+
+**What this sample demonstrates for Phase 2 planning:**
+- Static keyword matching (Phase 1.1) will fail to auto-map "Total Revenue," "Refunds," and "Amount Owed."
+  The user will need to map these manually on first upload.
+- AI-assisted mapping (Phase 2) should be able to infer "Total Revenue" = Net Sales and "Amount Owed" =
+  Royalty Due from column names plus sample values.
+- After the first upload with manual mapping, the saved mapping for "Vantage Retail Partners" will
+  auto-apply on all future uploads — so the pain is one-time per licensee.
+
+---
+
 ### sample-3b-messy-q4.csv
 
 **Represents:** The same messy real-world format as sample-3 (non-standard column names, title rows above
@@ -413,6 +547,80 @@ previously mapped licensee does not break the upload flow.
 - Rate as percentage string ("9%") normalizes correctly — symmetric test to sample-3's decimal rate
 - Happy-path for a previously-messy licensee: no discrepancy, clean math, improved reporting
 - Q1 2026 is the first quarter outside the 2025 calendar year across all samples, confirming date handling
+
+---
+
+### sample-ai-test-3-vantage-tiered.csv
+
+**Represents:** A Vantage Retail Partners report with a heavily obfuscated column structure: an extra
+"Warehouse Code" column not relevant to royalty calculation, starred title rows at the top, and column
+names that are all unrecognizable except one partial match. One column ("Brand Division") will keyword-
+match to `product_category` via the "division" synonym — but the division values ("Kitchenware,"
+"Home Goods") are not contract category names. This tests the AI mapping path where keyword matching
+produces one noisy match alongside several `ignore` results.
+
+**Contract context:**
+- Licensee: Vantage Retail Partners
+- Contract: BC-2025-0011
+- Period: Q4 2025 (October 1 - December 31)
+- Rate structure: 9% flat on net sales
+
+**Verified math:**
+- 10 data rows. "Adjusted Revenue" column = net sales (Total Rev minus Customer Refunds per row).
+- Kitchenware rows (VRP-Q4-0101 through 0105):
+  18,850 + 14,900 + 10,900 + 8,200 + 6,150 = $58,900.00 in net sales → royalty $5,301.00
+- Home Goods rows (VRP-Q4-0106 through 0110):
+  12,600 + 17,850 + 21,300 + 14,400 + 23,700 = $89,850.00 in net sales → royalty $8,086.50
+- Total net sales: $148,850.00
+- Correct royalty (9% of $148,850): $13,396.50
+- Licensee reported (Licensee Payment sum): $13,396.50
+- Total Customer Refunds: $6,250.00 (confirmed by TOTAL row's Refunds column)
+- Discrepancy: none — math is exact
+
+**Parsing challenges (AI mapping focus):**
+
+1. Column names against FIELD_SYNONYMS:
+   - "Internal Ref #" — no synonym match → `ignore`
+   - "Merchandise" — no synonym match → `ignore`
+   - "Brand Division" — "division" IS in the product_category synonym list; "division" is a
+     substring of "brand division" → keyword-maps to `product_category`. However, the division
+     values ("Kitchenware," "Home Goods") are not contract categories for BC-2025-0011 (which is a
+     flat-rate contract with no category rate structure). This is a false-positive match: the column
+     is better classified as `metadata` or `ignore` because it does not drive royalty calculation.
+   - "Warehouse Code" — no synonym match → `ignore`
+   - "Total Rev" — "net revenue" and "gross revenue" are not substrings of "total rev"; "total sales"
+     is not a substring either → `ignore`
+   - "Customer Refunds" — "refunds" is not in the returns synonym list (returns synonyms are
+     "returns," "allowances," "deductions," "credits," "returns and allowances," "r&a") → `ignore`
+   - "Adjusted Revenue" — no synonym match; "net revenue" is not a substring of "adjusted revenue"
+     (the order of words prevents a match) → `ignore`
+   - "Licensee Payment" — no synonym match → `ignore`
+   - Summary: only "Brand Division" gets a keyword match, and it is a false positive for this flat-
+     rate contract. AI must override or supplement the keyword result.
+
+2. Title rows use `*** text ***` format (single populated cell per row with asterisk delimiters).
+   These are not caught by `_looks_like_metadata_row` (no colon, only 1 non-empty cell). They will
+   be skipped by `_detect_header_row` because each has string_count = 1, which is below the minimum
+   of 2 string cells required to be a header candidate. The real header row (row 6) has 8 string
+   columns and will be selected correctly.
+
+3. TOTAL row is malformed: `TOTAL,,,,,6250.00,148850.00,13396.50`. The "Total Rev" column is blank
+   in the TOTAL row — only Customer Refunds, Adjusted Revenue, and Licensee Payment are filled.
+   `_is_summary_row` detects "TOTAL" in the first cell and excludes this row from aggregation
+   regardless of its structure.
+
+4. No royalty rate column exists in the spreadsheet. The 9% rate comes entirely from the contract
+   record. The `Licensee Payment` column effectively embeds the rate (each value is 9% of
+   `Adjusted Revenue`), which AI can confirm by cross-checking sample values.
+
+**Tests this covers:**
+- Keyword false-positive: "Brand Division" matches `product_category` via the "division" synonym but
+  should be `metadata` or `ignore` for a flat-rate contract — AI must handle the override
+- Starred title rows (non-colon, single-cell format) are correctly bypassed by header detection
+- Malformed TOTAL row with sparse columns is still excluded by summary row detection
+- Complete flat-rate happy path with AI-resolved mappings: no discrepancy when columns are correct
+- Column names using adjective+noun structures ("Adjusted Revenue," "Customer Refunds," "Brand
+  Division") that fragment compound synonyms and consistently evade substring matching
 
 ---
 
