@@ -6,7 +6,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useParams, useRouter } from 'next/navigation'
 import ContractDetailPage from '@/app/(app)/contracts/[id]/page'
-import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals } from '@/lib/api'
+import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, downloadReportTemplate } from '@/lib/api'
 import type { Contract, SalesPeriod, ContractTotals } from '@/types'
 
 // Mock next/navigation
@@ -21,6 +21,7 @@ jest.mock('@/lib/api', () => ({
   getSalesPeriods: jest.fn(),
   getSalesReportDownloadUrl: jest.fn(),
   getContractTotals: jest.fn(),
+  downloadReportTemplate: jest.fn(),
   ApiError: class ApiError extends Error {
     status: number
     data?: unknown
@@ -44,6 +45,7 @@ describe('Contract Detail Page', () => {
   const mockGetSalesPeriods = getSalesPeriods as jest.MockedFunction<typeof getSalesPeriods>
   const mockGetSalesReportDownloadUrl = getSalesReportDownloadUrl as jest.MockedFunction<typeof getSalesReportDownloadUrl>
   const mockGetContractTotals = getContractTotals as jest.MockedFunction<typeof getContractTotals>
+  const mockDownloadReportTemplate = downloadReportTemplate as jest.MockedFunction<typeof downloadReportTemplate>
 
   // mockContract uses the correct Contract type field names:
   //   contract_start_date / contract_end_date (NOT contract_start / contract_end)
@@ -1135,6 +1137,136 @@ describe('Contract Detail Page', () => {
       await waitFor(() => {
         const downloadButton = screen.getByRole('button', { name: /download source report/i })
         expect(downloadButton).toHaveAttribute('title', 'Download source file')
+      })
+    })
+  })
+
+  // ============================================================
+  // Download Report Template button
+  // ============================================================
+
+  describe('Download Report Template button', () => {
+    it('shows "Download Template" button for active contracts', async () => {
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /download template/i })).toBeInTheDocument()
+      })
+    })
+
+    it('does not show "Download Template" button for draft contracts', async () => {
+      const draftContract: Contract = {
+        ...mockContract,
+        status: 'draft',
+        licensee_name: null,
+        royalty_rate: null,
+        royalty_base: null,
+        reporting_frequency: null,
+      }
+      mockGetContract.mockResolvedValue(draftContract)
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Draft')).toBeInTheDocument()
+      })
+
+      expect(screen.queryByRole('button', { name: /download template/i })).not.toBeInTheDocument()
+    })
+
+    it('calls downloadReportTemplate with the contract id when clicked', async () => {
+      const user = userEvent.setup()
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+      mockDownloadReportTemplate.mockResolvedValue(undefined)
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /download template/i })).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: /download template/i }))
+
+      await waitFor(() => {
+        expect(mockDownloadReportTemplate).toHaveBeenCalledWith('contract-1')
+      })
+    })
+
+    it('shows loading state while download is in progress', async () => {
+      const user = userEvent.setup()
+      let resolveDownload!: () => void
+      const downloadPromise = new Promise<void>((resolve) => {
+        resolveDownload = resolve
+      })
+
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+      mockDownloadReportTemplate.mockReturnValue(downloadPromise)
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /download template/i })).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: /download template/i }))
+
+      // Button should be disabled during download
+      expect(screen.getByRole('button', { name: /download template/i })).toBeDisabled()
+
+      resolveDownload()
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /download template/i })).not.toBeDisabled()
+      })
+    })
+
+    it('shows error message when download fails', async () => {
+      const user = userEvent.setup()
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+      mockDownloadReportTemplate.mockRejectedValue(new Error('Failed to download template'))
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /download template/i })).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: /download template/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/failed to download template/i)).toBeInTheDocument()
+      })
+    })
+
+    it('re-enables button after download error', async () => {
+      const user = userEvent.setup()
+      mockGetContract.mockResolvedValue(mockContract)
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+      mockDownloadReportTemplate.mockRejectedValue(new Error('Network error'))
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /download template/i })).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: /download template/i }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /download template/i })).not.toBeDisabled()
       })
     })
   })

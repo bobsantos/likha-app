@@ -22,7 +22,7 @@ import {
   TrendingUp,
   Download,
 } from 'lucide-react'
-import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, isUnauthorizedError } from '@/lib/api'
+import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, downloadReportTemplate, isUnauthorizedError } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate, ContractTotals } from '@/types'
 
@@ -107,6 +107,8 @@ export default function ContractDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [downloadingPeriodId, setDownloadingPeriodId] = useState<string | null>(null)
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false)
+  const [templateDownloadError, setTemplateDownloadError] = useState<string | null>(null)
 
   const fetchData = async () => {
     setLoading(true)
@@ -144,6 +146,19 @@ export default function ContractDetailPage() {
       // Silently ignore — the backend will log the error
     } finally {
       setDownloadingPeriodId(null)
+    }
+  }
+
+  const handleDownloadTemplate = async () => {
+    if (downloadingTemplate) return
+    setTemplateDownloadError(null)
+    setDownloadingTemplate(true)
+    try {
+      await downloadReportTemplate(contractId)
+    } catch (err) {
+      setTemplateDownloadError(err instanceof Error ? err.message : 'Failed to download template')
+    } finally {
+      setDownloadingTemplate(false)
     }
   }
 
@@ -338,22 +353,38 @@ export default function ContractDetailPage() {
               )}
             </div>
           </div>
-          <div className="flex gap-3">
-            {contract.pdf_url && (
-              <a
-                href={resolveUrl(contract.pdf_url)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-secondary flex items-center gap-2"
-              >
-                <ExternalLink className="w-4 h-4" />
-                View PDF
-              </a>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex gap-3">
+              {contract.status === 'active' && (
+                <button
+                  onClick={handleDownloadTemplate}
+                  disabled={downloadingTemplate}
+                  aria-label="Download template"
+                  className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download className="w-4 h-4" />
+                  Download Template
+                </button>
+              )}
+              {contract.pdf_url && (
+                <a
+                  href={resolveUrl(contract.pdf_url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary flex items-center gap-2"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  View PDF
+                </a>
+              )}
+              <Link href="/contracts" className="btn-secondary flex items-center gap-2">
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Link>
+            </div>
+            {templateDownloadError && (
+              <p className="text-sm text-red-600">{templateDownloadError}</p>
             )}
-            <Link href="/contracts" className="btn-secondary flex items-center gap-2">
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </Link>
           </div>
         </div>
       </div>

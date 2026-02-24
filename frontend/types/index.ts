@@ -226,3 +226,23 @@ export interface ContractTotals {
   total_royalties: number
   by_year: YearlyRoyalties[]
 }
+
+// --- Phase 2: Email Intake / Inbox ---
+
+export interface InboundAddressResponse {
+  inbound_address: string
+}
+
+export interface InboundReport {
+  id: string
+  user_id: string
+  contract_id: string | null
+  sender_email: string
+  subject: string | null
+  received_at: string
+  attachment_filename: string | null
+  attachment_path: string | null
+  match_confidence: 'high' | 'none'
+  status: 'pending' | 'confirmed' | 'rejected'
+  contract_name: string | null
+}

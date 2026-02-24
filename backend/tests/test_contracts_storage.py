@@ -246,18 +246,14 @@ class TestDeleteContractWithStorage:
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
             with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
-                    # Mock ownership verification (async)
-                    mock_verify.return_value = None
-
-                    # Mock fetching contract to get PDF URL
-                    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = Mock(
-                        data=[{
-                            "id": contract_id,
-                            "user_id": user_id,
-                            "pdf_url": pdf_url,
-                            "licensee_name": "Test Corp"
-                        }]
-                    )
+                    # verify_contract_ownership now returns the contract row directly
+                    mock_verify.return_value = {
+                        "id": contract_id,
+                        "user_id": user_id,
+                        "pdf_url": pdf_url,
+                        "storage_path": None,
+                        "licensee_name": "Test Corp"
+                    }
 
                     # Mock contract deletion
                     mock_supabase.table.return_value.delete.return_value.eq.return_value.execute.return_value = Mock(
@@ -269,7 +265,7 @@ class TestDeleteContractWithStorage:
 
                     result = await delete_contract(contract_id, user_id)
 
-                    # Verify PDF was deleted from storage
+                    # Verify PDF was deleted from storage (falls back to pdf_url when no storage_path)
                     mock_delete_pdf.assert_called_once_with(pdf_url)
 
                     assert result["message"] == "Contract deleted"
@@ -286,16 +282,14 @@ class TestDeleteContractWithStorage:
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
             with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
-                    mock_verify.return_value = None
-
-                    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = Mock(
-                        data=[{
-                            "id": contract_id,
-                            "user_id": user_id,
-                            "pdf_url": pdf_url,
-                            "licensee_name": "Test Corp"
-                        }]
-                    )
+                    # verify_contract_ownership now returns the contract row directly
+                    mock_verify.return_value = {
+                        "id": contract_id,
+                        "user_id": user_id,
+                        "pdf_url": pdf_url,
+                        "storage_path": None,
+                        "licensee_name": "Test Corp"
+                    }
 
                     mock_supabase.table.return_value.delete.return_value.eq.return_value.execute.return_value = Mock(
                         data=[{"id": contract_id}]
@@ -321,16 +315,14 @@ class TestDeleteContractWithStorage:
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
             with patch('app.routers.contracts.supabase_admin') as mock_supabase:
                 with patch('app.routers.contracts.delete_contract_pdf') as mock_delete_pdf:
-                    mock_verify.return_value = None
-
-                    mock_supabase.table.return_value.select.return_value.eq.return_value.execute.return_value = Mock(
-                        data=[{
-                            "id": contract_id,
-                            "user_id": user_id,
-                            "pdf_url": pdf_url,
-                            "licensee_name": "Test Corp"
-                        }]
-                    )
+                    # verify_contract_ownership now returns the contract row directly
+                    mock_verify.return_value = {
+                        "id": contract_id,
+                        "user_id": user_id,
+                        "pdf_url": pdf_url,
+                        "storage_path": None,
+                        "licensee_name": "Test Corp"
+                    }
 
                     mock_supabase.table.return_value.delete.return_value.eq.return_value.execute.return_value = Mock(
                         data=[{"id": contract_id}]

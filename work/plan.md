@@ -401,31 +401,35 @@ Full specification in `docs/product/prd/royalty-report/prd-royalty-tracking.md` 
 
 **Target:** v2 (Month 3-6, after Phase 1.1 is validated)
 
+**Status:** Complete as of 2026-02-24.
+
 Full specification in `docs/prd-royalty-tracking.md` — Phase 2 section.
 
 **Summary:** Three capabilities built in sequence:
 
 1. **Template generation** — `GET /api/contracts/{id}/report-template` downloads a pre-formatted Excel file per contract. Licensor emails it to the licensee. Returned file uploads with zero column mapping. Frontend: "Download Report Template" button on contract detail page.
 
-2. **AI-assisted column mapping** — Replaces Phase 1.1 keyword synonym matching. After parsing, send detected column names and sample values to Claude and ask it to suggest field mappings. Pre-fills the column mapper UI. User confirms or adjusts.
+2. **AI-assisted column mapping** — Augments Phase 1.1 keyword synonym matching. After keyword matching, unresolved columns are sent to Claude (haiku-4-5) with sample values. AI suggestions merged into mapping. Silent fallback to keyword-only if Claude unavailable. New `mapping_source: "ai"` value.
 
-3. **Email intake** — Each licensor account gets a unique inbound address (`reports-[short-id]@likha.app`). Inbound email service (Postmark, SendGrid, or Mailgun) POSTs attachments to a webhook. Attachments are parsed, auto-matched to a contract by sender email (`licensee_email` on contracts table), and queued as draft tasks. Frontend: settings page (inbound address), inbox view, review page, dashboard badge. New tables: `inbound_reports`, `licensee_email` column on `contracts`.
+3. **Email intake** — Each licensor account gets a unique inbound address (`reports-{short_id}@inbound.likha.app`). Postmark POSTs attachments to a webhook. Attachments are parsed, auto-matched to a contract by sender email (`licensee_email` on contracts table), and queued as draft tasks. Frontend: settings page (inbound address), inbox view, review page. New tables: `inbound_reports`, `licensee_email` column on `contracts`.
 
-**Key design decisions:** Forwarding address only — no OAuth inbox access. Auto-matching by sender email is required in the MVP of this feature, not deferred. Email intake depends on Phase 1.1 parser being production-validated first.
+**Key design decisions:** Forwarding address only — no OAuth inbox access. Auto-matching by sender email is required in the MVP of this feature, not deferred. AI column mapping augments (not replaces) keyword matching. Postmark selected for cleanest inbound webhook payload.
 
 **Checklist:**
 
-- [ ] Migration: `supabase/migrations/[timestamp]_add_licensee_email_to_contracts.sql`
-- [ ] Migration: `supabase/migrations/[timestamp]_add_inbound_reports.sql`
-- [ ] Backend: `GET /api/contracts/{id}/report-template` endpoint (openpyxl, generates per contract rate structure)
-- [ ] Backend: Claude integration in spreadsheet upload flow for AI column mapping suggestions
-- [ ] Backend: inbound email webhook `POST /api/email-intake/inbound`
-- [ ] Backend: `POST /api/email-intake/{report_id}/confirm` and `/reject` endpoints
-- [ ] Frontend: "Download Report Template" button on contract detail page
-- [ ] Frontend: settings page with inbound address display and copy button
-- [ ] Frontend: `/inbox` list view
-- [ ] Frontend: `/inbox/[report_id]` review page (reuses Phase 1.1 column-mapper and upload-preview components)
-- [ ] Frontend: dashboard badge for pending reports count
+- [x] Migration: `supabase/migrations/20260224200000_add_licensee_email_to_contracts.sql`
+- [x] Migration: `supabase/migrations/20260224200001_add_inbound_reports.sql`
+- [x] Backend: `GET /api/contracts/{id}/report-template` endpoint (openpyxl, generates per contract rate structure) — 16 tests
+- [x] Backend: Claude integration in spreadsheet upload flow for AI column mapping suggestions — 25 tests
+- [x] Backend: inbound email webhook `POST /api/email-intake/inbound` + auto-matching — 24 tests
+- [x] Backend: `POST /api/email-intake/{report_id}/confirm` and `/reject` endpoints
+- [x] Frontend: "Download Report Template" button on contract detail page — 13 tests
+- [x] Frontend: settings page with inbound address display and copy button — 11 tests
+- [x] Frontend: `/inbox` list view — 28 tests
+- [x] Frontend: `/inbox/[report_id]` review page with confirm/reject actions
+- [ ] Frontend: dashboard badge for pending reports count (deferred — MVP ships with nav link showing count in page title)
+
+**Success Criteria:** ✅ All tests passing (577 backend, 453 frontend). Template generation, AI mapping, and email intake all functional.
 
 ---
 
@@ -655,21 +659,94 @@ npm install date-fns  # Date formatting
 
 ---
 
-## Manual Testing Checklist (Day 10)
+## Manual Testing Checklist
+
+### Auth & Navigation
 
 - [ ] Sign up new user
 - [ ] Login with existing user
+- [ ] Verify nav shows: Dashboard, Contracts, Inbox, Settings links
+- [ ] Logout and verify redirect to login
+- [ ] Verify unauthenticated access redirects to login
+
+### Contract Upload & Extraction
+
 - [ ] Upload PDF contract
 - [ ] Review extracted terms (edit fields, submit)
-- [ ] View contract list on dashboard
+- [ ] Verify contract appears on dashboard after confirm
 - [ ] View contract detail page
-- [ ] Add sales period (flat rate) via manual form
-- [ ] Add sales period (tiered rate) via manual form
-- [ ] Add sales period (category-specific rate) via manual form
-- [ ] Enter licensee reported royalty and verify discrepancy is shown
-- [ ] Verify royalty calculation is correct
-- [ ] Verify YTD summary updates
-- [ ] Test error states (invalid file, API errors)
-- [ ] Test mobile responsive (resize browser)
-- [ ] Logout and verify redirect to login
-- [ ] Test deployed app (Vercel + Railway)
+
+### Spreadsheet Upload (Phase 1.1)
+
+- [ ] Click "Upload Report" on an active contract
+- [ ] Upload an xlsx file — verify column mapping step appears
+- [ ] Verify saved mapping auto-applies on second upload for same licensee
+- [ ] Verify multi-row category report aggregates correctly
+- [ ] Verify discrepancy badge appears when licensee reported royalty differs from calculated
+
+### Report Template Generation (Phase 2)
+
+- [ ] Click "Download Template" on an active contract detail page
+- [ ] Verify xlsx downloads with correct filename
+- [ ] Open the xlsx — verify columns: Period Start, Period End, Net Sales, Royalty Due
+- [ ] For a category-rate contract: verify xlsx includes Category column with pre-populated categories
+- [ ] Upload the downloaded template back — verify columns auto-map with zero manual mapping
+- [ ] Verify "Download Template" button is NOT shown for draft contracts
+
+### AI-Assisted Column Mapping (Phase 2)
+
+- [ ] Upload a spreadsheet with non-standard column names (e.g. "Rev", "Amt Due", "Sku Group")
+- [ ] Verify the column mapper pre-fills suggestions (mapping_source should be "ai" or "suggested")
+- [ ] Verify mapped fields are correct or reasonable for ambiguous column names
+- [ ] Verify that columns already recognized by keyword matching are correctly mapped
+- [ ] Upload a second file from the same licensee — verify saved mapping is used (no AI call needed)
+
+### Email Intake (Phase 2)
+
+#### Settings Page
+- [ ] Navigate to /settings
+- [ ] Verify inbound email address is displayed (format: `reports-{8chars}@inbound.likha.app`)
+- [ ] Click copy button — verify address is copied to clipboard
+- [ ] Verify "Copied!" feedback appears briefly
+
+#### Inbound Webhook (requires Postmark setup or curl)
+- [ ] Send a test POST to `/api/email-intake/inbound` with correct `X-Postmark-Secret` header
+- [ ] Verify report appears in inbox with status "pending"
+- [ ] Test with a sender email matching a contract's `licensee_email` — verify `match_confidence: high`
+- [ ] Test with an unknown sender email — verify `match_confidence: none`
+- [ ] Verify webhook rejects requests without the secret header (401)
+
+#### Inbox
+- [ ] Navigate to /inbox
+- [ ] Verify empty state message when no reports exist
+- [ ] Verify reports list shows sender, subject, date, status badge, matched contract
+- [ ] Verify status badges: amber (Pending), green (Confirmed), gray (Rejected)
+- [ ] Verify unmatched reports show "Unmatched" warning label
+- [ ] Click a report row — verify navigation to review page
+
+#### Report Review
+- [ ] View a matched report — verify contract name is displayed
+- [ ] View an unmatched report — verify contract selector dropdown appears
+- [ ] Select a contract from dropdown and click "Confirm & Process" — verify status updates
+- [ ] Click "Reject" on a pending report — verify status updates and redirect to inbox
+- [ ] Verify buttons are disabled for already-confirmed or already-rejected reports
+
+### Dashboard & Summary
+
+- [ ] View dashboard — verify contract cards display
+- [ ] Verify YTD royalties summary is correct
+- [ ] View contract detail — verify sales history table with all periods
+
+### Error Handling
+
+- [ ] Upload invalid file type (not PDF) to contract upload — verify error message
+- [ ] Upload invalid file type (not xlsx/csv) to sales upload — verify error message
+- [ ] Test with expired auth token — verify redirect to login
+- [ ] Test report template download for a non-existent contract — verify error handling
+
+### Cross-Browser & Responsive (if deploying)
+
+- [ ] Test on Chrome, Firefox, Safari
+- [ ] Test on mobile viewport (375px)
+- [ ] Test on tablet viewport (768px)
+- [ ] Verify file downloads work on all browsers

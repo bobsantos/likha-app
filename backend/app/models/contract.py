@@ -118,6 +118,7 @@ class ContractConfirm(BaseModel):
     Receives user-reviewed fields and promotes the draft to active.
     """
     licensee_name: str
+    licensee_email: Optional[str] = None
     royalty_rate: RoyaltyRate
     royalty_base: str = "net sales"
     territories: List[str] = []
@@ -181,6 +182,7 @@ class Contract(BaseModel):
     extracted_terms: Any  # dict stored as JSON in DB
     # User-review fields — Optional to accommodate drafts
     licensee_name: Optional[str] = None
+    licensee_email: Optional[str] = None
     royalty_rate: Optional[RoyaltyRate] = None
     royalty_base: Optional[str] = None
     territories: Optional[List[str]] = None

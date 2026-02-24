@@ -390,19 +390,29 @@ async def upload_file(
     # Look up saved mapping
     saved_mapping = _get_saved_mapping_for_licensee(user_id, licensee_name)
 
+    # Build contract context for AI column mapping
+    royalty_rate = contract.get("royalty_rate")
+    is_category_contract = isinstance(royalty_rate, dict)
+    contract_context = {
+        "licensee_name": licensee_name,
+        "royalty_base": contract.get("royalty_base", ""),
+        "has_categories": is_category_contract,
+        "categories": list(royalty_rate.keys()) if is_category_contract else [],
+    }
+
     # Determine mapping source
     if saved_mapping:
         mapping_source = "saved"
+        # Generate suggested mapping using saved mapping (no AI needed)
+        suggested = suggest_mapping(parsed.column_names, saved_mapping=saved_mapping)
     else:
-        mapping_source = "suggested"
-
-    # Generate suggested mapping (uses saved_mapping if available, else keyword matching)
-    suggested = suggest_mapping(parsed.column_names, saved_mapping=saved_mapping)
-
-    # If keyword matching produced all-ignore, change source to "none"
-    if mapping_source == "suggested":
-        if all(v == "ignore" for v in suggested.values()):
-            mapping_source = "none"
+        # Generate suggested mapping with AI second-pass for unresolved columns
+        suggested, mapping_source = suggest_mapping(
+            parsed.column_names,
+            saved_mapping=None,
+            contract_context=contract_context,
+            return_source=True,
+        )
 
     # Store in memory (including raw bytes for later upload to storage at confirm time)
     upload_id = _store_upload(parsed, contract_id, user_id, raw_bytes=file_content, original_filename=filename)

@@ -2,7 +2,7 @@
  * Tests for API client — Phase 2: ApiError.data and confirmDraft
  */
 
-import { ApiError, confirmDraft, getContracts, getContract, isUnauthorizedError } from '@/lib/api'
+import { ApiError, confirmDraft, getContracts, getContract, isUnauthorizedError, downloadReportTemplate } from '@/lib/api'
 import type { Contract, ContractStatus } from '@/types'
 
 // Mock supabase
@@ -307,5 +307,162 @@ describe('confirmDraft', () => {
     } catch (err) {
       expect(err instanceof ApiError && err.status).toBe(404)
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// downloadReportTemplate
+// ---------------------------------------------------------------------------
+
+describe('downloadReportTemplate', () => {
+  // Stub URL.createObjectURL and URL.revokeObjectURL since jsdom doesn't support them
+  const mockCreateObjectURL = jest.fn().mockReturnValue('blob:mock-url')
+  const mockRevokeObjectURL = jest.fn()
+
+  beforeEach(() => {
+    URL.createObjectURL = mockCreateObjectURL
+    URL.revokeObjectURL = mockRevokeObjectURL
+    mockCreateObjectURL.mockClear()
+    mockRevokeObjectURL.mockClear()
+  })
+
+  it('calls GET /api/contracts/{id}/report-template', async () => {
+    const mockBlob = new Blob(['xlsx-content'], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: (h: string) => h === 'content-disposition' ? 'attachment; filename="royalty_report_template_acme.xlsx"' : null },
+      blob: async () => mockBlob,
+    })
+
+    await downloadReportTemplate('contract-abc')
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/contracts/contract-abc/report-template'),
+      expect.objectContaining({ method: 'GET' })
+    )
+  })
+
+  it('sends Authorization header with Bearer token', async () => {
+    const mockBlob = new Blob(['xlsx'])
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => null },
+      blob: async () => mockBlob,
+    })
+
+    await downloadReportTemplate('contract-abc')
+
+    const [, options] = mockFetch.mock.calls[0]
+    expect(options.headers['Authorization']).toBe('Bearer test-token')
+  })
+
+  it('creates an object URL from the response blob', async () => {
+    const mockBlob = new Blob(['xlsx'])
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => null },
+      blob: async () => mockBlob,
+    })
+
+    await downloadReportTemplate('contract-abc')
+
+    expect(mockCreateObjectURL).toHaveBeenCalledWith(mockBlob)
+  })
+
+  it('revokes the object URL after triggering download', async () => {
+    const mockBlob = new Blob(['xlsx'])
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => null },
+      blob: async () => mockBlob,
+    })
+
+    await downloadReportTemplate('contract-abc')
+
+    expect(mockRevokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
+  })
+
+  it('throws ApiError with status 404 when contract not found', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      json: async () => ({ detail: 'Contract not found' }),
+    })
+
+    let caught: unknown
+    try {
+      await downloadReportTemplate('missing-id')
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(404)
+  })
+
+  it('throws ApiError with status 409 when contract is a draft', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ detail: 'Contract is not active' }),
+    })
+
+    let caught: unknown
+    try {
+      await downloadReportTemplate('draft-id')
+    } catch (err) {
+      caught = err
+    }
+
+    expect(caught).toBeInstanceOf(ApiError)
+    expect((caught as ApiError).status).toBe(409)
+  })
+
+  it('uses filename from Content-Disposition header when present', async () => {
+    const mockBlob = new Blob(['xlsx'])
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: {
+        get: (h: string) =>
+          h === 'content-disposition'
+            ? 'attachment; filename="royalty_report_template_acme_corp.xlsx"'
+            : null,
+      },
+      blob: async () => mockBlob,
+    })
+
+    // Spy on anchor element click to capture the download filename
+    const clickSpy = jest.fn()
+    const mockAnchor = { href: '', download: '', click: clickSpy, remove: jest.fn() }
+    jest.spyOn(document, 'createElement').mockReturnValueOnce(mockAnchor as unknown as HTMLElement)
+    jest.spyOn(document.body, 'appendChild').mockImplementationOnce(() => mockAnchor as unknown as Node)
+
+    await downloadReportTemplate('contract-abc')
+
+    expect(mockAnchor.download).toBe('royalty_report_template_acme_corp.xlsx')
+
+    jest.restoreAllMocks()
+  })
+
+  it('falls back to a default filename when Content-Disposition is absent', async () => {
+    const mockBlob = new Blob(['xlsx'])
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      headers: { get: () => null },
+      blob: async () => mockBlob,
+    })
+
+    const clickSpy = jest.fn()
+    const mockAnchor = { href: '', download: '', click: clickSpy, remove: jest.fn() }
+    jest.spyOn(document, 'createElement').mockReturnValueOnce(mockAnchor as unknown as HTMLElement)
+    jest.spyOn(document.body, 'appendChild').mockImplementationOnce(() => mockAnchor as unknown as Node)
+
+    await downloadReportTemplate('contract-abc')
+
+    expect(mockAnchor.download).toBe('royalty_report_template.xlsx')
+
+    jest.restoreAllMocks()
   })
 })

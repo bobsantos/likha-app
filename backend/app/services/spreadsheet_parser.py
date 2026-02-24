@@ -11,7 +11,9 @@ Public API:
 """
 
 import io
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -758,13 +760,99 @@ def extract_cross_check_values(
 
 
 # ---------------------------------------------------------------------------
+# claude_suggest
+# ---------------------------------------------------------------------------
+
+# Timeout in seconds for the Claude AI column mapping call.
+_AI_MAPPING_TIMEOUT = 5
+
+
+def claude_suggest(
+    columns: list[dict],
+    contract_context: dict,
+) -> dict[str, str]:
+    """
+    Ask Claude to suggest canonical field names for unresolved spreadsheet columns.
+
+    This is a best-effort function: it returns an empty dict on any error
+    (timeout, API failure, bad JSON, missing API key).  Callers must never
+    depend on it succeeding.
+
+    Args:
+        columns: List of {"name": str, "samples": list[str]} dicts for each
+                 unresolved column.
+        contract_context: Dict with keys licensee_name, royalty_base,
+                          has_categories, and categories.
+
+    Returns:
+        Dict mapping column name -> canonical field name for columns Claude
+        could classify.  Invalid field names are silently discarded.
+        Returns {} on any failure.
+    """
+    if not columns:
+        return {}
+
+    try:
+        import anthropic
+        import httpx
+
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+
+        valid_fields_list = sorted(VALID_FIELDS)
+
+        prompt = (
+            "You are a royalty-report data analyst.\n"
+            "Given the contract context and a list of spreadsheet columns "
+            "(each with sample values), map every column to exactly one "
+            "canonical field name from the valid_fields list.\n\n"
+            f"Contract context:\n{json.dumps(contract_context, indent=2)}\n\n"
+            f"Valid field names: {json.dumps(valid_fields_list)}\n\n"
+            f"Columns to classify:\n{json.dumps(columns, indent=2)}\n\n"
+            "Respond with ONLY a JSON object mapping column name to field name. "
+            "Example: {\"Rev\": \"net_sales\", \"Sku Group\": \"product_category\"}. "
+            "Do not include any explanation or markdown."
+        )
+
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=512,
+            timeout=_AI_MAPPING_TIMEOUT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw_text = response.content[0].text.strip()
+
+        # Strip markdown code fences if present
+        if raw_text.startswith("```"):
+            lines = raw_text.split("\n")
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
+            raw_text = "\n".join(lines).strip()
+
+        parsed: dict = json.loads(raw_text)
+
+        # Discard any field values that are not in VALID_FIELDS
+        return {
+            col: field_val
+            for col, field_val in parsed.items()
+            if field_val in VALID_FIELDS
+        }
+
+    except Exception:
+        logger.debug("claude_suggest: silent fallback", exc_info=True)
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # suggest_mapping
 # ---------------------------------------------------------------------------
 
 def suggest_mapping(
     column_names: list[str],
     saved_mapping: Optional[dict[str, str]],
-) -> dict[str, str]:
+    contract_context: Optional[dict] = None,
+    return_source: bool = False,
+) -> "dict[str, str] | tuple[dict[str, str], str]":
     """
     Suggest a column mapping based on keyword synonyms and/or a saved mapping.
 
@@ -772,19 +860,34 @@ def suggest_mapping(
     use their saved value.  New columns (not in the saved mapping) fall back
     to keyword matching.
 
+    When contract_context is provided, columns that keyword matching could
+    not resolve (mapped to "ignore") are sent to Claude AI for a second-pass
+    suggestion.  If Claude is unavailable or times out the result falls back
+    gracefully to the keyword-only output.
+
     Args:
         column_names: List of detected column names from the uploaded file.
         saved_mapping: Optional previously-saved mapping for this licensee.
+        contract_context: Optional dict with contract metadata for AI mapping.
+                          Keys: licensee_name, royalty_base, has_categories,
+                          categories.  When None, AI step is skipped.
+        return_source: When True, return a (mapping, source) tuple instead of
+                       just the mapping dict.  source is one of:
+                       "saved", "ai", "suggested", "none".
 
     Returns:
-        Dict mapping each column name to a canonical Likha field name.
+        When return_source is False (default): dict mapping each column name
+        to a canonical Likha field name.
+        When return_source is True: (mapping_dict, source_str) tuple.
     """
     result: dict[str, str] = {}
+    any_saved = False
 
     for col in column_names:
         # 1. Check saved mapping first
         if saved_mapping and col in saved_mapping:
             result[col] = saved_mapping[col]
+            any_saved = True
             continue
 
         # 2. Keyword synonym matching (case-insensitive, substring)
@@ -805,4 +908,37 @@ def suggest_mapping(
 
         result[col] = matched_field
 
-    return result
+    # 3. AI second-pass: only when contract_context is provided
+    ai_resolved_any = False
+    if contract_context is not None:
+        unresolved = [
+            {
+                "name": col,
+                "samples": [],  # samples not available at this layer; router passes them
+            }
+            for col, val in result.items()
+            if val == "ignore" and (not saved_mapping or col not in saved_mapping)
+        ]
+
+        if unresolved:
+            ai_suggestions = claude_suggest(unresolved, contract_context)
+            for col, field_val in ai_suggestions.items():
+                if col in result and result[col] == "ignore":
+                    result[col] = field_val
+                    ai_resolved_any = True
+
+    if not return_source:
+        return result
+
+    # Determine source label
+    all_ignore = all(v == "ignore" for v in result.values())
+    if any_saved:
+        source = "saved"
+    elif ai_resolved_any:
+        source = "ai"
+    elif all_ignore:
+        source = "none"
+    else:
+        source = "suggested"
+
+    return result, source

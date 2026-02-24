@@ -851,11 +851,8 @@ class TestConfirmEndpoint:
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
             with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-
-                # Fetch draft
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+                # verify_contract_ownership now returns the contract row
+                mock_verify.return_value = draft_row
 
                 # Update returns active row
                 mock_supabase.table.return_value.update.return_value \
@@ -891,10 +888,8 @@ class TestConfirmEndpoint:
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
             with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+                # verify_contract_ownership now returns the contract row
+                mock_verify.return_value = draft_row
 
                 mock_supabase.table.return_value.update.return_value \
                     .eq.return_value.execute.return_value = Mock(data=[active_row])
@@ -924,16 +919,13 @@ class TestConfirmEndpoint:
         )
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
+            # verify_contract_ownership returns the active row directly
+            mock_verify.return_value = active_row
 
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[active_row])
+            with pytest.raises(HTTPException) as exc_info:
+                await confirm_contract(contract_id, confirm_data, user_id=user_id)
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await confirm_contract(contract_id, confirm_data, user_id=user_id)
-
-                assert exc_info.value.status_code == 409
+            assert exc_info.value.status_code == 409
 
     @pytest.mark.asyncio
     async def test_confirm_returns_404_if_contract_not_found(self):
@@ -950,16 +942,15 @@ class TestConfirmEndpoint:
         )
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
+            # verify_contract_ownership raises 404 when contract not found
+            mock_verify.side_effect = HTTPException(
+                status_code=404, detail="Contract not found"
+            )
 
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[])
+            with pytest.raises(HTTPException) as exc_info:
+                await confirm_contract("nonexistent-id", confirm_data, user_id="user-123")
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await confirm_contract("nonexistent-id", confirm_data, user_id="user-123")
-
-                assert exc_info.value.status_code == 404
+            assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
     async def test_confirm_sends_royalty_rate_as_plain_dict_for_tiered(self):
@@ -992,10 +983,8 @@ class TestConfirmEndpoint:
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
             with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+                # verify_contract_ownership returns the draft row directly
+                mock_verify.return_value = draft_row
 
                 mock_supabase.table.return_value.update.return_value \
                     .eq.return_value.execute.return_value = Mock(data=[active_row])
@@ -1048,10 +1037,8 @@ class TestConfirmEndpoint:
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
             with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+                # verify_contract_ownership returns the draft row directly
+                mock_verify.return_value = draft_row
 
                 mock_supabase.table.return_value.update.return_value \
                     .eq.return_value.execute.return_value = Mock(data=[active_row])
@@ -1272,10 +1259,9 @@ class TestGetContractFormValues:
         }
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+            with patch('app.routers.contracts.get_signed_url', return_value="https://test.example.com/pdf?token=test"):
+                # verify_contract_ownership returns the draft row directly
+                mock_verify.return_value = draft_row
 
                 result = await get_contract("draft-fv-1", user_id="user-123")
 
@@ -1302,10 +1288,9 @@ class TestGetContractFormValues:
         }
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+            with patch('app.routers.contracts.get_signed_url', return_value="https://test.example.com/pdf?token=test"):
+                # verify_contract_ownership returns the draft row directly
+                mock_verify.return_value = draft_row
 
                 result = await get_contract("draft-fv-2", user_id="user-123")
 
@@ -1332,10 +1317,9 @@ class TestGetContractFormValues:
         }
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+            with patch('app.routers.contracts.get_signed_url', return_value="https://test.example.com/pdf?token=test"):
+                # verify_contract_ownership returns the draft row directly
+                mock_verify.return_value = draft_row
 
                 result = await get_contract("draft-fv-3", user_id="user-123")
 
@@ -1362,10 +1346,9 @@ class TestGetContractFormValues:
         }
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+            with patch('app.routers.contracts.get_signed_url', return_value="https://test.example.com/pdf?token=test"):
+                # verify_contract_ownership returns the draft row directly
+                mock_verify.return_value = draft_row
 
                 result = await get_contract("draft-fv-4", user_id="user-123")
 
@@ -1381,10 +1364,9 @@ class TestGetContractFormValues:
         active_row = _make_db_contract(contract_id="active-1", status="active")
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[active_row])
+            with patch('app.routers.contracts.get_signed_url', return_value="https://test.example.com/pdf?token=test"):
+                # verify_contract_ownership returns the active row directly
+                mock_verify.return_value = active_row
 
                 result = await get_contract("active-1", user_id="user-123")
 
@@ -1400,10 +1382,9 @@ class TestGetContractFormValues:
         draft_row["extracted_terms"] = {}  # Empty
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+            with patch('app.routers.contracts.get_signed_url', return_value="https://test.example.com/pdf?token=test"):
+                # verify_contract_ownership returns the draft row directly
+                mock_verify.return_value = draft_row
 
                 result = await get_contract("draft-fv-5", user_id="user-123")
 
@@ -1416,15 +1397,15 @@ class TestGetContractFormValues:
         from app.routers.contracts import get_contract
 
         with patch('app.routers.contracts.verify_contract_ownership') as mock_verify:
-            with patch('app.routers.contracts.supabase_admin') as mock_supabase:
-                mock_verify.return_value = None
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[])
+            # verify_contract_ownership raises 404 when contract not found
+            mock_verify.side_effect = HTTPException(
+                status_code=404, detail="Contract not found"
+            )
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await get_contract("nonexistent-id", user_id="user-123")
+            with pytest.raises(HTTPException) as exc_info:
+                await get_contract("nonexistent-id", user_id="user-123")
 
-                assert exc_info.value.status_code == 404
+            assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
     async def test_get_contract_verifies_ownership(self):

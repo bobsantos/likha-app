@@ -11,7 +11,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import contracts, sales, sales_upload
+from app.routers import contracts, email_intake, sales, sales_upload
 from app.db import supabase_admin
 
 # Configure logging to output to console
@@ -144,6 +144,7 @@ app.add_middleware(
 app.include_router(contracts.router, prefix="/api/contracts", tags=["contracts"])
 app.include_router(sales.router, prefix="/api/sales", tags=["sales"])
 app.include_router(sales_upload.router, prefix="/api/sales", tags=["sales-upload"])
+app.include_router(email_intake.router, prefix="/api/email-intake", tags=["email-intake"])
 
 
 @app.on_event("startup")
