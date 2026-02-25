@@ -107,17 +107,82 @@ The existing `duplicatePeriodError` state and the amber conflict card on the `ma
 
 **`period_end` before `period_start`:** The period-check endpoint returns a 400. The frontend already disables the upload button when dates are invalid; the period-check call should be skipped when `start > end`.
 
+**Gap 3 — Contract date range and reporting frequency validation:**
+
+Two sub-checks, both non-blocking amber warnings.
+
+**3a — Contract date range**
+
+Warn if the reporting period falls partially or fully outside the contract's `contract_start_date` / `contract_end_date`. Condition: `period_start < contract_start_date OR period_end > contract_end_date`. Null contract dates → skip.
+
+**3b — Reporting frequency mismatch**
+
+Warn if the period duration (in days, inclusive) doesn't match the contract's `reporting_frequency`. Tolerance bands:
+
+| Frequency | Accepted day range |
+|---|---|
+| `monthly` | 15–55 |
+| `quarterly` | 45–135 |
+| `semi_annually` | 120–215 |
+| `annually` | 270–400 |
+
+Null frequency → skip.
+
+**Where the checks live (three layers for consistency):**
+
+1. **Frontend date picker** — When contract dates are known, default the date picker range to the contract period and use them as soft min/max hints. When frequency is known, suggest natural period boundaries (e.g., quarter starts/ends) as UX guidance, not hard enforcement.
+
+2. **Period-check endpoint** (`GET /upload/{contract_id}/period-check`) — Extend the response with:
+
+```json
+{
+  "has_overlap": true,
+  "overlapping_periods": [...],
+  "out_of_range": true,
+  "contract_start_date": "2024-01-01",
+  "contract_end_date": "2026-12-31",
+  "frequency_warning": {
+    "expected_frequency": "quarterly",
+    "entered_days": 59,
+    "expected_range": [45, 135],
+    "message": "59 days entered; quarterly periods are typically 45–135 days."
+  },
+  "suggested_end_date": "2025-03-31"
+}
+```
+
+`out_of_range` is `false` and `frequency_warning` is `null` when checks pass or are skipped. `suggested_end_date` is non-null when `period_start` aligns to a natural boundary for the contract's frequency (e.g., Jan 1 for quarterly → suggest Mar 31).
+
+3. **`_build_upload_warnings`** — Add `contract_range` and `frequency_mismatch` warnings using the existing `UploadWarning` shape. This ensures email intake and any non-wizard upload path receives the same checks.
+
+**Frontend UX (Step 1):**
+
+Warning cards stack above the overlap card in this order: contract-range → frequency-mismatch → overlap. Each card has "Continue anyway" and "Change dates" actions. The frequency-mismatch card may include a date suggestion: "Did you mean Jan 1 – Mar 31, 2025?" with a [Use these dates] button that populates both date fields. The drop zone is disabled until all visible warnings have been acknowledged. All acknowledgment states reset when either date field changes.
+
+### Edge cases (Gap 3)
+
+**Renewals and extensions:** A licensee may legitimately upload a period that extends slightly beyond the contract end date if a renewal is pending but not yet recorded. Non-blocking keeps this workflow open.
+
+**Catch-up and partial periods:** A first or last period under a contract is often shorter than the standard frequency (e.g., a contract starting March 15 produces a short Q1). Non-blocking avoids rejecting these valid cases.
+
+**Contract dates entered wrong:** If the user's contract record has a typo in `contract_end_date`, a hard block would be impossible to bypass without editing the contract first. The warning allows them to continue and fix the contract record separately.
+
+**Frequency not set on contract:** Some contracts have ad-hoc reporting schedules. Null `reporting_frequency` skips the check entirely — no false positives.
+
+**Suggested end date boundary detection:** The suggested end date is only emitted when `period_start` is within 3 days of a natural boundary for the frequency (e.g., Jan 1, Apr 1, Jul 1, Oct 1 for quarterly). Outside that window, `suggested_end_date` is null and no "Did you mean" prompt is shown.
+
 ### Files to modify
 
 | File | Change |
 |---|---|
-| `backend/app/routers/sales_upload.py` | Add `GET /upload/{contract_id}/period-check` endpoint |
-| `frontend/app/(app)/sales/upload/page.tsx` | Add `overrideDuplicate` state; pass to `doConfirm`; fix "Go back" to `setStep('upload')`; pass period-check callback into `StepUpload` |
-| `frontend/app/(app)/sales/upload/page.tsx` | `StepUpload`: add period-check call on date field change; render amber overlap card inline below date fields |
+| `backend/app/routers/sales_upload.py` | Add `GET /upload/{contract_id}/period-check` endpoint; extend response with `out_of_range`, `contract_start_date`, `contract_end_date`, `frequency_warning`, `suggested_end_date`; add `contract_range` and `frequency_mismatch` warnings to `_build_upload_warnings` |
+| `frontend/app/(app)/sales/upload/page.tsx` | Add `overrideDuplicate` state; pass to `doConfirm`; fix "Go back" to `setStep('upload')`; pass period-check callback into `StepUpload`; add `StepUpload` period-check call on date field change; render amber overlap card inline below date fields; add contract-range and frequency-mismatch cards with stacking logic; date picker guidance from contract dates and frequency |
 | `frontend/lib/api.ts` | Add `checkPeriodOverlap(contractId, start, end)` API helper |
-| `frontend/types/index.ts` | Add `PeriodCheckResponse` type with `has_overlap` and `overlapping_periods` fields |
+| `frontend/types/index.ts` | Add `PeriodCheckResponse` type (extended with Gap 3 fields), `OverlapRecord`, and `FrequencyWarning` types |
+| `backend/tests/test_period_validation.py` | New tests for contract-range and frequency-mismatch checks (out-of-range, partial overlap with contract dates, each frequency band, null skips, suggested end date boundary detection) |
+| `frontend/__tests__/sales-upload-gap3.test.tsx` | New tests for contract-range and frequency-mismatch warning cards, stacking order, "Use these dates" button, drop zone gating, acknowledgment reset on date change |
 
-No migration needed — the period-check endpoint only reads `sales_periods`, which already exists.
+No migration needed — the period-check endpoint reads `contracts` (already has `contract_start_date`, `contract_end_date`, `reporting_frequency`) and `sales_periods`, both of which already exist.
 
 ---
 

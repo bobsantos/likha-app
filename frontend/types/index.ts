@@ -275,7 +275,20 @@ export interface OverlapRecord {
   created_at: string             // ISO datetime string
 }
 
+export interface FrequencyWarning {
+  expected_frequency: string
+  entered_days: number
+  expected_range: [number, number]
+  message: string
+}
+
 export interface PeriodCheckResponse {
   has_overlap: boolean
   overlapping_periods: OverlapRecord[]
+  // Gap 3 fields:
+  out_of_range: boolean
+  contract_start_date: string | null
+  contract_end_date: string | null
+  frequency_warning: FrequencyWarning | null
+  suggested_end_date: string | null
 }

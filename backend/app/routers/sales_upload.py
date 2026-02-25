@@ -10,7 +10,7 @@ Endpoints:
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Optional
 
@@ -345,7 +345,217 @@ def _build_upload_warnings(
                     ),
                 })
 
+    # --- contract date range check ---
+    contract_start_str = contract.get("contract_start_date")
+    contract_end_str = contract.get("contract_end_date")
+    if contract_start_str and contract_end_str:
+        try:
+            c_start = date.fromisoformat(str(contract_start_str))
+            c_end = date.fromisoformat(str(contract_end_str))
+            if period_start < c_start or period_end > c_end:
+                warnings.append({
+                    "field": "contract_range",
+                    "extracted_value": f"{period_start} to {period_end}",
+                    "contract_value": f"{c_start} to {c_end}",
+                    "message": (
+                        f"The reporting period falls outside this contract's date range "
+                        f"({c_start} to {c_end})."
+                    ),
+                })
+        except (ValueError, TypeError):
+            pass  # unparseable contract dates — skip
+
+    # --- reporting frequency mismatch check ---
+    reporting_frequency = contract.get("reporting_frequency")
+    if reporting_frequency:
+        _FREQUENCY_BANDS_LOCAL: dict[str, tuple[int, int]] = {
+            "monthly": (15, 55),
+            "quarterly": (45, 135),
+            "semi_annually": (120, 215),
+            "annually": (270, 400),
+        }
+        band = _FREQUENCY_BANDS_LOCAL.get(str(reporting_frequency))
+        if band is not None:
+            days = (period_end - period_start).days + 1
+            lo, hi = band
+            if days < lo or days > hi:
+                # Suppress for first/last partial periods (within 7 days of contract boundary)
+                suppress = False
+                if days < lo:
+                    c_start_str = contract.get("contract_start_date")
+                    c_end_str = contract.get("contract_end_date")
+                    try:
+                        if c_start_str:
+                            c_start = date.fromisoformat(str(c_start_str))
+                            if abs((period_start - c_start).days) <= 7:
+                                suppress = True
+                        if not suppress and c_end_str:
+                            c_end = date.fromisoformat(str(c_end_str))
+                            if abs((period_end - c_end).days) <= 7:
+                                suppress = True
+                    except (ValueError, TypeError):
+                        pass
+                if not suppress:
+                    warnings.append({
+                        "field": "frequency_mismatch",
+                        "extracted_value": f"{days} days",
+                        "contract_value": str(reporting_frequency),
+                        "message": (
+                            f"This contract expects {reporting_frequency} reports. "
+                            f"The period spans {days} days."
+                        ),
+                    })
+
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# Period-check helpers (Gap 3)
+# ---------------------------------------------------------------------------
+
+# Tolerance bands for reporting frequency (inclusive day range)
+_FREQUENCY_BANDS: dict[str, tuple[int, int]] = {
+    "monthly": (15, 55),
+    "quarterly": (45, 135),
+    "semi_annually": (120, 215),
+    "annually": (270, 400),
+}
+
+
+def _compute_out_of_range(
+    period_start: date,
+    period_end: date,
+    contract: dict,
+) -> bool:
+    """
+    Return True if the period falls partially or fully outside the contract date range.
+    Returns False when either contract date is None (skip the check).
+    """
+    start_str = contract.get("contract_start_date")
+    end_str = contract.get("contract_end_date")
+    if not start_str or not end_str:
+        return False
+    try:
+        c_start = date.fromisoformat(str(start_str))
+        c_end = date.fromisoformat(str(end_str))
+    except (ValueError, TypeError):
+        return False
+    return period_start < c_start or period_end > c_end
+
+
+def _compute_frequency_warning(
+    period_start: date,
+    period_end: date,
+    contract: dict,
+) -> Optional[dict]:
+    """
+    Return a frequency_warning dict when the period duration does not match
+    the contract's reporting_frequency tolerance band, or None when it does.
+    Returns None when reporting_frequency is null or unrecognised.
+
+    Suppresses the warning for first/last partial periods — when the period
+    starts near the contract start date or ends near the contract end date,
+    the user is likely uploading a short first or final period.
+    """
+    freq = contract.get("reporting_frequency")
+    if not freq:
+        return None
+    band = _FREQUENCY_BANDS.get(str(freq))
+    if band is None:
+        return None  # unrecognised frequency — skip
+    days = (period_end - period_start).days + 1
+    lo, hi = band
+    if lo <= days <= hi:
+        return None  # within acceptable range
+
+    # Suppress warning for first/last partial periods (within 7 days of contract boundary)
+    if days < lo:
+        tolerance = timedelta(days=7)
+        c_start_str = contract.get("contract_start_date")
+        c_end_str = contract.get("contract_end_date")
+        try:
+            if c_start_str:
+                c_start = date.fromisoformat(str(c_start_str))
+                if abs((period_start - c_start).days) <= tolerance.days:
+                    return None  # likely first partial period
+            if c_end_str:
+                c_end = date.fromisoformat(str(c_end_str))
+                if abs((period_end - c_end).days) <= tolerance.days:
+                    return None  # likely last partial period
+        except (ValueError, TypeError):
+            pass
+
+    return {
+        "expected_frequency": str(freq),
+        "entered_days": days,
+        "expected_range": [lo, hi],
+        "message": (
+            f"This contract expects {freq} reports (~{(lo + hi) // 2} days). "
+            f"The period you entered spans {days} days."
+        ),
+    }
+
+
+def _compute_suggested_end_date(
+    period_start: date,
+    frequency: str,
+) -> Optional[date]:
+    """
+    Return a suggested end date when period_start aligns to a natural boundary
+    for the given frequency (within 3 days). Returns None otherwise.
+
+    Natural boundaries per frequency:
+      monthly:       any 1st of month → last day of that month
+      quarterly:     Jan 1, Apr 1, Jul 1, Oct 1 → last day of 3rd month
+      semi_annually: Jan 1, Jul 1 → Jun 30 or Dec 31
+      annually:      Jan 1 → Dec 31
+    """
+    import calendar
+
+    TOLERANCE_DAYS = 3
+
+    if frequency == "monthly":
+        # Any 1st of month (within tolerance)
+        first_of_month = date(period_start.year, period_start.month, 1)
+        if abs((period_start - first_of_month).days) <= TOLERANCE_DAYS:
+            last_day = calendar.monthrange(period_start.year, period_start.month)[1]
+            return date(period_start.year, period_start.month, last_day)
+        return None
+
+    if frequency == "quarterly":
+        # Quarter starts: Jan 1, Apr 1, Jul 1, Oct 1
+        quarter_starts = [
+            date(period_start.year, 1, 1),
+            date(period_start.year, 4, 1),
+            date(period_start.year, 7, 1),
+            date(period_start.year, 10, 1),
+        ]
+        for qs in quarter_starts:
+            if abs((period_start - qs).days) <= TOLERANCE_DAYS:
+                # Last day of the 3rd month of the quarter
+                end_month = qs.month + 2
+                last_day = calendar.monthrange(qs.year, end_month)[1]
+                return date(qs.year, end_month, last_day)
+        return None
+
+    if frequency == "semi_annually":
+        # Semi-annual starts: Jan 1 → Jun 30, Jul 1 → Dec 31
+        jan1 = date(period_start.year, 1, 1)
+        jul1 = date(period_start.year, 7, 1)
+        if abs((period_start - jan1).days) <= TOLERANCE_DAYS:
+            return date(period_start.year, 6, 30)
+        if abs((period_start - jul1).days) <= TOLERANCE_DAYS:
+            return date(period_start.year, 12, 31)
+        return None
+
+    if frequency == "annually":
+        # Annual start: Jan 1 → Dec 31
+        jan1 = date(period_start.year, 1, 1)
+        if abs((period_start - jan1).days) <= TOLERANCE_DAYS:
+            return date(period_start.year, 12, 31)
+        return None
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -874,9 +1084,12 @@ async def period_check(
 
     Returns has_overlap and the list of overlapping period records so the
     frontend can show an early inline warning before the user picks a file.
+
+    Also returns Gap 3 fields: out_of_range, contract_start_date,
+    contract_end_date, frequency_warning, and suggested_end_date.
     """
-    # Auth + ownership
-    await verify_contract_ownership(contract_id, user_id)
+    # Auth + ownership — returns the full contract row, reuse it below
+    contract = await verify_contract_ownership(contract_id, user_id)
 
     # Validate dates
     try:
@@ -901,9 +1114,31 @@ async def period_check(
 
     overlapping = overlap_result.data or []
 
+    # --- Gap 3a: contract date range check ---
+    out_of_range = _compute_out_of_range(period_start, period_end, contract)
+    contract_start_date: Optional[str] = contract.get("contract_start_date")
+    contract_end_date: Optional[str] = contract.get("contract_end_date")
+
+    # --- Gap 3b: reporting frequency check ---
+    frequency_warning = _compute_frequency_warning(period_start, period_end, contract)
+
+    # --- Gap 3: suggested end date (only when there is a frequency mismatch) ---
+    suggested_end_date: Optional[str] = None
+    if frequency_warning is not None:
+        freq = contract.get("reporting_frequency")
+        if freq:
+            suggested = _compute_suggested_end_date(period_start, str(freq))
+            if suggested is not None:
+                suggested_end_date = suggested.isoformat()
+
     return {
         "has_overlap": len(overlapping) > 0,
         "overlapping_periods": overlapping,
+        "out_of_range": out_of_range,
+        "contract_start_date": contract_start_date,
+        "contract_end_date": contract_end_date,
+        "frequency_warning": frequency_warning,
+        "suggested_end_date": suggested_end_date,
     }
 
 

@@ -697,6 +697,12 @@ def _mock_period_check_query(overlap_records: list) -> MagicMock:
     return mock_t
 
 
+def _mock_verify_ownership(contract: dict) -> AsyncMock:
+    """Return an AsyncMock for verify_contract_ownership that returns the given contract dict."""
+    mock = AsyncMock(return_value=contract)
+    return mock
+
+
 class TestPeriodCheckEndpoint:
     """GET /upload/{contract_id}/period-check — early overlap detection."""
 
@@ -713,9 +719,11 @@ class TestPeriodCheckEndpoint:
             "royalty_calculated": "7600.00",
             "created_at": "2025-04-15T10:23:00Z",
         }
+        contract = _make_db_contract()
 
         with patch("app.routers.sales_upload.supabase") as mock_supabase, \
-             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+             patch("app.routers.sales_upload.verify_contract_ownership",
+                   _mock_verify_ownership(contract)):
 
             mock_supabase.table.return_value = _mock_period_check_query([overlap_record])
 
@@ -740,9 +748,11 @@ class TestPeriodCheckEndpoint:
     async def test_period_check_no_overlap_returns_empty(self):
         """When the DB returns no records, has_overlap is False and overlapping_periods is empty."""
         from app.routers.sales_upload import period_check
+        contract = _make_db_contract()
 
         with patch("app.routers.sales_upload.supabase") as mock_supabase, \
-             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+             patch("app.routers.sales_upload.verify_contract_ownership",
+                   _mock_verify_ownership(contract)):
 
             mock_supabase.table.return_value = _mock_period_check_query([])
 
@@ -779,6 +789,7 @@ class TestPeriodCheckEndpoint:
     async def test_period_check_multiple_overlaps(self):
         """When the DB returns multiple overlapping records, all are listed."""
         from app.routers.sales_upload import period_check
+        contract = _make_db_contract()
 
         overlap_records = [
             {
@@ -800,7 +811,8 @@ class TestPeriodCheckEndpoint:
         ]
 
         with patch("app.routers.sales_upload.supabase") as mock_supabase, \
-             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+             patch("app.routers.sales_upload.verify_contract_ownership",
+                   _mock_verify_ownership(contract)):
 
             mock_supabase.table.return_value = _mock_period_check_query(overlap_records)
 
@@ -815,3 +827,481 @@ class TestPeriodCheckEndpoint:
         assert len(result["overlapping_periods"]) == 2
         ids = {r["id"] for r in result["overlapping_periods"]}
         assert ids == {"sp-overlap-1", "sp-overlap-2"}
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 Tests: Contract date range and reporting frequency validation
+# ---------------------------------------------------------------------------
+
+async def _run_period_check(
+    contract: dict,
+    start: str,
+    end: str,
+    overlap_records: list | None = None,
+) -> dict:
+    """
+    Helper to call the period_check endpoint with a mocked supabase and
+    verify_contract_ownership returning the given contract.
+    """
+    from app.routers.sales_upload import period_check
+
+    if overlap_records is None:
+        overlap_records = []
+
+    with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+         patch("app.routers.sales_upload.verify_contract_ownership",
+               _mock_verify_ownership(contract)):
+
+        mock_supabase.table.return_value = _mock_period_check_query(overlap_records)
+
+        return await period_check(
+            contract_id=contract["id"],
+            start=start,
+            end=end,
+            user_id=contract["user_id"],
+        )
+
+
+class TestPeriodCheckContractRange:
+    """Gap 3a: out_of_range flag in period-check response."""
+
+    @pytest.mark.asyncio
+    async def test_period_check_out_of_range_true(self):
+        """Period starting before contract_start_date → out_of_range: True."""
+        contract = _make_db_contract()
+        # contract runs 2025-01-01 to 2025-12-31
+        # entering a period that starts in 2024 is out of range
+        result = await _run_period_check(contract, "2024-10-01", "2024-12-31")
+
+        assert result["out_of_range"] is True
+        assert result["contract_start_date"] == "2025-01-01"
+        assert result["contract_end_date"] == "2025-12-31"
+
+    @pytest.mark.asyncio
+    async def test_period_check_out_of_range_end_after_contract_end(self):
+        """Period ending after contract_end_date → out_of_range: True."""
+        contract = _make_db_contract()
+        # period end extends beyond 2025-12-31
+        result = await _run_period_check(contract, "2025-10-01", "2026-03-31")
+
+        assert result["out_of_range"] is True
+
+    @pytest.mark.asyncio
+    async def test_period_check_out_of_range_false(self):
+        """Period fully within contract dates → out_of_range: False."""
+        contract = _make_db_contract()
+        # Q1 2025 is within 2025-01-01 to 2025-12-31
+        result = await _run_period_check(contract, "2025-01-01", "2025-03-31")
+
+        assert result["out_of_range"] is False
+        assert result["contract_start_date"] == "2025-01-01"
+        assert result["contract_end_date"] == "2025-12-31"
+
+    @pytest.mark.asyncio
+    async def test_period_check_out_of_range_null_contract_dates(self):
+        """Null contract dates → out_of_range: False (skip the check)."""
+        contract = _make_db_contract()
+        contract["contract_start_date"] = None
+        contract["contract_end_date"] = None
+
+        result = await _run_period_check(contract, "2024-01-01", "2024-12-31")
+
+        assert result["out_of_range"] is False
+        assert result["contract_start_date"] is None
+        assert result["contract_end_date"] is None
+
+    @pytest.mark.asyncio
+    async def test_period_check_out_of_range_null_start_only(self):
+        """Only one contract date is null → skip the check, out_of_range: False."""
+        contract = _make_db_contract()
+        contract["contract_start_date"] = None
+        # contract_end_date remains 2025-12-31
+
+        result = await _run_period_check(contract, "2024-01-01", "2025-06-30")
+
+        assert result["out_of_range"] is False
+
+
+class TestPeriodCheckFrequencyWarning:
+    """Gap 3b: frequency_warning in period-check response."""
+
+    @pytest.mark.asyncio
+    async def test_period_check_frequency_warning_quarterly_too_long(self):
+        """181 days on a quarterly contract → frequency_warning with message."""
+        contract = _make_db_contract()  # reporting_frequency = "quarterly"
+        # 2025-01-01 to 2025-06-30 = 181 days inclusive (31+28+31+30+31+30=181)
+        result = await _run_period_check(contract, "2025-01-01", "2025-06-30")
+
+        assert result["frequency_warning"] is not None
+        fw = result["frequency_warning"]
+        assert fw["expected_frequency"] == "quarterly"
+        assert fw["entered_days"] == 181
+        assert fw["expected_range"] == [45, 135]
+        assert "quarterly" in fw["message"].lower()
+        assert "181" in fw["message"]
+
+    @pytest.mark.asyncio
+    async def test_period_check_frequency_warning_quarterly_ok(self):
+        """91 days on a quarterly contract → no frequency_warning."""
+        contract = _make_db_contract()  # reporting_frequency = "quarterly"
+        # 2025-01-01 to 2025-04-01 = 91 days (inclusive)
+        result = await _run_period_check(contract, "2025-01-01", "2025-04-01")
+
+        assert result["frequency_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_period_check_frequency_warning_null_frequency(self):
+        """Null reporting_frequency → frequency_warning: null (skip the check)."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = None
+
+        result = await _run_period_check(contract, "2025-01-01", "2025-07-01")
+
+        assert result["frequency_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_period_check_frequency_warning_monthly_ok(self):
+        """31 days on a monthly contract → no frequency_warning."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "monthly"
+        # January has 31 days
+        result = await _run_period_check(contract, "2025-01-01", "2025-01-31")
+
+        assert result["frequency_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_period_check_frequency_warning_monthly_too_short(self):
+        """10 days on a monthly contract (mid-contract) → frequency_warning."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "monthly"
+        # Use mid-contract dates so partial-period suppression does not apply
+        result = await _run_period_check(contract, "2025-06-01", "2025-06-10")
+
+        assert result["frequency_warning"] is not None
+        fw = result["frequency_warning"]
+        assert fw["expected_frequency"] == "monthly"
+        assert fw["expected_range"] == [15, 55]
+
+    @pytest.mark.asyncio
+    async def test_period_check_frequency_warning_annually_ok(self):
+        """365 days on an annual contract → no frequency_warning."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "annually"
+        contract["contract_start_date"] = "2024-01-01"
+        contract["contract_end_date"] = "2026-12-31"
+        result = await _run_period_check(contract, "2025-01-01", "2025-12-31")
+
+        assert result["frequency_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_period_check_frequency_warning_semi_annually_ok(self):
+        """181 days on a semi_annually contract → no frequency_warning."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "semi_annually"
+        result = await _run_period_check(contract, "2025-01-01", "2025-06-30")
+
+        assert result["frequency_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_period_check_frequency_warning_semi_annually_too_long(self):
+        """300 days on a semi_annually contract → frequency_warning."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "semi_annually"
+        contract["contract_start_date"] = "2024-01-01"
+        contract["contract_end_date"] = "2026-12-31"
+        result = await _run_period_check(contract, "2025-01-01", "2025-10-28")
+
+        assert result["frequency_warning"] is not None
+        fw = result["frequency_warning"]
+        assert fw["expected_frequency"] == "semi_annually"
+        assert fw["expected_range"] == [120, 215]
+
+    @pytest.mark.asyncio
+    async def test_period_check_unknown_frequency_no_warning(self):
+        """Unrecognised frequency string → no frequency_warning (skip gracefully)."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "biweekly"
+
+        result = await _run_period_check(contract, "2025-01-01", "2025-03-31")
+
+        assert result["frequency_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_frequency_warning_suppressed_for_first_partial_period(self):
+        """A short period near the contract start date is a first partial period — no warning."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "quarterly"
+        contract["contract_start_date"] = "2025-03-01"
+        contract["contract_end_date"] = "2026-02-28"
+
+        # March 1–31 = 31 days, below quarterly minimum of 45,
+        # but starts at the contract start date — suppress warning
+        result = await _run_period_check(contract, "2025-03-01", "2025-03-31", [])
+        assert result["frequency_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_frequency_warning_suppressed_for_last_partial_period(self):
+        """A short period near the contract end date is a last partial period — no warning."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "quarterly"
+        contract["contract_start_date"] = "2025-01-01"
+        contract["contract_end_date"] = "2025-11-15"
+
+        # Nov 1–15 = 15 days, below quarterly minimum,
+        # but ends at the contract end date — suppress warning
+        result = await _run_period_check(contract, "2025-11-01", "2025-11-15", [])
+        assert result["frequency_warning"] is None
+
+    @pytest.mark.asyncio
+    async def test_frequency_warning_not_suppressed_for_mid_contract_short_period(self):
+        """A short period in the middle of the contract should still warn."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "quarterly"
+        contract["contract_start_date"] = "2025-01-01"
+        contract["contract_end_date"] = "2025-12-31"
+
+        # June 1–30 = 30 days, below quarterly minimum,
+        # NOT near contract start or end — should warn
+        result = await _run_period_check(contract, "2025-06-01", "2025-06-30", [])
+        assert result["frequency_warning"] is not None
+
+
+class TestPeriodCheckSuggestedEndDate:
+    """Gap 3: suggested_end_date when start aligns to a natural period boundary."""
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_quarterly_jan1(self):
+        """Quarterly contract, start=Jan 1 → suggested Mar 31."""
+        contract = _make_db_contract()  # reporting_frequency = "quarterly"
+        # Use a very long range so frequency warning fires
+        result = await _run_period_check(contract, "2025-01-01", "2025-07-01")
+
+        assert result["suggested_end_date"] == "2025-03-31"
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_quarterly_apr1(self):
+        """Quarterly contract, start=Apr 1 → suggested Jun 30."""
+        contract = _make_db_contract()
+        contract["contract_end_date"] = "2026-12-31"
+        result = await _run_period_check(contract, "2025-04-01", "2025-10-01")
+
+        assert result["suggested_end_date"] == "2025-06-30"
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_not_aligned(self):
+        """Quarterly contract, start=Jan 15 → suggested_end_date is null."""
+        contract = _make_db_contract()
+        result = await _run_period_check(contract, "2025-01-15", "2025-07-01")
+
+        assert result["suggested_end_date"] is None
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_monthly_jan1(self):
+        """Monthly contract, start=Jan 1 → suggested Jan 31."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "monthly"
+        result = await _run_period_check(contract, "2025-01-01", "2025-06-01")
+
+        assert result["suggested_end_date"] == "2025-01-31"
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_annually_jan1(self):
+        """Annual contract, start=Jan 1 → suggested Dec 31 of same year."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "annually"
+        contract["contract_start_date"] = "2024-01-01"
+        contract["contract_end_date"] = "2026-12-31"
+        # Enter a short period to trigger frequency warning
+        result = await _run_period_check(contract, "2025-01-01", "2025-06-30")
+
+        assert result["suggested_end_date"] == "2025-12-31"
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_semi_annually_jan1(self):
+        """Semi-annual contract, start=Jan 1 → suggested Jun 30."""
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "semi_annually"
+        contract["contract_start_date"] = "2024-01-01"
+        contract["contract_end_date"] = "2026-12-31"
+        # Enter a very short period to trigger frequency warning
+        result = await _run_period_check(contract, "2025-01-01", "2025-01-31")
+
+        assert result["suggested_end_date"] == "2025-06-30"
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_no_warning_no_suggestion(self):
+        """When there is no frequency warning, suggested_end_date is null."""
+        contract = _make_db_contract()  # quarterly
+        # 91 days is fine for quarterly — no warning
+        result = await _run_period_check(contract, "2025-01-01", "2025-04-01")
+
+        assert result["suggested_end_date"] is None
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_near_boundary(self):
+        """Quarterly contract, start=Jan 3 (within 3 days of Jan 1) → suggested Mar 31."""
+        contract = _make_db_contract()
+        result = await _run_period_check(contract, "2025-01-03", "2025-07-01")
+
+        assert result["suggested_end_date"] == "2025-03-31"
+
+    @pytest.mark.asyncio
+    async def test_period_check_suggested_end_date_too_far_from_boundary(self):
+        """Quarterly contract, start=Jan 5 (4 days past Jan 1, outside tolerance) → null."""
+        contract = _make_db_contract()
+        result = await _run_period_check(contract, "2025-01-05", "2025-07-01")
+
+        assert result["suggested_end_date"] is None
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 Tests: _build_upload_warnings contract range and frequency checks
+# ---------------------------------------------------------------------------
+
+class TestBuildUploadWarningsContractRange:
+    """_build_upload_warnings emits contract_range warning when period is outside contract dates."""
+
+    def test_build_warnings_contract_range_outside_before_start(self):
+        """Period starts before contract_start_date → contract_range warning."""
+        from app.routers.sales_upload import _build_upload_warnings
+
+        contract = _make_db_contract()
+        # contract runs 2025-01-01 to 2025-12-31
+        # period starts 2024-10-01 — before contract start
+        warnings = _build_upload_warnings(
+            cross_check_values={},
+            contract=contract,
+            period_start=date(2024, 10, 1),
+            period_end=date(2024, 12, 31),
+        )
+
+        fields = [w["field"] for w in warnings]
+        assert "contract_range" in fields
+
+        w = next(w for w in warnings if w["field"] == "contract_range")
+        assert "2024-10-01" in w["extracted_value"]
+        assert "2025-01-01" in w["contract_value"]
+        assert "outside" in w["message"].lower() or "range" in w["message"].lower()
+
+    def test_build_warnings_contract_range_outside_after_end(self):
+        """Period ends after contract_end_date → contract_range warning."""
+        from app.routers.sales_upload import _build_upload_warnings
+
+        contract = _make_db_contract()
+        warnings = _build_upload_warnings(
+            cross_check_values={},
+            contract=contract,
+            period_start=date(2025, 10, 1),
+            period_end=date(2026, 3, 31),
+        )
+
+        fields = [w["field"] for w in warnings]
+        assert "contract_range" in fields
+
+    def test_build_warnings_contract_range_inside(self):
+        """Period fully inside contract dates → no contract_range warning."""
+        from app.routers.sales_upload import _build_upload_warnings
+
+        contract = _make_db_contract()
+        warnings = _build_upload_warnings(
+            cross_check_values={},
+            contract=contract,
+            period_start=date(2025, 4, 1),
+            period_end=date(2025, 6, 30),
+        )
+
+        fields = [w["field"] for w in warnings]
+        assert "contract_range" not in fields
+
+    def test_build_warnings_contract_range_null_dates_no_warning(self):
+        """Null contract dates → no contract_range warning."""
+        from app.routers.sales_upload import _build_upload_warnings
+
+        contract = _make_db_contract()
+        contract["contract_start_date"] = None
+        contract["contract_end_date"] = None
+
+        warnings = _build_upload_warnings(
+            cross_check_values={},
+            contract=contract,
+            period_start=date(2024, 1, 1),
+            period_end=date(2024, 12, 31),
+        )
+
+        fields = [w["field"] for w in warnings]
+        assert "contract_range" not in fields
+
+
+class TestBuildUploadWarningsFrequencyMismatch:
+    """_build_upload_warnings emits frequency_mismatch warning when duration mismatches."""
+
+    def test_build_warnings_frequency_mismatch(self):
+        """181 days on quarterly contract → frequency_mismatch warning."""
+        from app.routers.sales_upload import _build_upload_warnings
+
+        contract = _make_db_contract()  # reporting_frequency = "quarterly"
+        # 2025-01-01 to 2025-06-30 = 181 days inclusive (31+28+31+30+31+30=181)
+        # This is way outside the 45-135 quarterly range
+        warnings = _build_upload_warnings(
+            cross_check_values={},
+            contract=contract,
+            period_start=date(2025, 1, 1),
+            period_end=date(2025, 6, 30),
+        )
+
+        fields = [w["field"] for w in warnings]
+        assert "frequency_mismatch" in fields
+
+        w = next(w for w in warnings if w["field"] == "frequency_mismatch")
+        assert "181" in w["extracted_value"]
+        assert w["contract_value"] == "quarterly"
+        assert "quarterly" in w["message"].lower()
+
+    def test_build_warnings_frequency_ok(self):
+        """91 days on quarterly contract → no frequency_mismatch warning."""
+        from app.routers.sales_upload import _build_upload_warnings
+
+        contract = _make_db_contract()
+        warnings = _build_upload_warnings(
+            cross_check_values={},
+            contract=contract,
+            period_start=date(2025, 1, 1),
+            period_end=date(2025, 4, 1),
+        )
+
+        fields = [w["field"] for w in warnings]
+        assert "frequency_mismatch" not in fields
+
+    def test_build_warnings_frequency_null_no_warning(self):
+        """Null reporting_frequency → no frequency_mismatch warning."""
+        from app.routers.sales_upload import _build_upload_warnings
+
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = None
+
+        warnings = _build_upload_warnings(
+            cross_check_values={},
+            contract=contract,
+            period_start=date(2025, 1, 1),
+            period_end=date(2025, 7, 1),
+        )
+
+        fields = [w["field"] for w in warnings]
+        assert "frequency_mismatch" not in fields
+
+    def test_build_warnings_frequency_unknown_no_warning(self):
+        """Unknown reporting_frequency value → no frequency_mismatch warning (skip gracefully)."""
+        from app.routers.sales_upload import _build_upload_warnings
+
+        contract = _make_db_contract()
+        contract["reporting_frequency"] = "biweekly"
+
+        warnings = _build_upload_warnings(
+            cross_check_values={},
+            contract=contract,
+            period_start=date(2025, 1, 1),
+            period_end=date(2025, 7, 1),
+        )
+
+        fields = [w["field"] for w in warnings]
+        assert "frequency_mismatch" not in fields

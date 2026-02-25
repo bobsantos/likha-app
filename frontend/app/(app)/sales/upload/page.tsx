@@ -17,7 +17,7 @@ import { ApiError, getContract, getSavedMapping, uploadSalesReport, confirmSales
 import ColumnMapper from '@/components/sales-upload/column-mapper'
 import CategoryMapper from '@/components/sales-upload/category-mapper'
 import UploadPreview, { type MappedHeader } from '@/components/sales-upload/upload-preview'
-import type { Contract, UploadPreviewResponse, SalesPeriod, ColumnMapping, CategoryMapping, UploadWarning, OverlapRecord } from '@/types'
+import type { Contract, UploadPreviewResponse, SalesPeriod, ColumnMapping, CategoryMapping, UploadWarning, OverlapRecord, FrequencyWarning } from '@/types'
 
 type WizardStep = 'upload' | 'map-columns' | 'map-categories' | 'preview'
 
@@ -154,6 +154,8 @@ interface StepUploadProps {
   setPeriodEnd: (v: string) => void
   overrideIntent: boolean
   setOverrideIntent: (v: boolean) => void
+  contractStartDate?: string | null
+  contractEndDate?: string | null
 }
 
 function StepUpload({
@@ -165,6 +167,8 @@ function StepUpload({
   setPeriodEnd,
   overrideIntent,
   setOverrideIntent,
+  contractStartDate,
+  contractEndDate,
 }: StepUploadProps) {
   const [file, setFile] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
@@ -178,8 +182,25 @@ function StepUpload({
   const periodStartRef = useRef<HTMLInputElement>(null)
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Derived: blocks the drop zone while the overlap card is unacknowledged
-  const overlapPending = periodCheckState === 'overlap' && !overrideIntent
+  // Gap 3: contract date range and frequency mismatch state
+  const [isOutOfRange, setIsOutOfRange] = useState(false)
+  const [acknowledgedOutOfRange, setAcknowledgedOutOfRange] = useState(false)
+  const [hasFrequencyWarning, setHasFrequencyWarning] = useState(false)
+  const [acknowledgedFrequency, setAcknowledgedFrequency] = useState(false)
+  const [frequencyWarning, setFrequencyWarning] = useState<FrequencyWarning | null>(null)
+  const [suggestedEndDate, setSuggestedEndDate] = useState<string | null>(null)
+  const [displayedContractStart, setDisplayedContractStart] = useState<string | null>(null)
+  const [displayedContractEnd, setDisplayedContractEnd] = useState<string | null>(null)
+
+  // Derived: blocks the drop zone when any warning is unacknowledged
+  const hasOverlap = periodCheckState === 'overlap'
+  const anyWarningPending =
+    (isOutOfRange && !acknowledgedOutOfRange) ||
+    (hasFrequencyWarning && !acknowledgedFrequency) ||
+    (hasOverlap && !overrideIntent)
+
+  // Keep backward-compatible alias
+  const overlapPending = anyWarningPending
 
   // Run period-check whenever both dates are filled and end >= start
   useEffect(() => {
@@ -190,13 +211,27 @@ function StepUpload({
     if (!periodStart || !periodEnd || periodEnd < periodStart) {
       setPeriodCheckState('idle')
       setOverlappingRecords([])
+      setIsOutOfRange(false)
+      setAcknowledgedOutOfRange(false)
+      setHasFrequencyWarning(false)
+      setAcknowledgedFrequency(false)
+      setFrequencyWarning(null)
+      setSuggestedEndDate(null)
+      setDisplayedContractStart(null)
+      setDisplayedContractEnd(null)
       return
     }
+
+    // Reset acknowledgments whenever dates change and a new check fires
+    setAcknowledgedOutOfRange(false)
+    setAcknowledgedFrequency(false)
 
     debounceTimerRef.current = setTimeout(async () => {
       setPeriodCheckState('loading')
       try {
         const result = await checkPeriodOverlap(contractId, periodStart, periodEnd)
+
+        // Gap 2: overlap check
         if (result.has_overlap) {
           setOverlappingRecords(result.overlapping_periods)
           setPeriodCheckState('overlap')
@@ -204,6 +239,17 @@ function StepUpload({
           setOverlappingRecords([])
           setPeriodCheckState('clear')
         }
+
+        // Gap 3: contract date range check
+        setIsOutOfRange(result.out_of_range ?? false)
+        setDisplayedContractStart(result.contract_start_date ?? null)
+        setDisplayedContractEnd(result.contract_end_date ?? null)
+
+        // Gap 3: frequency mismatch check
+        const fw = result.frequency_warning ?? null
+        setFrequencyWarning(fw)
+        setHasFrequencyWarning(fw !== null)
+        setSuggestedEndDate(result.suggested_end_date ?? null)
       } catch {
         // Silently swallow errors — the confirm-time 409 is the safety net
         setPeriodCheckState('idle')
@@ -290,6 +336,8 @@ function StepUpload({
               required
               className="input"
               value={periodStart}
+              min={contractStartDate ?? undefined}
+              max={contractEndDate ?? undefined}
               onChange={(e) => setPeriodStart(e.target.value)}
             />
           </div>
@@ -303,6 +351,8 @@ function StepUpload({
               required
               className="input"
               value={periodEnd}
+              min={contractStartDate ?? undefined}
+              max={contractEndDate ?? undefined}
               onChange={(e) => setPeriodEnd(e.target.value)}
             />
           </div>
@@ -313,6 +363,100 @@ function StepUpload({
           <div className="flex items-center gap-2 mt-3 text-sm text-gray-500">
             <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
             <span>Checking for existing records…</span>
+          </div>
+        )}
+
+        {/* Gap 3a: Contract date range warning card */}
+        {isOutOfRange && !acknowledgedOutOfRange && (
+          <div
+            role="alert"
+            className="mt-4 bg-amber-50 border border-amber-200 rounded-lg overflow-hidden"
+          >
+            <div className="flex items-start gap-3 px-4 py-3 border-b border-amber-200">
+              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-900">
+                  Reporting period falls outside contract dates
+                </p>
+                <p className="text-sm text-amber-700 mt-0.5">
+                  This contract runs{' '}
+                  {displayedContractStart ? formatDate(displayedContractStart) : '—'}
+                  {' '}–{' '}
+                  {displayedContractEnd ? formatDate(displayedContractEnd) : '—'}.
+                  {' '}Your entered period extends beyond this range.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 px-4 py-3 bg-amber-100/60 border-t border-amber-200">
+              <button
+                onClick={() => setAcknowledgedOutOfRange(true)}
+                className="btn-primary text-sm"
+              >
+                Continue anyway
+              </button>
+              <button
+                onClick={() => {
+                  setPeriodStart('')
+                  setPeriodEnd('')
+                  periodStartRef.current?.focus()
+                }}
+                className="btn-secondary text-sm"
+              >
+                Change dates
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Gap 3b: Frequency mismatch warning card */}
+        {hasFrequencyWarning && !acknowledgedFrequency && frequencyWarning && (
+          <div
+            role="alert"
+            className="mt-4 bg-amber-50 border border-amber-200 rounded-lg overflow-hidden"
+          >
+            <div className="flex items-start gap-3 px-4 py-3 border-b border-amber-200">
+              <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-amber-900">
+                  This contract requires {frequencyWarning.expected_frequency} reporting,
+                  but your period spans about {frequencyWarning.entered_days} days.
+                </p>
+                <p className="text-sm text-amber-700 mt-0.5">
+                  {frequencyWarning.message}
+                </p>
+                {suggestedEndDate && (
+                  <p className="text-sm text-amber-700 mt-2">
+                    Did you mean {periodStart ? formatDate(periodStart) : '—'}
+                    {' '}–{' '}
+                    {formatDate(suggestedEndDate)}?{' '}
+                    <button
+                      onClick={() => setPeriodEnd(suggestedEndDate)}
+                      className="underline underline-offset-2 font-medium text-amber-900 hover:text-amber-700"
+                    >
+                      Use these dates
+                    </button>
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-3 px-4 py-3 bg-amber-100/60 border-t border-amber-200">
+              <button
+                onClick={() => setAcknowledgedFrequency(true)}
+                className="btn-primary text-sm"
+              >
+                Continue anyway
+              </button>
+              <button
+                onClick={() => {
+                  setPeriodStart('')
+                  setPeriodEnd('')
+                  periodStartRef.current?.focus()
+                }}
+                className="btn-secondary text-sm"
+              >
+                Change dates
+              </button>
+            </div>
           </div>
         )}
 
@@ -770,6 +914,8 @@ export default function SalesUploadPage() {
             setPeriodEnd={setPeriodEnd}
             overrideIntent={overrideIntent}
             setOverrideIntent={setOverrideIntent}
+            contractStartDate={contract?.contract_start_date}
+            contractEndDate={contract?.contract_end_date}
           />
         )}
 
