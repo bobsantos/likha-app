@@ -640,6 +640,21 @@ async def confirm_report(
             detail="open_wizard requires an attachment on the report",
         )
 
+    # Verify contract ownership when a contract_id override is provided
+    if body.contract_id is not None:
+        contract_result = (
+            supabase_admin.table("contracts")
+            .select("id")
+            .eq("id", body.contract_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        if not contract_result.data:
+            raise HTTPException(
+                status_code=403,
+                detail="Contract not found or not owned by user",
+            )
+
     # Build update payload
     update_data: dict = {
         "status": "confirmed",

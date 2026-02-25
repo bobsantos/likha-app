@@ -9,7 +9,7 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { format } from 'date-fns'
@@ -121,6 +121,7 @@ interface SuggestionCardProps {
   contract: Contract
   isSelected: boolean
   onSelect: () => void
+  buttonRef?: React.Ref<HTMLButtonElement>
 }
 
 /**
@@ -128,19 +129,21 @@ interface SuggestionCardProps {
  * When the backend returns per-candidate scores they can be threaded in.
  * For now: medium = 65 (amber pill), high = 90 (green pill).
  */
-function SuggestionCard({ contract, isSelected, onSelect }: SuggestionCardProps) {
+function SuggestionCard({ contract, isSelected, onSelect, buttonRef }: SuggestionCardProps) {
   // Medium confidence candidates: show amber pill (score 65)
   const score = 65
 
   return (
     <button
+      ref={buttonRef}
       type="button"
       onClick={onSelect}
+      aria-pressed={isSelected}
       className={`
-        w-full text-left px-4 py-3 rounded-lg border transition-colors
+        w-full text-left px-4 py-3 rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
         ${isSelected
-          ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-300'
-          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
+          ? 'border-2 border-blue-500 bg-blue-50'
+          : 'border border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
         }
       `}
     >
@@ -179,6 +182,8 @@ function ContractMatchSection({
   isSettled,
 }: ContractMatchSectionProps) {
   const [showWrongMatch, setShowWrongMatch] = useState(false)
+  const fallbackRef = useRef<HTMLSelectElement>(null)
+  const firstSuggestionRef = useRef<HTMLButtonElement>(null)
 
   // Determine candidate contracts when there are candidate_contract_ids
   const candidateContracts =
@@ -210,10 +215,18 @@ function ContractMatchSection({
               onClick={() => {
                 setShowWrongMatch(true)
                 setSelectedContractId('')
+                // Focus the first interactive element in the fallback state
+                setTimeout(() => {
+                  if (candidateContracts.length > 0) {
+                    firstSuggestionRef.current?.focus()
+                  } else {
+                    fallbackRef.current?.focus()
+                  }
+                }, 0)
               }}
-              className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2"
+              className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 rounded"
             >
-              Wrong match?
+              Not the right contract? Change it
             </button>
           </div>
         )}
@@ -239,12 +252,13 @@ function ContractMatchSection({
           </div>
         </div>
         <div className="space-y-2">
-          {candidateContracts.map((contract) => (
+          {candidateContracts.map((contract, idx) => (
             <SuggestionCard
               key={contract.id}
               contract={contract}
               isSelected={selectedContractId === contract.id}
               onSelect={() => setSelectedContractId(contract.id)}
+              buttonRef={idx === 0 ? firstSuggestionRef : undefined}
             />
           ))}
         </div>
@@ -267,6 +281,7 @@ function ContractMatchSection({
         </label>
         <div className="relative">
           <select
+            ref={fallbackRef}
             id="contract-select"
             value={selectedContractId}
             onChange={(e) => setSelectedContractId(e.target.value)}
@@ -350,11 +365,11 @@ function MultiContractCallout({ licenseeContracts, licenseeName }: MultiContract
   if (licenseeContracts.length <= 1) return null
 
   return (
-    <div className="flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+    <div role="status" className="flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
       <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
       <p className="text-sm text-blue-800">
         <span className="font-semibold">{licenseeName ?? 'This licensee'}</span> has{' '}
-        {licenseeContracts.length} active multiple contracts. If this report covers multiple
+        {licenseeContracts.length} active contracts. If this report covers multiple
         product lines, you may need to process it once per contract.
       </p>
     </div>
@@ -448,7 +463,7 @@ export default function InboxReviewPage() {
     try {
       const contractId = selectedContractId || undefined
       await confirmReport(report.id, contractId, false)
-      router.push('/inbox')
+      router.push(`/inbox?confirmed=${report.id}`)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to confirm report.')
       setConfirmingOnly(false)
@@ -620,11 +635,12 @@ export default function InboxReviewPage() {
       )}
 
       {/* Action Buttons */}
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-col sm:flex-row gap-3">
         {/* Primary: Confirm & Open Upload Wizard */}
         <button
           onClick={handleConfirmWizard}
           disabled={isSettled || isActing || !hasContractSelected}
+          aria-busy={confirmingWizard}
           className="btn-primary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <CheckCircle className="w-4 h-4" />
@@ -635,21 +651,25 @@ export default function InboxReviewPage() {
         <button
           onClick={handleConfirmOnly}
           disabled={isSettled || isActing}
+          aria-busy={confirmingOnly}
           className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <CheckCircle className="w-4 h-4" />
           {confirmingOnly ? 'Confirming...' : 'Confirm Only'}
         </button>
 
-        {/* Destructive: Reject */}
-        <button
-          onClick={handleReject}
-          disabled={isSettled || isActing}
-          className="btn-secondary inline-flex items-center gap-2 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <XCircle className="w-4 h-4" />
-          {rejecting ? 'Rejecting...' : 'Reject Report'}
-        </button>
+        {/* Destructive: Reject — separated on mobile */}
+        <div className="border-t border-gray-200 pt-3 sm:border-t-0 sm:pt-0 sm:ml-auto">
+          <button
+            onClick={handleReject}
+            disabled={isSettled || isActing}
+            aria-busy={rejecting}
+            className="btn-secondary inline-flex items-center gap-2 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <XCircle className="w-4 h-4" />
+            {rejecting ? 'Rejecting...' : 'Reject Report'}
+          </button>
+        </div>
       </div>
 
       {isSettled && (

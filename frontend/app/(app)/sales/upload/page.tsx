@@ -341,6 +341,7 @@ function StepUpload({
               min={contractStartDate ?? undefined}
               max={contractEndDate ?? undefined}
               onChange={(e) => setPeriodStart(e.target.value)}
+              aria-describedby={isInboxSource ? 'inbox-provenance-hint' : undefined}
             />
           </div>
           <div>
@@ -356,13 +357,14 @@ function StepUpload({
               min={contractStartDate ?? undefined}
               max={contractEndDate ?? undefined}
               onChange={(e) => setPeriodEnd(e.target.value)}
+              aria-describedby={isInboxSource ? 'inbox-provenance-hint' : undefined}
             />
           </div>
         </div>
 
         {/* Inbox provenance hint */}
         {isInboxSource && (
-          <p className="mt-2 text-xs text-blue-600">
+          <p id="inbox-provenance-hint" className="mt-2 text-xs text-blue-600">
             Detected from email attachment — verify before continuing.
           </p>
         )}

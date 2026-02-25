@@ -10,6 +10,9 @@ import type { InboundReport } from '@/types'
 
 jest.mock('next/navigation', () => ({
   useRouter: jest.fn(),
+  useSearchParams: jest.fn(() => ({
+    get: jest.fn(() => null),
+  })),
 }))
 
 jest.mock('@/lib/api', () => ({

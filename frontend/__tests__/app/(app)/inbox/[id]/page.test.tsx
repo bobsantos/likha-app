@@ -172,26 +172,26 @@ describe('Inbox Review Page', () => {
       expect(card).toBeTruthy()
     })
 
-    it('shows "Wrong match?" toggle', async () => {
+    it('shows "Not the right contract?" toggle', async () => {
       mockGetInboundReports.mockResolvedValue([
         makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
       ])
       render(<InboxReviewPage />)
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /wrong match/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /not the right contract/i })).toBeInTheDocument()
       })
     })
 
-    it('clicking "Wrong match?" reveals contract search/select state', async () => {
+    it('clicking "Not the right contract?" reveals contract search/select state', async () => {
       mockGetInboundReports.mockResolvedValue([
         makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
       ])
       render(<InboxReviewPage />)
       await waitFor(() => {
-        expect(screen.getByRole('button', { name: /wrong match/i })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: /not the right contract/i })).toBeInTheDocument()
       })
 
-      fireEvent.click(screen.getByRole('button', { name: /wrong match/i }))
+      fireEvent.click(screen.getByRole('button', { name: /not the right contract/i }))
 
       await waitFor(() => {
         // Should reveal a select/combobox to choose a different contract
@@ -484,7 +484,7 @@ describe('Inbox Review Page', () => {
           'contract-1',
           false
         )
-        expect(mockPush).toHaveBeenCalledWith('/inbox')
+        expect(mockPush).toHaveBeenCalledWith('/inbox?confirmed=report-1')
       })
     })
 

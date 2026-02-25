@@ -5,10 +5,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { format } from 'date-fns'
-import { AlertCircle, RefreshCw, Mail, AlertTriangle } from 'lucide-react'
+import { AlertCircle, RefreshCw, Mail, AlertTriangle, CheckCircle } from 'lucide-react'
 import { getInboundReports, isUnauthorizedError } from '@/lib/api'
 import type { InboundReport } from '@/types'
 
@@ -24,6 +24,13 @@ function StatusBadge({ status }: { status: InboundReport['status'] }) {
     return (
       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
         Confirmed
+      </span>
+    )
+  }
+  if (status === 'processed') {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+        Processed
       </span>
     )
   }
@@ -56,6 +63,8 @@ function formatDate(dateString: string): string {
 
 export default function InboxPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const confirmedReportId = searchParams.get('confirmed')
   const [reports, setReports] = useState<InboundReport[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -128,6 +137,21 @@ export default function InboxPage() {
           </p>
         </div>
       </div>
+
+      {confirmedReportId && (
+        <div className="flex items-center gap-3 px-4 py-3 mb-4 bg-green-50 border border-green-200 rounded-lg">
+          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+          <p className="text-sm text-green-800 flex-1">
+            Report confirmed.{' '}
+            <Link
+              href={`/inbox/${confirmedReportId}`}
+              className="font-medium underline underline-offset-2 hover:text-green-900"
+            >
+              Process now
+            </Link>
+          </p>
+        </div>
+      )}
 
       {reports.length === 0 ? (
         <div className="card text-center py-16">
