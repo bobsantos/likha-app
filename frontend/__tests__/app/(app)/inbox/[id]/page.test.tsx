@@ -73,6 +73,8 @@ const makeContract = (id: string, name: string, licenseeOverride?: string): Cont
   status: 'active',
   filename: 'contract.pdf',
   licensee_name: licenseeOverride ?? name,
+  licensee_email: null,
+  agreement_number: 'BC-2024-0042',
   contract_start_date: '2026-01-01',
   contract_end_date: '2026-12-31',
   royalty_rate: 0.1,
@@ -578,6 +580,316 @@ describe('Inbox Review Page', () => {
       render(<InboxReviewPage />)
       await waitFor(() => {
         expect(screen.queryByText(/multiple.*contract/i)).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  // =========================================================================
+  // 8. Contract details grid (Zone B)
+  // =========================================================================
+
+  describe('Contract details grid', () => {
+    it('renders agreement number, contract period, and royalty rate for auto-matched state', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /view details/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /view details/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('BC-2024-0042')).toBeInTheDocument()
+        expect(screen.getByText('Jan 1, 2026 \u2013 Dec 31, 2026')).toBeInTheDocument()
+        expect(screen.getByText('10% flat')).toBeInTheDocument()
+      })
+    })
+
+    it('renders reporting frequency for auto-matched state', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /view details/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /view details/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/quarterly/i)).toBeInTheDocument()
+      })
+    })
+
+    it('shows "None" for missing agreement number', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      const contractNoRef = { ...makeContract('contract-1', 'Sunrise Apparel License'), agreement_number: null }
+      mockGetContracts.mockResolvedValue([contractNoRef])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /view details/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /view details/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('None')).toBeInTheDocument()
+      })
+    })
+
+    it('shows contract details collapsed by default for high confidence match', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        // Toggle button should be present
+        expect(screen.getByRole('button', { name: /view details/i })).toBeInTheDocument()
+      })
+      // The agreement number should NOT be visible before expanding
+      expect(screen.queryByText('BC-2024-0042')).not.toBeInTheDocument()
+    })
+
+    it('expands contract details when toggle is clicked for high confidence match', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /view details/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /view details/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('BC-2024-0042')).toBeInTheDocument()
+        expect(screen.getByText(/10% flat/i)).toBeInTheDocument()
+      })
+    })
+
+    it('renders contract details expanded for medium confidence suggestions', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: null,
+          contract_name: null,
+          match_confidence: 'medium',
+          candidate_contract_ids: ['contract-1'],
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        // For medium confidence, contract details shown after clicking suggestion card
+        expect(screen.getByText('Sunrise Apparel License')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByText('Sunrise Apparel License'))
+
+      await waitFor(() => {
+        expect(screen.getByText('BC-2024-0042')).toBeInTheDocument()
+      })
+    })
+
+    it('renders contract details after selecting from dropdown in no-match state', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: null, contract_name: null, match_confidence: 'none', candidate_contract_ids: null }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox')).toBeInTheDocument()
+      })
+
+      fireEvent.change(screen.getByRole('combobox'), { target: { value: 'contract-1' } })
+
+      await waitFor(() => {
+        expect(screen.getByText('BC-2024-0042')).toBeInTheDocument()
+      })
+    })
+
+    it('renders optional product categories when present', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      const contractWithCategories = {
+        ...makeContract('contract-1', 'Sunrise Apparel License'),
+        product_categories: ['Apparel', 'Footwear'],
+      }
+      mockGetContracts.mockResolvedValue([contractWithCategories])
+      render(<InboxReviewPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /view details/i })).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByRole('button', { name: /view details/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Apparel, Footwear')).toBeInTheDocument()
+      })
+    })
+
+    it('renders tiered royalty rate summary correctly', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      const contractWithTiered = {
+        ...makeContract('contract-1', 'Sunrise Apparel License'),
+        royalty_rate: {
+          type: 'tiered' as const,
+          tiers: [
+            { min: 0, max: 100000, rate: 0.08 },
+            { min: 100000, max: 500000, rate: 0.10 },
+            { min: 500000, max: null, rate: 0.12 },
+          ],
+        },
+      }
+      mockGetContracts.mockResolvedValue([contractWithTiered])
+      render(<InboxReviewPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /view details/i })).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByRole('button', { name: /view details/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Tiered (3 tiers)')).toBeInTheDocument()
+      })
+    })
+  })
+
+  // =========================================================================
+  // 9. Attachment preview (Zone C)
+  // =========================================================================
+
+  describe('Attachment preview (Zone C)', () => {
+    it('renders attachment metadata rows as a definition list', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: 'contract-1',
+          contract_name: 'Sunrise Apparel License',
+          match_confidence: 'high',
+          attachment_metadata_rows: [
+            { key: 'Licensee Name', value: 'Sunrise Apparel Co.' },
+            { key: 'Contract Number', value: 'BC-2024-0042' },
+            { key: 'Territory', value: 'United States' },
+          ],
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText('Licensee Name')).toBeInTheDocument()
+        expect(screen.getByText('Sunrise Apparel Co.')).toBeInTheDocument()
+        expect(screen.getByText('Contract Number')).toBeInTheDocument()
+        expect(screen.getByText('Territory')).toBeInTheDocument()
+        expect(screen.getByText('United States')).toBeInTheDocument()
+      })
+    })
+
+    it('renders attachment sample rows as a table with correct headers', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: 'contract-1',
+          contract_name: 'Sunrise Apparel License',
+          match_confidence: 'high',
+          attachment_sample_rows: {
+            headers: ['Product', 'Net Sales', 'Royalty'],
+            rows: [
+              ['Licensed Apparel', '83300.00', '6664.00'],
+              ['Footwear', '45000.00', '3600.00'],
+            ],
+          },
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('columnheader', { name: 'Product' })).toBeInTheDocument()
+        expect(screen.getByRole('columnheader', { name: 'Net Sales' })).toBeInTheDocument()
+        expect(screen.getByRole('columnheader', { name: 'Royalty' })).toBeInTheDocument()
+        expect(screen.getByText('Licensed Apparel')).toBeInTheDocument()
+        expect(screen.getByText('83300.00')).toBeInTheDocument()
+      })
+    })
+
+    it('shows "2 of N rows shown" note below sample data table', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: 'contract-1',
+          contract_name: 'Sunrise Apparel License',
+          match_confidence: 'high',
+          attachment_sample_rows: {
+            headers: ['Product', 'Net Sales'],
+            rows: [
+              ['Licensed Apparel', '83300.00'],
+              ['Footwear', '45000.00'],
+              ['Accessories', '12000.00'],
+              ['Other', '5000.00'],
+            ],
+          },
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText(/2 of 4 rows shown/i)).toBeInTheDocument()
+      })
+    })
+
+    it('gracefully hides attachment preview sections when fields are null', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: 'contract-1',
+          contract_name: 'Sunrise Apparel License',
+          match_confidence: 'high',
+          attachment_metadata_rows: null,
+          attachment_sample_rows: null,
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        // The Attachment Preview section heading should not render when both are null
+        expect(screen.queryByText('Attachment Preview')).not.toBeInTheDocument()
+      })
+    })
+
+    it('renders attachment preview section heading when metadata rows are present', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: 'contract-1',
+          contract_name: 'Sunrise Apparel License',
+          match_confidence: 'high',
+          attachment_metadata_rows: [
+            { key: 'Licensee Name', value: 'Sunrise Apparel Co.' },
+          ],
+          attachment_sample_rows: null,
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText('Attachment Preview')).toBeInTheDocument()
       })
     })
   })

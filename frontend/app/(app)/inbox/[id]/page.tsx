@@ -5,6 +5,11 @@
  * 1. Auto-matched (high confidence) — green card + "Wrong match?" toggle
  * 2. Suggestions (medium confidence) — amber header + clickable suggestion cards
  * 3. No match — amber header + searchable select of all active contracts
+ *
+ * Contract Match card layout:
+ *   Zone A — Match status banner (confidence-driven, existing)
+ *   Zone B — Contract details grid (agreement ref, period, rate, frequency)
+ *   Zone C — Attachment preview (metadata definition list + sample data table)
  */
 
 'use client'
@@ -25,6 +30,7 @@ import {
   RefreshCw,
   Info,
   ChevronDown,
+  ChevronUp,
 } from 'lucide-react'
 import {
   getInboundReports,
@@ -33,7 +39,7 @@ import {
   rejectReport,
   isUnauthorizedError,
 } from '@/lib/api'
-import type { InboundReport, Contract } from '@/types'
+import type { InboundReport, Contract, TieredRate, CategoryRate } from '@/types'
 
 // ---------------------------------------------------------------------------
 // Helper utilities
@@ -53,6 +59,60 @@ function formatShortDate(isoDate: string): string {
   } catch {
     return isoDate
   }
+}
+
+/**
+ * Produces a one-line royalty rate summary for the contract match panel.
+ * - Flat number (e.g. 0.08) → "8% flat"
+ * - TieredRate → "Tiered (N tiers)"
+ * - CategoryRate (typed) → "Cat1 X% / Cat2 Y% / ..." (up to 3, then "...")
+ * - Plain dict (backend shape) → same as CategoryRate
+ */
+function formatRoyaltyRateSummary(rate: Contract['royalty_rate']): string {
+  if (rate === null || rate === undefined) return 'N/A'
+
+  if (typeof rate === 'number') {
+    return `${(rate * 100).toFixed(0)}% flat`
+  }
+
+  if (typeof rate === 'string') {
+    if (/^\d+(\.\d+)?$/.test(rate)) {
+      return `${rate}% flat`
+    }
+    return rate
+  }
+
+  if (typeof rate === 'object') {
+    // Typed TieredRate
+    if ('type' in rate && (rate as TieredRate).type === 'tiered') {
+      const tiered = rate as TieredRate
+      return `Tiered (${tiered.tiers.length} tiers)`
+    }
+
+    // Typed CategoryRate
+    if ('type' in rate && (rate as CategoryRate).type === 'category') {
+      const catRate = rate as CategoryRate
+      const entries = Object.entries(catRate.rates)
+      const lines = entries.slice(0, 3).map(([cat, r]) => `${cat} ${(r * 100).toFixed(0)}%`)
+      if (entries.length > 3) lines.push('...')
+      return lines.join(' / ')
+    }
+
+    // Plain dict from backend: { "Apparel": "10%", "Footwear": "8%" }
+    const isPlainDict =
+      !Array.isArray(rate) &&
+      !('type' in (rate as object))
+
+    if (isPlainDict) {
+      const plainDict = rate as Record<string, string>
+      const entries = Object.entries(plainDict)
+      const lines = entries.slice(0, 3).map(([cat, r]) => `${cat} ${r}`)
+      if (entries.length > 3) lines.push('...')
+      return lines.join(' / ')
+    }
+  }
+
+  return 'N/A'
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +174,188 @@ function ConfidencePill({ score, label }: { score: number; label?: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Zone B — Contract details grid
+// ---------------------------------------------------------------------------
+
+interface ContractDetailsGridProps {
+  contract: Contract
+}
+
+/**
+ * A compact two-column key/value grid showing key contract facts:
+ * agreement ref, contract period, royalty rate summary, reporting frequency,
+ * and optional product categories / territory.
+ */
+function ContractDetailsGrid({ contract }: ContractDetailsGridProps) {
+  const periodStart = contract.contract_start_date
+    ? formatShortDate(contract.contract_start_date)
+    : 'N/A'
+  const periodEnd = contract.contract_end_date
+    ? formatShortDate(contract.contract_end_date)
+    : 'N/A'
+
+  return (
+    <div
+      className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3"
+      aria-live="polite"
+    >
+      {/* Agreement Ref */}
+      <div>
+        <p className="text-xs text-gray-500">Agreement Ref</p>
+        {contract.agreement_number ? (
+          <p className="text-sm font-mono font-medium text-gray-900">
+            {contract.agreement_number}
+          </p>
+        ) : (
+          <p className="text-sm text-gray-400">None</p>
+        )}
+      </div>
+
+      {/* Contract Period */}
+      <div>
+        <p className="text-xs text-gray-500">Contract Period</p>
+        <p className="text-sm font-medium text-gray-900">
+          {periodStart} &ndash; {periodEnd}
+        </p>
+      </div>
+
+      {/* Royalty Rate */}
+      <div>
+        <p className="text-xs text-gray-500">Royalty Rate</p>
+        <p className="text-sm font-medium text-gray-900">
+          {formatRoyaltyRateSummary(contract.royalty_rate)}
+        </p>
+      </div>
+
+      {/* Reporting Frequency */}
+      {contract.reporting_frequency && (
+        <div>
+          <p className="text-xs text-gray-500">Reporting Frequency</p>
+          <p className="text-sm font-medium text-gray-900 capitalize">
+            {contract.reporting_frequency.replace('_', ' ')}
+          </p>
+        </div>
+      )}
+
+      {/* Optional: Product Categories */}
+      {contract.product_categories && contract.product_categories.length > 0 && (
+        <div>
+          <p className="text-xs text-gray-500">Categories</p>
+          <p className="text-sm font-medium text-gray-900">
+            {contract.product_categories.join(', ')}
+          </p>
+        </div>
+      )}
+
+      {/* Optional: Territory */}
+      {contract.territories && contract.territories.length > 0 && (
+        <div>
+          <p className="text-xs text-gray-500">Territory</p>
+          <p className="text-sm font-medium text-gray-900">
+            {contract.territories.join(', ')}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Zone C — Attachment preview
+// ---------------------------------------------------------------------------
+
+interface AttachmentPreviewZoneProps {
+  metadataRows: InboundReport['attachment_metadata_rows']
+  sampleRows: InboundReport['attachment_sample_rows']
+}
+
+/**
+ * Zone C: Shows parsed attachment content to help the licensor identify
+ * which contract the report belongs to.
+ *
+ * - Metadata rows: definition list (key/value pairs from the file header block)
+ * - Sample data rows: scrollable table (first 2 rows, capped cells)
+ * - Both sections hidden gracefully when null
+ * - Sample data table hidden on very small screens (< sm:)
+ */
+function AttachmentPreviewZone({ metadataRows, sampleRows }: AttachmentPreviewZoneProps) {
+  const hasMetadata = metadataRows && metadataRows.length > 0
+  const hasSampleRows = sampleRows && sampleRows.rows.length > 0
+
+  if (!hasMetadata && !hasSampleRows) return null
+
+  const displayedRows = sampleRows ? sampleRows.rows.slice(0, 2) : []
+  const totalRows = sampleRows ? sampleRows.rows.length : 0
+
+  return (
+    <div className="pt-4 border-t border-gray-100">
+      <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">
+        Attachment Preview
+      </p>
+
+      {/* Metadata rows — definition list */}
+      {hasMetadata && (
+        <dl className="space-y-1.5 mb-4">
+          {metadataRows.map(({ key, value }) => (
+            <div key={key} className="flex gap-3 text-sm">
+              <dt className="w-36 flex-shrink-0 text-gray-500">{key}</dt>
+              <dd className="font-medium text-gray-900 truncate">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {/* Sample data rows — scrollable table */}
+      {hasSampleRows && sampleRows && (
+        <>
+          <div className="overflow-x-auto rounded border border-gray-200 hidden sm:block">
+            <table className="min-w-full text-xs">
+              <thead className="bg-gray-50">
+                <tr>
+                  {sampleRows.headers.map((col) => (
+                    <th
+                      key={col}
+                      scope="col"
+                      className="px-3 py-2 text-left font-semibold text-gray-500 whitespace-nowrap"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {displayedRows.map((row, rowIdx) => (
+                  <tr key={rowIdx} className="bg-white">
+                    {row.map((cell, cellIdx) => (
+                      <td
+                        key={cellIdx}
+                        title={cell}
+                        className="px-3 py-2 text-gray-700 max-w-[8rem] truncate tabular-nums"
+                      >
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {totalRows > 2 && (
+              <p className="px-3 py-1.5 text-xs text-gray-400 bg-gray-50 border-t border-gray-100">
+                {displayedRows.length} of {totalRows} rows shown
+              </p>
+            )}
+          </div>
+          {/* Mobile fallback — table hidden, show note */}
+          <p className="text-xs text-gray-400 sm:hidden mt-1">
+            Open the attachment to view data rows.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Suggestion card
 // ---------------------------------------------------------------------------
 
@@ -121,6 +363,7 @@ interface SuggestionCardProps {
   contract: Contract
   isSelected: boolean
   onSelect: () => void
+  onHighlight: () => void
   buttonRef?: React.Ref<HTMLButtonElement>
 }
 
@@ -129,7 +372,7 @@ interface SuggestionCardProps {
  * When the backend returns per-candidate scores they can be threaded in.
  * For now: medium = 65 (amber pill), high = 90 (green pill).
  */
-function SuggestionCard({ contract, isSelected, onSelect, buttonRef }: SuggestionCardProps) {
+function SuggestionCard({ contract, isSelected, onSelect, onHighlight, buttonRef }: SuggestionCardProps) {
   // Medium confidence candidates: show amber pill (score 65)
   const score = 65
 
@@ -137,7 +380,9 @@ function SuggestionCard({ contract, isSelected, onSelect, buttonRef }: Suggestio
     <button
       ref={buttonRef}
       type="button"
-      onClick={onSelect}
+      onClick={() => { onSelect(); onHighlight() }}
+      onMouseEnter={onHighlight}
+      onFocus={onHighlight}
       aria-pressed={isSelected}
       className={`
         w-full text-left px-4 py-3 rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2
@@ -182,6 +427,11 @@ function ContractMatchSection({
   isSettled,
 }: ContractMatchSectionProps) {
   const [showWrongMatch, setShowWrongMatch] = useState(false)
+  // For high-confidence: whether the Zone B/C collapsible is expanded
+  const [detailsExpanded, setDetailsExpanded] = useState(false)
+  // For medium-confidence: track which contract card is highlighted (hover/focus)
+  const [highlightedContractId, setHighlightedContractId] = useState<string | null>(null)
+
   const fallbackRef = useRef<HTMLSelectElement>(null)
   const firstSuggestionRef = useRef<HTMLButtonElement>(null)
 
@@ -191,10 +441,15 @@ function ContractMatchSection({
       ? contracts.filter((c) => report.candidate_contract_ids!.includes(c.id))
       : []
 
+  // Find the contract object to display in Zone B
+  const displayContractId = highlightedContractId ?? selectedContractId
+  const displayContract = contracts.find((c) => c.id === displayContractId) ?? null
+
   // ---- State 1: Auto-matched (high confidence) ----
   if (report.match_confidence === 'high' && report.contract_name && !showWrongMatch) {
     return (
       <div className="space-y-3">
+        {/* Zone A — Auto-match banner */}
         <div
           data-testid="auto-match-card"
           className="flex items-center justify-between gap-3 p-3 bg-green-50 border border-green-200 rounded-lg"
@@ -208,6 +463,7 @@ function ContractMatchSection({
           </div>
           <ConfidencePill score={90} label="Strong match" />
         </div>
+
         {!isSettled && (
           <div className="flex justify-end">
             <button
@@ -230,6 +486,37 @@ function ContractMatchSection({
             </button>
           </div>
         )}
+
+        {/* Zone B — Collapsible contract details (collapsed by default for high confidence) */}
+        {displayContract && (
+          <div>
+            <button
+              type="button"
+              aria-expanded={detailsExpanded}
+              onClick={() => setDetailsExpanded((prev) => !prev)}
+              className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 rounded"
+            >
+              {detailsExpanded ? (
+                <ChevronUp className="w-4 h-4" />
+              ) : (
+                <ChevronDown className="w-4 h-4" />
+              )}
+              {detailsExpanded ? 'Hide details' : 'View details'}
+            </button>
+
+            {detailsExpanded && (
+              <div className="mt-3 pt-4 border-t border-gray-100">
+                <ContractDetailsGrid contract={displayContract} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Zone C — Attachment preview always visible when data is present */}
+        <AttachmentPreviewZone
+          metadataRows={report.attachment_metadata_rows}
+          sampleRows={report.attachment_sample_rows}
+        />
       </div>
     )
   }
@@ -240,8 +527,21 @@ function ContractMatchSection({
     candidateContracts.length > 0 &&
     !showWrongMatch
   ) {
+    // The contract to show in Zone B for suggestions is: hovered/focused card ?? selected card
+    const suggestionDisplayContract =
+      contracts.find((c) => c.id === (highlightedContractId ?? selectedContractId)) ?? null
+
     return (
       <div className="space-y-3">
+        {/* Attachment preview above cards for medium confidence (as PM recommends) */}
+        {(report.attachment_metadata_rows || report.attachment_sample_rows) && (
+          <AttachmentPreviewZone
+            metadataRows={report.attachment_metadata_rows}
+            sampleRows={report.attachment_sample_rows}
+          />
+        )}
+
+        {/* Zone A — Amber banner */}
         <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
           <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
           <div>
@@ -251,6 +551,8 @@ function ContractMatchSection({
             </p>
           </div>
         </div>
+
+        {/* Suggestion cards */}
         <div className="space-y-2">
           {candidateContracts.map((contract, idx) => (
             <SuggestionCard
@@ -258,10 +560,21 @@ function ContractMatchSection({
               contract={contract}
               isSelected={selectedContractId === contract.id}
               onSelect={() => setSelectedContractId(contract.id)}
+              onHighlight={() => setHighlightedContractId(contract.id)}
               buttonRef={idx === 0 ? firstSuggestionRef : undefined}
             />
           ))}
         </div>
+
+        {/* Zone B — Contract details, expanded, updates as user selects/hovers suggestion cards */}
+        {suggestionDisplayContract && (
+          <div className="pt-4 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">
+              Contract Details
+            </p>
+            <ContractDetailsGrid contract={suggestionDisplayContract} />
+          </div>
+        )}
       </div>
     )
   }
@@ -269,6 +582,14 @@ function ContractMatchSection({
   // ---- State 3: No match (or "Wrong match?" opened) ----
   return (
     <div className="space-y-3">
+      {/* Attachment preview shown immediately — helps user identify the correct contract */}
+      {(report.attachment_metadata_rows || report.attachment_sample_rows) && (
+        <AttachmentPreviewZone
+          metadataRows={report.attachment_metadata_rows}
+          sampleRows={report.attachment_sample_rows}
+        />
+      )}
+
       <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
         <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
         <p className="text-sm text-amber-700">
@@ -298,6 +619,16 @@ function ContractMatchSection({
           <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
         </div>
       </div>
+
+      {/* Zone B — Contract details appear after user selects from dropdown */}
+      {displayContract && (
+        <div className="pt-4 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-3">
+            Contract Details
+          </p>
+          <ContractDetailsGrid contract={displayContract} />
+        </div>
+      )}
     </div>
   )
 }

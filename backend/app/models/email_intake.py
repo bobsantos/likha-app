@@ -66,6 +66,16 @@ class InboundReport(BaseModel):
     suggested_period_end: Optional[str] = None
     sales_period_id: Optional[str] = None
 
+    # Attachment preview fields (migration 20260225220000)
+    # attachment_metadata_rows: key/value rows from the attachment header block
+    #   (rows before the data header row), e.g.
+    #   [{"key": "Licensee Name", "value": "Sunrise Apparel Co."}, ...]
+    attachment_metadata_rows: Optional[list[dict[str, str]]] = None
+    # attachment_sample_rows: the detected column headers plus up to 3 data rows
+    #   {"headers": ["Product Description", "Net Sales", ...],
+    #    "rows": [["Licensed Branded Apparel", "83300.00", ...], ...]}
+    attachment_sample_rows: Optional[dict] = None
+
 
 class InboundReportResponse(InboundReport):
     """

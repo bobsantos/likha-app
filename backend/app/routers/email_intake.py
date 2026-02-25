@@ -339,6 +339,164 @@ def _extract_period_dates(
     return None, None
 
 
+def _extract_attachment_preview(
+    attachment_text: str,
+) -> tuple[Optional[list[dict[str, str]]], Optional[dict]]:
+    """
+    Extract a structured preview from the raw attachment text.
+
+    Two things are extracted from the first _SCAN_ROWS rows:
+
+    1. **Metadata rows** — rows that appear before the main data header.  A
+       row is treated as metadata when it has exactly 1 or 2 non-empty cells
+       and the first cell looks like a label.  A label is identified by any
+       of these signals:
+         - it contains a colon (e.g. "Reporting Period Start:")
+         - it is in ALL-CAPS with no numeric content (e.g. "AGREEMENT REF")
+         - it is shorter than 40 characters and contains no digits
+       Each qualifying row is stored as {"key": first_cell, "value": second_cell}.
+       The value is the second non-empty cell when present, otherwise an empty
+       string.
+
+    2. **Sample rows** — the first recognised data header row (a row with
+       ≥3 non-empty cells where the cells look like column names rather than
+       data values) plus up to 3 data rows immediately following it.
+       Returned as {"headers": [...], "rows": [[...], ...]}.
+
+    Either element of the returned tuple may be None when:
+      - attachment_text is empty / None
+      - no metadata rows are found
+      - no data header row is found
+
+    Args:
+        attachment_text: raw decoded text content of the attachment.
+
+    Returns:
+        (metadata_rows, sample_rows) tuple.
+    """
+    if not attachment_text or not attachment_text.strip():
+        return None, None
+
+    import csv
+    import io
+
+    rows_text = attachment_text.splitlines()[:_SCAN_ROWS]
+
+    # Parse each scanned row as CSV so we handle quoted fields correctly.
+    parsed_rows: list[list[str]] = []
+    for line in rows_text:
+        try:
+            reader = csv.reader(io.StringIO(line))
+            cells = next(reader, [])
+        except Exception:
+            cells = [c.strip() for c in line.split(",")]
+        # Strip whitespace from every cell
+        cells = [c.strip() for c in cells]
+        parsed_rows.append(cells)
+
+    # --------------- Metadata rows ---------------
+    # A row qualifies as a metadata row when it has ≤2 non-empty cells and
+    # the first cell does not look like a pure numeric value.
+    #
+    # Rationale for the two sub-rules:
+    #
+    #   Single-cell rows (len(non_empty) == 1):
+    #     Any row that has only one non-empty cell is treated as a metadata
+    #     (title) row as long as it is not a bare decimal number.  Real data
+    #     rows always have multiple populated columns; a single-cell row in
+    #     the header block is almost always a title line (e.g. "VANTAGE
+    #     RETAIL PARTNERS" or "ROYALTY STATEMENT - Q3 2025" or even a value
+    #     like "Licensee Reported Royalty,6384.00" which has 2 cells).
+    #
+    #   Two-cell rows (len(non_empty) == 2):
+    #     Only accepted as metadata when the first cell looks like a label:
+    #       - contains a colon (classic "Key: Value" / "Key," "Value" pattern)
+    #       - is ALL-CAPS text (e.g. "PREPARED BY")
+    #       - is short text (< 40 chars) with no digits
+    #     This prevents a two-column data row (e.g. a subtotal line with two
+    #     populated cells) from being misclassified as a metadata row.
+    #
+    # When neither rule matches, the row is the data header boundary.
+
+    def _is_pure_number(text: str) -> bool:
+        """Return True when text is a bare integer or decimal, e.g. '6384.00'."""
+        try:
+            float(text.replace(",", ""))
+            return True
+        except ValueError:
+            return False
+
+    def _looks_like_label(text: str) -> bool:
+        """Return True when `text` reads like a row label rather than a data value."""
+        if not text:
+            return False
+        if _is_pure_number(text):
+            return False
+        # Has a colon separator — classic "Key: Value" pattern
+        if ":" in text:
+            return True
+        stripped = text.strip()
+        # ALL-CAPS word(s) — title rows like "VANTAGE RETAIL PARTNERS"
+        if stripped == stripped.upper() and stripped.replace(" ", "").replace("-", "").replace("/", "").isalpha():
+            return True
+        # Short text (< 40 chars) with no digits — likely a field label
+        if len(stripped) < 40 and not any(ch.isdigit() for ch in stripped):
+            return True
+        return False
+
+    metadata_rows: list[dict[str, str]] = []
+    header_row_index: Optional[int] = None
+
+    for i, cells in enumerate(parsed_rows):
+        non_empty = [c for c in cells if c]
+        if len(non_empty) == 0:
+            # Blank row — skip but continue scanning (blank line between
+            # header block and data is common in sample-1 style files)
+            continue
+
+        if len(non_empty) == 1 and not _is_pure_number(non_empty[0]):
+            # Single non-empty cell — treat as a title/metadata row.
+            key = non_empty[0].rstrip(":").strip()
+            metadata_rows.append({"key": key, "value": ""})
+        elif len(non_empty) == 2 and _looks_like_label(non_empty[0]):
+            # Two-cell key/value row — classic metadata pattern.
+            key = non_empty[0].rstrip(":").strip()
+            value = non_empty[1]
+            metadata_rows.append({"key": key, "value": value})
+        else:
+            # This row has ≥3 non-empty cells or does not match any metadata
+            # pattern — treat it as the start of the data section.
+            header_row_index = i
+            break
+
+    # --------------- Sample rows (header + up to 3 data rows) ---------------
+    sample_rows: Optional[dict] = None
+    if header_row_index is not None:
+        header_cells = parsed_rows[header_row_index]
+        # Collect non-empty column headers preserving order; use column index
+        # as a fallback name for blank header cells to avoid key collisions.
+        headers = [
+            (cell if cell else f"Col{j+1}")
+            for j, cell in enumerate(header_cells)
+        ]
+
+        data_rows: list[list[str]] = []
+        for data_row in parsed_rows[header_row_index + 1:]:
+            if not any(c for c in data_row):
+                # Blank row — stop collecting data rows
+                break
+            # Pad or truncate to match header length
+            aligned = (data_row + [""] * len(headers))[: len(headers)]
+            data_rows.append(aligned)
+            if len(data_rows) >= 3:
+                break
+
+        if headers:
+            sample_rows = {"headers": headers, "rows": data_rows}
+
+    return (metadata_rows if metadata_rows else None), sample_rows
+
+
 def _upload_inbound_attachment(
     content_bytes: bytes,
     user_id: str,
@@ -421,6 +579,7 @@ def _process_inbound_email(email: InboundEmail) -> dict:
     4. Decode first attachment text (for matching / period extraction).
     5. Auto-match to a contract using the multi-signal hierarchy.
     6. Extract suggested period dates from attachment text.
+    6b. Extract attachment preview (metadata rows + sample data rows).
     7. Upload the first attachment (if present).
     8. Insert an inbound_reports row.
 
@@ -463,6 +622,11 @@ def _process_inbound_email(email: InboundEmail) -> dict:
     # 6. Extract suggested period dates
     suggested_period_start, suggested_period_end = _extract_period_dates(attachment_text)
 
+    # 6b. Extract attachment preview (metadata rows + sample data rows)
+    attachment_metadata_rows, attachment_sample_rows = _extract_attachment_preview(
+        attachment_text
+    )
+
     # 7. Process first attachment (best-effort upload)
     attachment_filename: Optional[str] = None
     attachment_path: Optional[str] = None
@@ -499,6 +663,8 @@ def _process_inbound_email(email: InboundEmail) -> dict:
         "candidate_contract_ids": candidate_contract_ids if candidate_contract_ids else None,
         "suggested_period_start": suggested_period_start,
         "suggested_period_end": suggested_period_end,
+        "attachment_metadata_rows": attachment_metadata_rows,
+        "attachment_sample_rows": attachment_sample_rows,
     }
     if contract_id is not None:
         insert_data["contract_id"] = contract_id

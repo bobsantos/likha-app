@@ -1970,3 +1970,488 @@ class TestInboundReportModelNewFields:
 
         req = ConfirmReportRequest(open_wizard=True)
         assert req.open_wizard is True
+
+
+# ===========================================================================
+# Unit tests: _extract_attachment_preview
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Sample attachment texts used by multiple tests
+# ---------------------------------------------------------------------------
+
+# sample-1 style: structured key/value metadata block followed by a data header
+_SAMPLE_1_TEXT = """\
+Licensee Name,Sunrise Apparel Co.
+Licensor Name,BrandCo Holdings LLC
+Contract Number,BC-2024-0042
+Reporting Period Start,2025-01-01
+Reporting Period End,2025-03-31
+Report Submission Date,2025-04-28
+Territory,United States
+
+Product Description,SKU,Product Category,Gross Sales,Returns / Allowances,Net Sales,Royalty Rate,Royalty Due
+Licensed Branded Apparel - All SKUs,ALL,Apparel,87500.00,4200.00,83300.00,8%,6384.00
+
+TOTAL,,,,4200.00,83300.00,,6384.00
+"""
+
+# sample-3 style: messy title rows (ALL-CAPS, no colon) before the data header
+_SAMPLE_3_TEXT = """\
+VANTAGE RETAIL PARTNERS,,,,,,,
+ROYALTY STATEMENT - Q3 2025,,,,,,,
+AGREEMENT REF: VRP / BC-2025-0011,,,,,,,
+PREPARED BY: Finance Dept.,,,,,,,
+,,,,,,,
+Item #,Description,Product Line,Gross Revenue,Refunds,Total Revenue,Rate (%),Amount Owed
+1001,Branded Mug - 12oz,Kitchen & Home,12400.00,800.00,11600.00,0.09,1044.00
+1002,Branded Mug - 16oz,Kitchen & Home,9800.00,400.00,9400.00,0.09,846.00
+1003,Branded Pint Glass (4-pack),Kitchen & Home,7200.00,200.00,7000.00,0.09,630.00
+TOTAL,,,,3950.00,102050.00,,9175.50
+"""
+
+# No metadata rows — header is literally the first row
+_HEADER_FIRST_TEXT = """\
+Product Description,SKU,Net Sales,Royalty Rate,Royalty Due
+Widget A,SKU-001,10000.00,8%,800.00
+Widget B,SKU-002,5000.00,8%,400.00
+Widget C,SKU-003,2000.00,8%,160.00
+"""
+
+
+class TestExtractAttachmentPreview:
+    """
+    Unit tests for _extract_attachment_preview(attachment_text).
+
+    Covers sample-1 style (structured header block), sample-3 style (messy
+    ALL-CAPS title rows), empty / None input, and a file where the header row
+    is the very first row (no metadata rows at all).
+    """
+
+    # -------------------------------------------------------------------------
+    # sample-1 style
+    # -------------------------------------------------------------------------
+
+    def test_sample1_returns_metadata_rows(self):
+        """Structured key/value rows are extracted as metadata."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, _ = _extract_attachment_preview(_SAMPLE_1_TEXT)
+
+        assert metadata is not None
+        assert len(metadata) >= 4
+
+        keys = [r["key"] for r in metadata]
+        assert "Licensee Name" in keys
+        assert "Contract Number" in keys
+        assert "Reporting Period Start" in keys
+        assert "Reporting Period End" in keys
+
+    def test_sample1_metadata_values_are_correct(self):
+        """Metadata values match the right-hand column of the header block."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, _ = _extract_attachment_preview(_SAMPLE_1_TEXT)
+
+        values_by_key = {r["key"]: r["value"] for r in metadata}
+        assert values_by_key["Licensee Name"] == "Sunrise Apparel Co."
+        assert values_by_key["Contract Number"] == "BC-2024-0042"
+        assert values_by_key["Reporting Period Start"] == "2025-01-01"
+        assert values_by_key["Reporting Period End"] == "2025-03-31"
+
+    def test_sample1_returns_sample_rows_with_headers(self):
+        """Data header row is captured in sample_rows.headers."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_SAMPLE_1_TEXT)
+
+        assert sample is not None
+        assert "headers" in sample
+        assert "rows" in sample
+
+        headers = sample["headers"]
+        assert "Product Description" in headers
+        assert "Net Sales" in headers
+        assert "Royalty Due" in headers
+
+    def test_sample1_returns_up_to_3_data_rows(self):
+        """At most 3 data rows are captured in sample_rows.rows."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_SAMPLE_1_TEXT)
+
+        assert sample is not None
+        assert len(sample["rows"]) <= 3
+
+    def test_sample1_data_row_values_are_strings(self):
+        """All values in sample data rows are plain strings."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_SAMPLE_1_TEXT)
+
+        assert sample is not None
+        for row in sample["rows"]:
+            for cell in row:
+                assert isinstance(cell, str)
+
+    def test_sample1_data_row_length_matches_headers(self):
+        """Each data row has the same number of cells as the header row."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_SAMPLE_1_TEXT)
+
+        assert sample is not None
+        header_len = len(sample["headers"])
+        for row in sample["rows"]:
+            assert len(row) == header_len
+
+    # -------------------------------------------------------------------------
+    # sample-3 style
+    # -------------------------------------------------------------------------
+
+    def test_sample3_extracts_title_rows_as_metadata(self):
+        """ALL-CAPS title rows (no colons) are recognised as metadata labels."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, _ = _extract_attachment_preview(_SAMPLE_3_TEXT)
+
+        assert metadata is not None
+        keys = [r["key"] for r in metadata]
+        # First title row should be treated as a metadata label
+        assert any("VANTAGE" in k for k in keys)
+
+    def test_sample3_extracts_agreement_ref_row(self):
+        """'AGREEMENT REF: VRP / BC-2025-0011' row is captured in metadata."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, _ = _extract_attachment_preview(_SAMPLE_3_TEXT)
+
+        assert metadata is not None
+        # Should find a row whose key contains AGREEMENT REF
+        agreement_rows = [r for r in metadata if "AGREEMENT REF" in r["key"]]
+        assert len(agreement_rows) >= 1
+
+    def test_sample3_returns_sample_rows_with_correct_headers(self):
+        """Data header row (Item #, Description, ...) is captured."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_SAMPLE_3_TEXT)
+
+        assert sample is not None
+        headers = sample["headers"]
+        # The data header contains these columns from sample-3
+        assert "Item #" in headers
+        assert "Description" in headers
+        assert "Amount Owed" in headers
+
+    def test_sample3_returns_data_rows(self):
+        """Up to 3 data rows are captured from after the header."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_SAMPLE_3_TEXT)
+
+        assert sample is not None
+        assert len(sample["rows"]) >= 1
+        assert len(sample["rows"]) <= 3
+
+    # -------------------------------------------------------------------------
+    # Empty / None input
+    # -------------------------------------------------------------------------
+
+    def test_empty_string_returns_none_none(self):
+        """Empty string → (None, None)."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, sample = _extract_attachment_preview("")
+
+        assert metadata is None
+        assert sample is None
+
+    def test_whitespace_only_returns_none_none(self):
+        """Whitespace-only string → (None, None)."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, sample = _extract_attachment_preview("   \n\n   ")
+
+        assert metadata is None
+        assert sample is None
+
+    def test_none_input_returns_none_none(self):
+        """None input → (None, None) without raising."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, sample = _extract_attachment_preview(None)
+
+        assert metadata is None
+        assert sample is None
+
+    # -------------------------------------------------------------------------
+    # No metadata rows — header is the first row
+    # -------------------------------------------------------------------------
+
+    def test_no_metadata_rows_returns_none_for_metadata(self):
+        """When the first row is the data header, metadata is None."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, _ = _extract_attachment_preview(_HEADER_FIRST_TEXT)
+
+        assert metadata is None
+
+    def test_no_metadata_rows_still_returns_sample_rows(self):
+        """When the first row is the data header, sample_rows is still populated."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_HEADER_FIRST_TEXT)
+
+        assert sample is not None
+        assert "headers" in sample
+        assert "Product Description" in sample["headers"]
+        assert len(sample["rows"]) <= 3
+
+    def test_no_metadata_rows_data_rows_not_empty(self):
+        """At least one data row is captured when data immediately follows the header."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_HEADER_FIRST_TEXT)
+
+        assert sample is not None
+        assert len(sample["rows"]) >= 1
+
+    # -------------------------------------------------------------------------
+    # Return value structure guarantees
+    # -------------------------------------------------------------------------
+
+    def test_metadata_rows_are_list_of_dicts_with_key_and_value(self):
+        """Every metadata row has exactly 'key' and 'value' string fields."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        metadata, _ = _extract_attachment_preview(_SAMPLE_1_TEXT)
+
+        assert metadata is not None
+        for row in metadata:
+            assert set(row.keys()) == {"key", "value"}
+            assert isinstance(row["key"], str)
+            assert isinstance(row["value"], str)
+
+    def test_sample_rows_dict_has_headers_and_rows_keys(self):
+        """sample_rows dict always has exactly 'headers' and 'rows' keys."""
+        from app.routers.email_intake import _extract_attachment_preview
+
+        _, sample = _extract_attachment_preview(_SAMPLE_1_TEXT)
+
+        assert sample is not None
+        assert set(sample.keys()) == {"headers", "rows"}
+        assert isinstance(sample["headers"], list)
+        assert isinstance(sample["rows"], list)
+
+
+# ===========================================================================
+# GET /api/email-intake/reports — attachment preview fields in response
+# ===========================================================================
+
+class TestInboundReportPreviewFieldsInResponse:
+    """
+    Verify that attachment_metadata_rows and attachment_sample_rows are
+    present (possibly null) in the GET /inbound-reports/{id} -style response.
+
+    The list endpoint (GET /reports) and the confirm endpoint both return
+    InboundReportResponse which inherits from InboundReport.  We test via
+    GET /reports since it is the simplest authenticated endpoint returning
+    full report objects.
+    """
+
+    def _make_report_with_preview(
+        self,
+        user_id: str = "abcd1234-0000-0000-0000-000000000000",
+        metadata_rows=None,
+        sample_rows=None,
+    ) -> dict:
+        """Build a DB row that includes the preview columns."""
+        base = _make_inbound_report_with_new_fields(user_id=user_id)
+        base["attachment_metadata_rows"] = metadata_rows
+        base["attachment_sample_rows"] = sample_rows
+        return base
+
+    def test_list_reports_includes_attachment_metadata_rows_when_present(self, client):
+        """attachment_metadata_rows is returned when populated."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        metadata = [
+            {"key": "Licensee Name", "value": "Sunrise Apparel Co."},
+            {"key": "Contract Number", "value": "BC-2024-0042"},
+        ]
+        report = self._make_report_with_preview(
+            user_id=user_id, metadata_rows=metadata
+        )
+        contract = _make_db_contract(user_id=user_id)
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+
+            reports_mock = MagicMock()
+            reports_mock.execute.return_value = Mock(data=[report])
+            reports_mock.eq.return_value = reports_mock
+            reports_mock.order.return_value = reports_mock
+            reports_mock.select.return_value = reports_mock
+
+            contracts_mock = MagicMock()
+            contracts_mock.execute.return_value = Mock(data=[contract])
+            contracts_mock.in_.return_value = contracts_mock
+            contracts_mock.select.return_value = contracts_mock
+
+            def table_side_effect(name):
+                if name == "inbound_reports":
+                    return reports_mock
+                if name == "contracts":
+                    return contracts_mock
+                return MagicMock()
+
+            mock_sb.table.side_effect = table_side_effect
+
+            response = client.get(
+                "/api/email-intake/reports",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["attachment_metadata_rows"] == metadata
+
+    def test_list_reports_includes_attachment_sample_rows_when_present(self, client):
+        """attachment_sample_rows is returned when populated."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        sample = {
+            "headers": ["Product Description", "Net Sales", "Royalty Due"],
+            "rows": [["Widget A", "10000.00", "800.00"]],
+        }
+        report = self._make_report_with_preview(
+            user_id=user_id, sample_rows=sample
+        )
+        contract = _make_db_contract(user_id=user_id)
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+
+            reports_mock = MagicMock()
+            reports_mock.execute.return_value = Mock(data=[report])
+            reports_mock.eq.return_value = reports_mock
+            reports_mock.order.return_value = reports_mock
+            reports_mock.select.return_value = reports_mock
+
+            contracts_mock = MagicMock()
+            contracts_mock.execute.return_value = Mock(data=[contract])
+            contracts_mock.in_.return_value = contracts_mock
+            contracts_mock.select.return_value = contracts_mock
+
+            def table_side_effect(name):
+                if name == "inbound_reports":
+                    return reports_mock
+                if name == "contracts":
+                    return contracts_mock
+                return MagicMock()
+
+            mock_sb.table.side_effect = table_side_effect
+
+            response = client.get(
+                "/api/email-intake/reports",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["attachment_sample_rows"] == sample
+
+    def test_list_reports_preview_fields_are_null_when_absent(self, client):
+        """attachment_metadata_rows and attachment_sample_rows default to null."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        report = self._make_report_with_preview(user_id=user_id)  # both None
+        contract = _make_db_contract(user_id=user_id)
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+
+            reports_mock = MagicMock()
+            reports_mock.execute.return_value = Mock(data=[report])
+            reports_mock.eq.return_value = reports_mock
+            reports_mock.order.return_value = reports_mock
+            reports_mock.select.return_value = reports_mock
+
+            contracts_mock = MagicMock()
+            contracts_mock.execute.return_value = Mock(data=[contract])
+            contracts_mock.in_.return_value = contracts_mock
+            contracts_mock.select.return_value = contracts_mock
+
+            def table_side_effect(name):
+                if name == "inbound_reports":
+                    return reports_mock
+                if name == "contracts":
+                    return contracts_mock
+                return MagicMock()
+
+            mock_sb.table.side_effect = table_side_effect
+
+            response = client.get(
+                "/api/email-intake/reports",
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["attachment_metadata_rows"] is None
+        assert data[0]["attachment_sample_rows"] is None
+
+
+# ===========================================================================
+# InboundReport model: attachment preview fields
+# ===========================================================================
+
+class TestInboundReportPreviewFields:
+    """InboundReport model accepts and defaults the two new preview fields."""
+
+    def test_parses_attachment_metadata_rows(self):
+        """attachment_metadata_rows is parsed correctly from a DB row."""
+        from app.models.email_intake import InboundReport
+
+        metadata = [
+            {"key": "Licensee Name", "value": "Sunrise Apparel Co."},
+            {"key": "Contract Number", "value": "BC-2024-0042"},
+        ]
+        db_row = _make_db_inbound_report()
+        db_row["attachment_metadata_rows"] = metadata
+        db_row["attachment_sample_rows"] = None
+        report = InboundReport(**db_row)
+        assert report.attachment_metadata_rows == metadata
+
+    def test_parses_attachment_sample_rows(self):
+        """attachment_sample_rows is parsed correctly from a DB row."""
+        from app.models.email_intake import InboundReport
+
+        sample = {
+            "headers": ["Product Description", "Net Sales"],
+            "rows": [["Widget A", "10000.00"]],
+        }
+        db_row = _make_db_inbound_report()
+        db_row["attachment_metadata_rows"] = None
+        db_row["attachment_sample_rows"] = sample
+        report = InboundReport(**db_row)
+        assert report.attachment_sample_rows == sample
+
+    def test_preview_fields_default_to_none_for_legacy_rows(self):
+        """Legacy DB rows without the preview columns parse without error."""
+        from app.models.email_intake import InboundReport
+
+        db_row = _make_db_inbound_report()
+        # Simulate a row from before the migration (columns absent)
+        db_row.pop("attachment_metadata_rows", None)
+        db_row.pop("attachment_sample_rows", None)
+        report = InboundReport(**db_row)
+        assert report.attachment_metadata_rows is None
+        assert report.attachment_sample_rows is None

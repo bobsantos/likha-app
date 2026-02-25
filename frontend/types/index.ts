@@ -253,6 +253,21 @@ export interface InboundAddressResponse {
   inbound_address: string
 }
 
+// One row from the attachment header block (key/value metadata pair).
+// e.g. { key: "Licensee Name", value: "Sunrise Apparel Co." }
+export interface AttachmentMetadataRow {
+  key: string
+  value: string
+}
+
+// Parsed header row + up to 3 data rows from the attachment spreadsheet.
+// headers: column name strings (e.g. ["Product Description", "Net Sales", ...])
+// rows: string arrays aligned to headers, at most 3 rows
+export interface AttachmentSampleRows {
+  headers: string[]
+  rows: string[][]
+}
+
 export interface InboundReport {
   id: string
   user_id: string
@@ -270,6 +285,11 @@ export interface InboundReport {
   suggested_period_start: string | null
   suggested_period_end: string | null
   sales_period_id: string | null
+  // Attachment preview fields (migration 20260225220000).
+  // Populated at ingestion time by scanning the first ~20 rows of the
+  // attachment.  null when no attachment or parsing could not extract structure.
+  attachment_metadata_rows: AttachmentMetadataRow[] | null
+  attachment_sample_rows: AttachmentSampleRows | null
 }
 
 export interface ConfirmReportRequest {
