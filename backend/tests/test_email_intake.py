@@ -1054,3 +1054,91 @@ class TestInboundReportModel:
         db_row = _make_db_inbound_report(contract_id=None, match_confidence="none")
         report = InboundReport(**db_row)
         assert report.contract_id is None
+
+
+# ===========================================================================
+# Unit tests: _lookup_user_by_short_id
+# ===========================================================================
+
+class TestLookupUserByShortId:
+    """
+    Unit tests for _lookup_user_by_short_id().
+
+    The function queries the public.users view (which exposes auth.users via
+    PostgREST) using supabase_admin.  These tests confirm it queries the
+    "users" table with an ilike prefix filter and handles all outcomes.
+    """
+
+    def test_returns_user_dict_when_found(self):
+        """Returns the first matching row when a user UUID starts with short_id."""
+        from app.routers.email_intake import _lookup_user_by_short_id
+
+        user_id = "4f48810f-9517-4798-b85e-a105b01e0c00"
+        short_id = "4f48810f"
+
+        mock_chain = MagicMock()
+        mock_chain.select.return_value = mock_chain
+        mock_chain.ilike.return_value = mock_chain
+        mock_chain.execute.return_value = Mock(data=[{"id": user_id}])
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb:
+            mock_sb.table.return_value = mock_chain
+            result = _lookup_user_by_short_id(short_id)
+
+        assert result == {"id": user_id}
+        # Confirm it queried the public.users view (not auth.users directly)
+        mock_sb.table.assert_called_once_with("users")
+        mock_chain.select.assert_called_once_with("id")
+        mock_chain.ilike.assert_called_once_with("id", f"{short_id}%")
+
+    def test_returns_none_when_no_user_found(self):
+        """Returns None when the short_id does not match any user UUID."""
+        from app.routers.email_intake import _lookup_user_by_short_id
+
+        mock_chain = MagicMock()
+        mock_chain.select.return_value = mock_chain
+        mock_chain.ilike.return_value = mock_chain
+        mock_chain.execute.return_value = Mock(data=[])
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb:
+            mock_sb.table.return_value = mock_chain
+            result = _lookup_user_by_short_id("xxxxxxxx")
+
+        assert result is None
+
+    def test_returns_none_and_logs_warning_on_exception(self):
+        """Returns None (does not raise) when the DB query throws an exception."""
+        from app.routers.email_intake import _lookup_user_by_short_id
+
+        mock_chain = MagicMock()
+        mock_chain.select.return_value = mock_chain
+        mock_chain.ilike.return_value = mock_chain
+        mock_chain.execute.side_effect = Exception("PostgREST error")
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.routers.email_intake.logger") as mock_logger:
+            mock_sb.table.return_value = mock_chain
+            result = _lookup_user_by_short_id("abcd1234")
+
+        assert result is None
+        mock_logger.warning.assert_called_once()
+        warning_msg = mock_logger.warning.call_args[0][0]
+        assert "abcd1234" in warning_msg
+
+    def test_uses_ilike_for_case_insensitive_prefix_match(self):
+        """The ilike filter is used so uppercase UUID chars are matched correctly."""
+        from app.routers.email_intake import _lookup_user_by_short_id
+
+        short_id = "ABCD1234"
+
+        mock_chain = MagicMock()
+        mock_chain.select.return_value = mock_chain
+        mock_chain.ilike.return_value = mock_chain
+        mock_chain.execute.return_value = Mock(data=[])
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb:
+            mock_sb.table.return_value = mock_chain
+            _lookup_user_by_short_id(short_id)
+
+        # ilike must be called with the exact short_id followed by a wildcard
+        mock_chain.ilike.assert_called_once_with("id", "ABCD1234%")

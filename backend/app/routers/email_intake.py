@@ -126,8 +126,12 @@ def _lookup_user_by_short_id(short_id: str) -> Optional[dict]:
     """
     Find a user whose UUID starts with short_id (case-insensitive).
 
-    Queries the auth.users table exposed via Supabase admin client.
-    Returns the user row dict or None if not found.
+    Queries the public.users view (a thin SELECT over auth.users created in
+    migration 20260225100000_expose_auth_users_view.sql) via PostgREST.
+    auth.users is not directly accessible through PostgREST — the view is
+    required.
+
+    Returns the user row dict (keys: id, email, created_at) or None if not found.
     """
     try:
         result = (
