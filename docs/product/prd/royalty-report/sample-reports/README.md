@@ -189,7 +189,7 @@ at all.
 
 ## Meridian Goods LLC — BC-2024-0078 (Apparel 10%, Accessories 12%, Footwear 8%)
 
-### sample-2-category-rates.csv (original)
+### LKH-2026-1 Q2 2025 Royalty Report.csv (original)
 
 **Represents:** A multi-category report with one row per SKU. Requires aggregation before rate application.
 The most structurally complex of the three samples for the parser.
@@ -226,7 +226,7 @@ The most structurally complex of the three samples for the parser.
 
 ---
 
-### sample-2b-category-rates-q3.csv
+### LKH-2026-1 Q3 2025 Royalty Report.csv
 
 **Represents:** A quarter where one category (Footwear) had zero sales. All three Footwear SKUs are present
 in the report with $0.00 across all columns. Licensee also makes a $14.00 arithmetic error on one
@@ -272,7 +272,7 @@ Accessories row. Tests zero-category handling and discrepancy detection.
 
 ---
 
-### sample-2c-category-rates-q4.csv
+### LKH-2026-1 Q4 2025 Royalty Report.csv
 
 **Represents:** Holiday quarter with higher volume and a new SKU in each category. Licensee applies the
 wrong rate (10%) to the Accessories category instead of the contractual 12%, producing a $1,223.00
