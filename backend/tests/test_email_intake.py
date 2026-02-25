@@ -1142,3 +1142,831 @@ class TestLookupUserByShortId:
 
         # ilike must be called with the exact short_id followed by a wildcard
         mock_chain.ilike.assert_called_once_with("id", "ABCD1234%")
+
+
+# ===========================================================================
+# Unit tests: _auto_match_contract (multi-signal, ADR 20260225095833)
+# ===========================================================================
+
+def _make_contracts_for_matching(
+    user_id: str = "abcd1234-0000-0000-0000-000000000000",
+) -> list[dict]:
+    """Return two active contracts with distinct agreement_number and licensee_name."""
+    return [
+        {
+            **_make_db_contract(
+                contract_id="contract-alpha",
+                user_id=user_id,
+                licensee_email="alpha@retailco.com",
+            ),
+            "licensee_name": "Alpha Retail Co",
+            "agreement_number": "Lic-1001",
+        },
+        {
+            **_make_db_contract(
+                contract_id="contract-beta",
+                user_id=user_id,
+                licensee_email="beta@boutique.com",
+            ),
+            "licensee_name": "Beta Boutique Ltd",
+            "agreement_number": "AGR-2002",
+        },
+    ]
+
+
+class TestAutoMatchContractMultiSignal:
+    """
+    Unit tests for the refactored _auto_match_contract(sender_email,
+    attachment_text, user_contracts) that implements the full signal hierarchy.
+
+    These tests call the helper directly with a pre-fetched list of contracts
+    so no DB query is needed inside the function.
+    """
+
+    def test_signal1_exact_email_match_returns_high_confidence(self):
+        """Signal 1: exact sender_email match → high confidence, contract_id set."""
+        from app.routers.email_intake import _auto_match_contract
+
+        contracts = _make_contracts_for_matching()
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="alpha@retailco.com",
+            attachment_text="",
+            user_contracts=contracts,
+        )
+
+        assert confidence == "high"
+        assert contract_id == "contract-alpha"
+        assert candidates == []
+
+    def test_signal1_email_match_is_case_insensitive(self):
+        """Sender email matching should be case-insensitive."""
+        from app.routers.email_intake import _auto_match_contract
+
+        contracts = _make_contracts_for_matching()
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="ALPHA@RETAILCO.COM",
+            attachment_text="",
+            user_contracts=contracts,
+        )
+
+        assert confidence == "high"
+        assert contract_id == "contract-alpha"
+
+    def test_signal2_agreement_ref_in_attachment_returns_high_confidence(self):
+        """Signal 2: agreement number regex found in attachment text → high confidence."""
+        from app.routers.email_intake import _auto_match_contract
+
+        contracts = _make_contracts_for_matching()
+        attachment_text = (
+            "Licensee Sales Report\n"
+            "Agreement #: AGR-2002\n"
+            "Period: Q1 2025\n"
+            "Net Sales: 10000\n"
+        )
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="unknown@somewhere.com",
+            attachment_text=attachment_text,
+            user_contracts=contracts,
+        )
+
+        assert confidence == "high"
+        assert contract_id == "contract-beta"
+        assert candidates == []
+
+    def test_signal2_lic_prefix_agreement_ref_matches(self):
+        """Signal 2 also matches 'Lic-NNNN' style agreement numbers."""
+        from app.routers.email_intake import _auto_match_contract
+
+        contracts = _make_contracts_for_matching()
+        attachment_text = "Report for Lic-1001\nSales: 5000\n"
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="noreply@example.com",
+            attachment_text=attachment_text,
+            user_contracts=contracts,
+        )
+
+        assert confidence == "high"
+        assert contract_id == "contract-alpha"
+
+    def test_signal3_licensee_name_substring_returns_medium_confidence(self):
+        """Signal 3: licensee name found in attachment → medium confidence, candidates set."""
+        from app.routers.email_intake import _auto_match_contract
+
+        contracts = _make_contracts_for_matching()
+        # "Beta Boutique" is a substring of "Beta Boutique Ltd"
+        attachment_text = "Prepared by: Beta Boutique\nQ2 2025 Sales Data\nTotal: 8000\n"
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="noreply@example.com",
+            attachment_text=attachment_text,
+            user_contracts=contracts,
+        )
+
+        assert confidence == "medium"
+        assert contract_id is None
+        assert "contract-beta" in candidates
+
+    def test_signal3_match_is_case_insensitive(self):
+        """Licensee name substring scan is case-insensitive."""
+        from app.routers.email_intake import _auto_match_contract
+
+        contracts = _make_contracts_for_matching()
+        attachment_text = "ALPHA RETAIL CO quarterly report\nSales: 999\n"
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="noreply@example.com",
+            attachment_text=attachment_text,
+            user_contracts=contracts,
+        )
+
+        assert confidence == "medium"
+        assert contract_id is None
+        assert "contract-alpha" in candidates
+
+    def test_no_match_returns_all_active_contracts_as_candidates(self):
+        """No signal matches → candidates = all contract IDs, confidence = 'none'."""
+        from app.routers.email_intake import _auto_match_contract
+
+        contracts = _make_contracts_for_matching()
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="nobody@nowhere.com",
+            attachment_text="Generic sales spreadsheet\nTotal: 0\n",
+            user_contracts=contracts,
+        )
+
+        assert confidence == "none"
+        assert contract_id is None
+        assert set(candidates) == {"contract-alpha", "contract-beta"}
+
+    def test_multiple_email_matches_do_not_auto_pick(self):
+        """
+        Multiple contracts matching the same sender email (unusual but possible) —
+        no auto-pick; all matches returned as candidates.
+        """
+        from app.routers.email_intake import _auto_match_contract
+
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        contracts = [
+            {**_make_db_contract(contract_id="c1", user_id=user_id, licensee_email="shared@example.com")},
+            {**_make_db_contract(contract_id="c2", user_id=user_id, licensee_email="shared@example.com")},
+        ]
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="shared@example.com",
+            attachment_text="",
+            user_contracts=contracts,
+        )
+
+        assert contract_id is None
+        assert set(candidates) == {"c1", "c2"}
+
+    def test_multiple_signal3_matches_all_returned_as_candidates(self):
+        """
+        Multiple licensee-name matches at medium confidence — no auto-pick,
+        all matching contracts listed as candidates.
+        """
+        from app.routers.email_intake import _auto_match_contract
+
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        contracts = [
+            {
+                **_make_db_contract(contract_id="c1", user_id=user_id),
+                "licensee_name": "Acme Corp",
+                "agreement_number": None,
+            },
+            {
+                **_make_db_contract(contract_id="c2", user_id=user_id),
+                "licensee_name": "Acme Corp",  # same name, different contract
+                "agreement_number": None,
+            },
+        ]
+        attachment_text = "Report prepared for Acme Corp\nSales: 500\n"
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="nobody@nowhere.com",
+            attachment_text=attachment_text,
+            user_contracts=contracts,
+        )
+
+        assert contract_id is None
+        assert confidence == "medium"
+        assert set(candidates) == {"c1", "c2"}
+
+    def test_signal1_stops_evaluation_before_signal2(self):
+        """When Signal 1 fires, Signal 2 is not evaluated (first match wins)."""
+        from app.routers.email_intake import _auto_match_contract
+
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        contracts = [
+            {
+                **_make_db_contract(
+                    contract_id="email-match",
+                    user_id=user_id,
+                    licensee_email="alpha@retailco.com",
+                ),
+                "licensee_name": "Alpha Retail",
+                "agreement_number": "Lic-9999",
+            },
+            {
+                **_make_db_contract(
+                    contract_id="ref-match",
+                    user_id=user_id,
+                    licensee_email="other@other.com",
+                ),
+                "licensee_name": "Other Ltd",
+                "agreement_number": "AGR-1111",
+            },
+        ]
+        # Attachment mentions AGR-1111 (would match "ref-match" via Signal 2)
+        # but sender email matches "email-match" via Signal 1 — Signal 1 should win
+        attachment_text = "Agreement: AGR-1111\nTotal: 100\n"
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="alpha@retailco.com",
+            attachment_text=attachment_text,
+            user_contracts=contracts,
+        )
+
+        assert confidence == "high"
+        assert contract_id == "email-match"
+
+    def test_empty_contracts_list_returns_no_match(self):
+        """No active contracts at all → none confidence, empty candidates."""
+        from app.routers.email_intake import _auto_match_contract
+
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="alpha@retailco.com",
+            attachment_text="Report\n",
+            user_contracts=[],
+        )
+
+        assert confidence == "none"
+        assert contract_id is None
+        assert candidates == []
+
+    def test_contract_without_agreement_number_skips_signal2(self):
+        """Contracts with None agreement_number do not raise on Signal 2 scan."""
+        from app.routers.email_intake import _auto_match_contract
+
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        contracts = [
+            {
+                **_make_db_contract(contract_id="c1", user_id=user_id),
+                "licensee_name": "Generic Co",
+                "agreement_number": None,
+            },
+        ]
+        attachment_text = "AGR-9999 is mentioned here\n"
+        # Should not crash and should not match (agreement_number is None)
+        contract_id, confidence, candidates = _auto_match_contract(
+            sender_email="nobody@nowhere.com",
+            attachment_text=attachment_text,
+            user_contracts=contracts,
+        )
+
+        assert contract_id is None
+        # candidates should contain all contracts since no signal matched
+        assert "c1" in candidates
+
+
+# ===========================================================================
+# Unit tests: _extract_period_dates
+# ===========================================================================
+
+class TestExtractPeriodDates:
+    """Unit tests for _extract_period_dates(attachment_text)."""
+
+    def test_quarter_label_q1(self):
+        """'Q1 2025' → 2025-01-01 to 2025-03-31."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates("Sales Report\nQ1 2025\nTotal: 1000\n")
+        assert start == "2025-01-01"
+        assert end == "2025-03-31"
+
+    def test_quarter_label_q2(self):
+        """'Q2 2025' → 2025-04-01 to 2025-06-30."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates("Q2 2025 Royalty Report\n")
+        assert start == "2025-04-01"
+        assert end == "2025-06-30"
+
+    def test_quarter_label_q3(self):
+        """'Q3 2025' → 2025-07-01 to 2025-09-30."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates("Period: Q3 2025\nNet Sales: 500\n")
+        assert start == "2025-07-01"
+        assert end == "2025-09-30"
+
+    def test_quarter_label_q4(self):
+        """'Q4 2024' → 2024-10-01 to 2024-12-31."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates("Report for Q4 2024\n")
+        assert start == "2024-10-01"
+        assert end == "2024-12-31"
+
+    def test_named_range_jan_mar(self):
+        """'Reporting Period: Jan-Mar 2025' → 2025-01-01 to 2025-03-31."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates(
+            "Licensee: Acme\nReporting Period: Jan-Mar 2025\nTotal: 0\n"
+        )
+        assert start == "2025-01-01"
+        assert end == "2025-03-31"
+
+    def test_named_range_apr_jun(self):
+        """'Period: Apr-Jun 2025' → 2025-04-01 to 2025-06-30."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates("Period: Apr-Jun 2025\n")
+        assert start == "2025-04-01"
+        assert end == "2025-06-30"
+
+    def test_named_range_jul_sep(self):
+        """'Period: Jul-Sep 2025' → 2025-07-01 to 2025-09-30."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates("Period: Jul-Sep 2025\n")
+        assert start == "2025-07-01"
+        assert end == "2025-09-30"
+
+    def test_named_range_oct_dec(self):
+        """'Period: Oct-Dec 2025' → 2025-10-01 to 2025-12-31."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates("Reporting Period: Oct-Dec 2025\n")
+        assert start == "2025-10-01"
+        assert end == "2025-12-31"
+
+    def test_explicit_date_range_us_format(self):
+        """'01/01/2025 - 03/31/2025' → 2025-01-01 to 2025-03-31."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates(
+            "Sales Data\nDate Range: 01/01/2025 - 03/31/2025\nTotal: 9999\n"
+        )
+        assert start == "2025-01-01"
+        assert end == "2025-03-31"
+
+    def test_explicit_date_range_iso_format(self):
+        """'2025-01-01 - 2025-03-31' (ISO) → 2025-01-01 to 2025-03-31."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates(
+            "Period From: 2025-01-01 to 2025-03-31\n"
+        )
+        assert start == "2025-01-01"
+        assert end == "2025-03-31"
+
+    def test_no_match_returns_none_none(self):
+        """No recognizable pattern → (None, None)."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates(
+            "col1,col2,col3\n100,200,300\n400,500,600\n"
+        )
+        assert start is None
+        assert end is None
+
+    def test_empty_text_returns_none_none(self):
+        """Empty string → (None, None), no crash."""
+        from app.routers.email_intake import _extract_period_dates
+
+        start, end = _extract_period_dates("")
+        assert start is None
+        assert end is None
+
+    def test_only_scans_first_20_rows(self):
+        """Period label on row 21+ should not be found (only first ~20 rows scanned)."""
+        from app.routers.email_intake import _extract_period_dates
+
+        # 20 blank rows, then a quarter label on row 21
+        text = "\n" * 20 + "Q2 2025\n"
+        start, end = _extract_period_dates(text)
+        assert start is None
+        assert end is None
+
+
+# ===========================================================================
+# Confirm endpoint: open_wizard support
+# ===========================================================================
+
+def _make_inbound_report_with_new_fields(
+    report_id: str = "report-123",
+    user_id: str = "abcd1234-0000-0000-0000-000000000000",
+    contract_id: str = "contract-abc",
+    status: str = "pending",
+    attachment_path: str | None = "inbound/abcd1234-0000-0000-0000-000000000000/report-123/report.csv",
+    suggested_period_start: str | None = None,
+    suggested_period_end: str | None = None,
+    sales_period_id: str | None = None,
+    candidate_contract_ids: list | None = None,
+) -> dict:
+    """Build a DB row dict that includes the new ADR columns."""
+    base = _make_db_inbound_report(
+        report_id=report_id,
+        user_id=user_id,
+        contract_id=contract_id,
+        status=status,
+    )
+    base["attachment_path"] = attachment_path
+    base["suggested_period_start"] = suggested_period_start
+    base["suggested_period_end"] = suggested_period_end
+    base["sales_period_id"] = sales_period_id
+    base["candidate_contract_ids"] = candidate_contract_ids
+    return base
+
+
+def _make_confirm_table_side_effect(report_before: dict, report_after: dict):
+    """Return a table() side-effect covering fetch + update for confirm endpoint."""
+
+    fetch_mock = MagicMock()
+    fetch_mock.execute.return_value = Mock(data=[report_before])
+    fetch_mock.eq.return_value = fetch_mock
+    fetch_mock.select.return_value = fetch_mock
+
+    update_mock = MagicMock()
+    update_mock.execute.return_value = Mock(data=[report_after])
+    update_mock.eq.return_value = update_mock
+
+    def side_effect(name):
+        if name == "inbound_reports":
+            t = MagicMock()
+            t.select.return_value = fetch_mock
+            t.update.return_value = update_mock
+            return t
+        return MagicMock()
+
+    return side_effect
+
+
+class TestConfirmReportWithOpenWizard:
+    """POST /api/email-intake/{report_id}/confirm — open_wizard support."""
+
+    def test_open_wizard_false_returns_no_redirect_url(self, client):
+        """open_wizard=false (default) → no redirect_url in response."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        report = _make_inbound_report_with_new_fields(user_id=user_id)
+        confirmed = {**report, "status": "confirmed"}
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+            mock_sb.table.side_effect = _make_confirm_table_side_effect(report, confirmed)
+
+            response = client.post(
+                f"/api/email-intake/{report['id']}/confirm",
+                json={"open_wizard": False},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("redirect_url") is None
+
+    def test_open_wizard_true_returns_redirect_url(self, client):
+        """open_wizard=true → redirect_url with contract_id, report_id and source."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        report = _make_inbound_report_with_new_fields(
+            user_id=user_id,
+            contract_id="contract-abc",
+        )
+        confirmed = {**report, "status": "confirmed"}
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+            mock_sb.table.side_effect = _make_confirm_table_side_effect(report, confirmed)
+
+            response = client.post(
+                f"/api/email-intake/{report['id']}/confirm",
+                json={"open_wizard": True},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["redirect_url"] is not None
+        url = data["redirect_url"]
+        assert "/sales/upload" in url
+        assert "contract_id=contract-abc" in url
+        assert f"report_id={report['id']}" in url
+        assert "source=inbox" in url
+
+    def test_open_wizard_true_with_period_dates_includes_period_params(self, client):
+        """open_wizard=true + period dates → redirect_url includes period_start/end."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        report = _make_inbound_report_with_new_fields(
+            user_id=user_id,
+            contract_id="contract-abc",
+            suggested_period_start="2025-01-01",
+            suggested_period_end="2025-03-31",
+        )
+        confirmed = {**report, "status": "confirmed"}
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+            mock_sb.table.side_effect = _make_confirm_table_side_effect(report, confirmed)
+
+            response = client.post(
+                f"/api/email-intake/{report['id']}/confirm",
+                json={"open_wizard": True},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        url = response.json()["redirect_url"]
+        assert "period_start=2025-01-01" in url
+        assert "period_end=2025-03-31" in url
+
+    def test_open_wizard_true_without_period_dates_omits_period_params(self, client):
+        """open_wizard=true + no period dates → redirect_url has NO period params."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        report = _make_inbound_report_with_new_fields(
+            user_id=user_id,
+            contract_id="contract-abc",
+            suggested_period_start=None,
+            suggested_period_end=None,
+        )
+        confirmed = {**report, "status": "confirmed"}
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+            mock_sb.table.side_effect = _make_confirm_table_side_effect(report, confirmed)
+
+            response = client.post(
+                f"/api/email-intake/{report['id']}/confirm",
+                json={"open_wizard": True},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        url = response.json()["redirect_url"]
+        assert "period_start" not in url
+        assert "period_end" not in url
+
+    def test_open_wizard_true_without_attachment_returns_422(self, client):
+        """open_wizard=true on a report with no attachment → 422."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        report = _make_inbound_report_with_new_fields(
+            user_id=user_id,
+            contract_id="contract-abc",
+            attachment_path=None,
+        )
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+
+            fetch_mock = MagicMock()
+            fetch_mock.execute.return_value = Mock(data=[report])
+            fetch_mock.eq.return_value = fetch_mock
+            fetch_mock.select.return_value = fetch_mock
+
+            def side_effect(name):
+                if name == "inbound_reports":
+                    t = MagicMock()
+                    t.select.return_value = fetch_mock
+                    return t
+                return MagicMock()
+
+            mock_sb.table.side_effect = side_effect
+
+            response = client.post(
+                f"/api/email-intake/{report['id']}/confirm",
+                json={"open_wizard": True},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 422
+
+    def test_open_wizard_default_is_false(self, client):
+        """Omitting open_wizard from body is equivalent to open_wizard=false."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        report = _make_inbound_report_with_new_fields(user_id=user_id)
+        confirmed = {**report, "status": "confirmed"}
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+            mock_sb.table.side_effect = _make_confirm_table_side_effect(report, confirmed)
+
+            response = client.post(
+                f"/api/email-intake/{report['id']}/confirm",
+                json={},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("redirect_url") is None
+
+
+# ===========================================================================
+# PATCH /{report_id} — sales_period_id linkback
+# ===========================================================================
+
+class TestSalesPeriodLinkback:
+    """PATCH /api/email-intake/{report_id} — link sales_period_id, status → 'processed'."""
+
+    def test_patch_sales_period_id_updates_report(self, client):
+        """PATCH with sales_period_id → links report to sales period, status='processed'."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        sales_period_id = "sp-uuid-0000-0000-0000-000000000001"
+        report = _make_inbound_report_with_new_fields(
+            user_id=user_id, status="confirmed"
+        )
+        processed_report = {
+            **report,
+            "status": "processed",
+            "sales_period_id": sales_period_id,
+        }
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+
+            fetch_mock = MagicMock()
+            fetch_mock.execute.return_value = Mock(data=[report])
+            fetch_mock.eq.return_value = fetch_mock
+            fetch_mock.select.return_value = fetch_mock
+
+            update_mock = MagicMock()
+            update_mock.execute.return_value = Mock(data=[processed_report])
+            update_mock.eq.return_value = update_mock
+
+            def table_side_effect(name):
+                if name == "inbound_reports":
+                    t = MagicMock()
+                    t.select.return_value = fetch_mock
+                    t.update.return_value = update_mock
+                    return t
+                return MagicMock()
+
+            mock_sb.table.side_effect = table_side_effect
+
+            response = client.patch(
+                f"/api/email-intake/{report['id']}",
+                json={"sales_period_id": sales_period_id},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["sales_period_id"] == sales_period_id
+        assert data["status"] == "processed"
+
+    def test_patch_requires_auth(self, client):
+        response = client.patch(
+            "/api/email-intake/report-123",
+            json={"sales_period_id": "sp-123"},
+        )
+        assert response.status_code == 401
+
+    def test_patch_returns_404_for_unknown_report(self, client):
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+
+            fetch_mock = MagicMock()
+            fetch_mock.execute.return_value = Mock(data=[])
+            fetch_mock.eq.return_value = fetch_mock
+            fetch_mock.select.return_value = fetch_mock
+            mock_sb.table.return_value = fetch_mock
+
+            response = client.patch(
+                "/api/email-intake/nonexistent-id",
+                json={"sales_period_id": "sp-123"},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 404
+
+    def test_patch_status_transitions_to_processed(self, client):
+        """Verify status field is explicitly set to 'processed' by the endpoint."""
+        user_id = "abcd1234-0000-0000-0000-000000000000"
+        sales_period_id = "sp-uuid-0000-0000-0000-000000000002"
+        report = _make_inbound_report_with_new_fields(
+            user_id=user_id, status="confirmed"
+        )
+        processed_report = {
+            **report,
+            "status": "processed",
+            "sales_period_id": sales_period_id,
+        }
+
+        with patch("app.routers.email_intake.supabase_admin") as mock_sb, \
+             patch("app.auth.supabase") as mock_auth_sb:
+
+            mock_auth_sb.auth.get_user.return_value = Mock(user=Mock(id=user_id))
+
+            fetch_mock = MagicMock()
+            fetch_mock.execute.return_value = Mock(data=[report])
+            fetch_mock.eq.return_value = fetch_mock
+            fetch_mock.select.return_value = fetch_mock
+
+            update_mock = MagicMock()
+            update_mock.execute.return_value = Mock(data=[processed_report])
+            update_mock.eq.return_value = update_mock
+
+            def table_side_effect(name):
+                if name == "inbound_reports":
+                    t = MagicMock()
+                    t.select.return_value = fetch_mock
+                    t.update.return_value = update_mock
+                    return t
+                return MagicMock()
+
+            mock_sb.table.side_effect = table_side_effect
+
+            response = client.patch(
+                f"/api/email-intake/{report['id']}",
+                json={"sales_period_id": sales_period_id},
+                headers={"Authorization": "Bearer test-token"},
+            )
+
+        assert response.status_code == 200
+        # The update mock should have been called — inspect that status is 'processed'
+        data = response.json()
+        assert data["status"] == "processed"
+
+
+# ===========================================================================
+# InboundReport model: new fields
+# ===========================================================================
+
+class TestInboundReportModelNewFields:
+    """InboundReport model includes new ADR fields."""
+
+    def test_parses_db_row_with_new_fields(self):
+        from app.models.email_intake import InboundReport
+
+        db_row = _make_inbound_report_with_new_fields(
+            suggested_period_start="2025-01-01",
+            suggested_period_end="2025-03-31",
+            candidate_contract_ids=["c1", "c2"],
+            sales_period_id="sp-111",
+        )
+        report = InboundReport(**db_row)
+        assert report.suggested_period_start == "2025-01-01"
+        assert report.suggested_period_end == "2025-03-31"
+        assert report.candidate_contract_ids == ["c1", "c2"]
+        assert report.sales_period_id == "sp-111"
+
+    def test_new_fields_default_to_none(self):
+        from app.models.email_intake import InboundReport
+
+        db_row = _make_db_inbound_report()
+        # Ensure legacy rows without the new columns still parse
+        db_row.pop("candidate_contract_ids", None)
+        db_row.pop("suggested_period_start", None)
+        db_row.pop("suggested_period_end", None)
+        db_row.pop("sales_period_id", None)
+        report = InboundReport(**db_row)
+        assert report.candidate_contract_ids is None
+        assert report.suggested_period_start is None
+        assert report.suggested_period_end is None
+        assert report.sales_period_id is None
+
+    def test_status_processed_is_valid(self):
+        from app.models.email_intake import InboundReport
+
+        db_row = _make_inbound_report_with_new_fields(status="processed")
+        report = InboundReport(**db_row)
+        assert report.status == "processed"
+
+    def test_confirm_response_includes_redirect_url_field(self):
+        """ConfirmResponse model has redirect_url field."""
+        from app.models.email_intake import ConfirmResponse
+
+        resp = ConfirmResponse(redirect_url="/sales/upload?contract_id=abc")
+        assert resp.redirect_url == "/sales/upload?contract_id=abc"
+
+    def test_confirm_response_redirect_url_defaults_to_none(self):
+        from app.models.email_intake import ConfirmResponse
+
+        resp = ConfirmResponse()
+        assert resp.redirect_url is None
+
+    def test_confirm_report_request_open_wizard_defaults_false(self):
+        from app.models.email_intake import ConfirmReportRequest
+
+        req = ConfirmReportRequest()
+        assert req.open_wizard is False
+
+    def test_confirm_report_request_open_wizard_can_be_true(self):
+        from app.models.email_intake import ConfirmReportRequest
+
+        req = ConfirmReportRequest(open_wizard=True)
+        assert req.open_wizard is True

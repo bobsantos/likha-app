@@ -258,9 +258,23 @@ export interface InboundReport {
   received_at: string
   attachment_filename: string | null
   attachment_path: string | null
-  match_confidence: 'high' | 'none'
-  status: 'pending' | 'confirmed' | 'rejected'
+  match_confidence: 'high' | 'medium' | 'none'
+  status: 'pending' | 'confirmed' | 'rejected' | 'processed'
   contract_name: string | null
+  // New fields from email intake matching ADR
+  candidate_contract_ids: string[] | null
+  suggested_period_start: string | null
+  suggested_period_end: string | null
+  sales_period_id: string | null
+}
+
+export interface ConfirmReportRequest {
+  contract_id?: string
+  open_wizard: boolean
+}
+
+export interface ConfirmReportResponse {
+  redirect_url: string | null
 }
 
 // --- Period overlap check ---

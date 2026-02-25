@@ -22,13 +22,15 @@ Endpoints:
   GET  /inbound-address            — get user's inbound email address (auth: JWT)
   POST /{report_id}/confirm        — user confirms a report (auth: JWT)
   POST /{report_id}/reject         — user rejects a report (auth: JWT)
+  PATCH /{report_id}               — link sales_period_id after wizard (auth: JWT)
 """
 
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
@@ -38,6 +40,7 @@ from app.models.email_intake import (
     ConfirmReportRequest,
     InboundReport,
     InboundReportResponse,
+    LinkSalesPeriodRequest,
 )
 from app.models.inbound_email import InboundEmail
 from app.services.inbound_email_adapter import normalize_webhook
@@ -52,6 +55,31 @@ router = APIRouter()
 
 _INBOUND_DOMAIN = "inbound.likha.app"
 _SHORT_ID_LENGTH = 8
+
+# Number of rows to scan for period labels / agreement refs in attachment text
+_SCAN_ROWS = 20
+
+# Quarter-to-date-range mapping: (month_start, day_start, month_end, day_end)
+_QUARTER_DATES = {
+    1: ("01", "01", "03", "31"),
+    2: ("04", "01", "06", "30"),
+    3: ("07", "01", "09", "30"),
+    4: ("10", "01", "12", "31"),
+}
+
+# Short month name → zero-padded month number
+_MONTH_ABBR = {
+    "jan": "01", "feb": "02", "mar": "03", "apr": "04",
+    "may": "05", "jun": "06", "jul": "07", "aug": "08",
+    "sep": "09", "oct": "10", "nov": "11", "dec": "12",
+}
+
+# Last day of each month (non-leap; Q1/Q3/Q4 quarters avoid Feb)
+_MONTH_LAST_DAY = {
+    "01": "31", "02": "28", "03": "31", "04": "30",
+    "05": "31", "06": "30", "07": "31", "08": "31",
+    "09": "30", "10": "31", "11": "30", "12": "31",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -147,42 +175,168 @@ def _lookup_user_by_short_id(short_id: str) -> Optional[dict]:
     return None
 
 
-def _auto_match_contract(user_id: str, sender_email: str) -> tuple[Optional[str], str]:
+def _auto_match_contract(
+    sender_email: str,
+    attachment_text: str,
+    user_contracts: list[dict],
+) -> tuple[Optional[str], str, list[str]]:
     """
-    Auto-match an inbound report to a contract by sender email.
+    Auto-match an inbound report to a contract using a signal hierarchy.
+
+    Signals are evaluated in order; the first match sets confidence and stops.
+
+    Signal 1 (high):   Exact sender email match against contracts.licensee_email.
+    Signal 2 (high):   Agreement reference number regex in attachment_text.
+    Signal 3 (medium): Licensee name substring in attachment_text.
 
     Args:
-        user_id: The licensor's user ID.
-        sender_email: The From address from the inbound email.
+        sender_email:    The From address from the inbound email.
+        attachment_text: Decoded text content of the first attachment (may be empty).
+        user_contracts:  List of active contract dicts for the user (pre-fetched).
 
     Returns:
-        (contract_id, match_confidence) tuple.
-        match_confidence is one of: "high", "none".
+        (contract_id, confidence, candidate_contract_ids) tuple.
+        - contract_id is set when confidence == 'high' and exactly one match.
+        - candidate_contract_ids lists matched contract IDs when confidence is
+          'medium' or when multiple high-confidence matches tie.
+        - When no signal matches, candidate_contract_ids = all contract IDs.
+        - confidence is one of: 'high', 'medium', 'none'.
     """
-    try:
-        result = (
-            supabase_admin.table("contracts")
-            .select("id")
-            .eq("user_id", user_id)
-            .eq("licensee_email", sender_email)
-            .eq("status", "active")
-            .execute()
-        )
-        matches = result.data or []
-    except Exception as e:
-        logger.warning(f"Contract auto-match query failed: {e}")
-        return None, "none"
+    if not user_contracts:
+        return None, "none", []
 
-    if len(matches) == 1:
-        return matches[0]["id"], "high"
+    # --- Signal 1: exact sender email match (case-insensitive) ---------------
+    sender_lower = sender_email.lower()
+    email_matches = [
+        c for c in user_contracts
+        if (c.get("licensee_email") or "").lower() == sender_lower
+    ]
 
-    if len(matches) > 1:
-        logger.warning(
-            f"Multiple contracts matched sender {sender_email!r} for user {user_id!r}. "
-            "Treating as unmatched (MVP cut)."
-        )
+    if len(email_matches) == 1:
+        return email_matches[0]["id"], "high", []
 
-    return None, "none"
+    if len(email_matches) > 1:
+        # Tie — surface all as candidates, no auto-pick
+        return None, "high", [c["id"] for c in email_matches]
+
+    # --- Signal 2: agreement reference number in attachment text --------------
+    # Scan only the first _SCAN_ROWS rows
+    scan_text = "\n".join(attachment_text.splitlines()[:_SCAN_ROWS])
+
+    ref_matches: list[dict] = []
+    for contract in user_contracts:
+        agr_num = contract.get("agreement_number")
+        if not agr_num:
+            continue
+        # Escape the agreement number for safe regex use
+        pattern = re.escape(str(agr_num))
+        if re.search(pattern, scan_text, re.IGNORECASE):
+            ref_matches.append(contract)
+
+    if len(ref_matches) == 1:
+        return ref_matches[0]["id"], "high", []
+
+    if len(ref_matches) > 1:
+        return None, "high", [c["id"] for c in ref_matches]
+
+    # --- Signal 3: licensee name substring in attachment text -----------------
+    # Match if: (a) the full licensee name appears in the attachment text, OR
+    # (b) a meaningful portion of the licensee name (≥ the first 2 words,
+    #     minimum 5 chars) appears in the attachment text. This handles the
+    #     common case where an attachment abbreviates "Beta Boutique Ltd" as
+    #     "Beta Boutique".
+    name_matches: list[dict] = []
+    scan_lower = scan_text.lower()
+    for contract in user_contracts:
+        name = contract.get("licensee_name") or ""
+        if not name:
+            continue
+        name_lower = name.lower()
+        # Check (a): full name in text
+        if name_lower in scan_lower:
+            name_matches.append(contract)
+            continue
+        # Check (b): leading words of the licensee name appear in the text.
+        # Build progressively shorter prefixes (stopping at ≥ 2 words and ≥ 5 chars).
+        words = name_lower.split()
+        for word_count in range(len(words), 1, -1):
+            prefix = " ".join(words[:word_count])
+            if len(prefix) >= 5 and prefix in scan_lower:
+                name_matches.append(contract)
+                break
+
+    if name_matches:
+        return None, "medium", [c["id"] for c in name_matches]
+
+    # --- No signal matched — return all contracts as candidates ---------------
+    return None, "none", [c["id"] for c in user_contracts]
+
+
+def _extract_period_dates(
+    attachment_text: str,
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Scan the first ~20 rows of attachment_text for common period date patterns.
+
+    Patterns recognised (in priority order):
+    1. Quarter labels:   Q1 2025, Q3 2025, etc.
+    2. Named ranges:     Jan-Mar 2025, Apr-Jun 2025, etc. (with optional prefix)
+    3. Explicit ranges:  01/01/2025 - 03/31/2025  or  2025-01-01 to 2025-03-31
+
+    Returns:
+        (suggested_period_start, suggested_period_end) as ISO date strings,
+        or (None, None) when no pattern matches.
+    """
+    if not attachment_text:
+        return None, None
+
+    rows = attachment_text.splitlines()[:_SCAN_ROWS]
+    scan_text = "\n".join(rows)
+
+    # Pattern 1: quarter labels — Q1 2025
+    quarter_pattern = re.compile(r"\bQ([1-4])\s+(\d{4})\b", re.IGNORECASE)
+    m = quarter_pattern.search(scan_text)
+    if m:
+        q = int(m.group(1))
+        year = m.group(2)
+        ms, ds, me, de = _QUARTER_DATES[q]
+        return f"{year}-{ms}-{ds}", f"{year}-{me}-{de}"
+
+    # Pattern 2: named month ranges — Jan-Mar 2025, Apr-Jun 2025, etc.
+    # Optionally preceded by "Reporting Period:", "Period:", "Period From:", etc.
+    month_range_pattern = re.compile(
+        r"\b([A-Za-z]{3})-([A-Za-z]{3})\s+(\d{4})\b"
+    )
+    m = month_range_pattern.search(scan_text)
+    if m:
+        start_abbr = m.group(1).lower()
+        end_abbr = m.group(2).lower()
+        year = m.group(3)
+        start_mm = _MONTH_ABBR.get(start_abbr)
+        end_mm = _MONTH_ABBR.get(end_abbr)
+        if start_mm and end_mm:
+            end_day = _MONTH_LAST_DAY.get(end_mm, "30")
+            return f"{year}-{start_mm}-01", f"{year}-{end_mm}-{end_day}"
+
+    # Pattern 3a: explicit US date range — 01/01/2025 - 03/31/2025
+    us_range_pattern = re.compile(
+        r"\b(\d{2})/(\d{2})/(\d{4})\s*[-–to]+\s*(\d{2})/(\d{2})/(\d{4})\b"
+    )
+    m = us_range_pattern.search(scan_text)
+    if m:
+        sm, sd, sy = m.group(1), m.group(2), m.group(3)
+        em, ed, ey = m.group(4), m.group(5), m.group(6)
+        return f"{sy}-{sm}-{sd}", f"{ey}-{em}-{ed}"
+
+    # Pattern 3b: explicit ISO date range — 2025-01-01 to 2025-03-31
+    iso_range_pattern = re.compile(
+        r"\b(\d{4}-\d{2}-\d{2})\s*(?:to|-|–)\s*(\d{4}-\d{2}-\d{2})\b"
+    )
+    m = iso_range_pattern.search(scan_text)
+    if m:
+        return m.group(1), m.group(2)
+
+    return None, None
 
 
 def _upload_inbound_attachment(
@@ -233,6 +387,27 @@ def _get_report_for_user(report_id: str, user_id: str) -> dict:
     return result.data[0]
 
 
+def _fetch_active_contracts_for_user(user_id: str) -> list[dict]:
+    """
+    Fetch all active contracts for a user in a single query.
+
+    Returns list of contract dicts with id, licensee_email, licensee_name,
+    and agreement_number. Returns [] on error (best-effort).
+    """
+    try:
+        result = (
+            supabase_admin.table("contracts")
+            .select("id, licensee_email, licensee_name, agreement_number")
+            .eq("user_id", user_id)
+            .eq("status", "active")
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        logger.warning(f"Failed to fetch contracts for user {user_id!r}: {e}")
+        return []
+
+
 def _process_inbound_email(email: InboundEmail) -> dict:
     """
     Core processing logic for a normalized InboundEmail.
@@ -242,9 +417,12 @@ def _process_inbound_email(email: InboundEmail) -> dict:
     Steps:
     1. Extract short_id from recipient address.
     2. Look up user whose UUID starts with short_id.
-    3. Auto-match to a contract by sender email.
-    4. Decode and upload the first attachment (if present).
-    5. Insert an inbound_reports row.
+    3. Fetch all active contracts for the user.
+    4. Decode first attachment text (for matching / period extraction).
+    5. Auto-match to a contract using the multi-signal hierarchy.
+    6. Extract suggested period dates from attachment text.
+    7. Upload the first attachment (if present).
+    8. Insert an inbound_reports row.
 
     Returns a dict suitable for the HTTP response.
     """
@@ -264,10 +442,28 @@ def _process_inbound_email(email: InboundEmail) -> dict:
 
     user_id: str = user["id"]
 
-    # 3. Auto-match contract
-    contract_id, match_confidence = _auto_match_contract(user_id, email.sender_email)
+    # 3. Fetch all active contracts for this user
+    user_contracts = _fetch_active_contracts_for_user(user_id)
 
-    # 4. Process first attachment (best-effort)
+    # 4. Decode attachment text for matching / period extraction
+    attachment_text = ""
+    if email.attachments:
+        try:
+            attachment_text = email.attachments[0].content.decode("utf-8", errors="ignore")
+        except Exception:
+            pass  # Best-effort — matching proceeds without text
+
+    # 5. Auto-match contract (multi-signal)
+    contract_id, match_confidence, candidate_contract_ids = _auto_match_contract(
+        sender_email=email.sender_email,
+        attachment_text=attachment_text,
+        user_contracts=user_contracts,
+    )
+
+    # 6. Extract suggested period dates
+    suggested_period_start, suggested_period_end = _extract_period_dates(attachment_text)
+
+    # 7. Process first attachment (best-effort upload)
     attachment_filename: Optional[str] = None
     attachment_path: Optional[str] = None
     report_id = _generate_report_id()
@@ -286,7 +482,7 @@ def _process_inbound_email(email: InboundEmail) -> dict:
         except Exception as e:
             logger.warning(f"Failed to upload inbound attachment: {e}")
 
-    # 5. Insert inbound_reports row
+    # 8. Insert inbound_reports row
     now_iso = datetime.now(timezone.utc).isoformat()
     insert_data: dict = {
         "id": report_id,
@@ -300,6 +496,9 @@ def _process_inbound_email(email: InboundEmail) -> dict:
         "status": "pending",
         "created_at": now_iso,
         "updated_at": now_iso,
+        "candidate_contract_ids": candidate_contract_ids if candidate_contract_ids else None,
+        "suggested_period_start": suggested_period_start,
+        "suggested_period_end": suggested_period_end,
     }
     if contract_id is not None:
         insert_data["contract_id"] = contract_id
@@ -425,9 +624,21 @@ async def confirm_report(
 
     If body.contract_id is provided it overrides (or supplies) the matched
     contract. Updates status to 'confirmed'.
+
+    When body.open_wizard is True, the response includes a redirect_url
+    pointing to the upload wizard pre-loaded with contract_id, report_id,
+    and detected period dates. Requires the report to have an attachment;
+    returns 422 if attachment_path is null.
     """
     # Verify the report exists and belongs to this user
-    _get_report_for_user(report_id, user_id)
+    report_row = _get_report_for_user(report_id, user_id)
+
+    # Validate open_wizard precondition: attachment must be present
+    if body.open_wizard and not report_row.get("attachment_path"):
+        raise HTTPException(
+            status_code=422,
+            detail="open_wizard requires an attachment on the report",
+        )
 
     # Build update payload
     update_data: dict = {
@@ -448,7 +659,29 @@ async def confirm_report(
     if not result.data:
         raise HTTPException(status_code=500, detail="Failed to update report")
 
-    return InboundReportResponse(**result.data[0])
+    confirmed_row = result.data[0]
+    response = InboundReportResponse(**confirmed_row)
+
+    # Build redirect_url when open_wizard=True
+    if body.open_wizard:
+        effective_contract_id = body.contract_id or confirmed_row.get("contract_id")
+        params: dict = {
+            "report_id": report_id,
+            "source": "inbox",
+        }
+        if effective_contract_id:
+            params["contract_id"] = effective_contract_id
+
+        period_start = confirmed_row.get("suggested_period_start")
+        period_end = confirmed_row.get("suggested_period_end")
+        if period_start:
+            params["period_start"] = period_start
+        if period_end:
+            params["period_end"] = period_end
+
+        response.redirect_url = f"/sales/upload?{urlencode(params)}"
+
+    return response
 
 
 @router.post("/{report_id}/reject")
@@ -466,6 +699,40 @@ async def reject_report(
         supabase_admin.table("inbound_reports")
         .update({
             "status": "rejected",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+        .eq("id", report_id)
+        .eq("user_id", user_id)
+        .execute()
+    )
+
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to update report")
+
+    return InboundReportResponse(**result.data[0])
+
+
+@router.patch("/{report_id}")
+async def link_sales_period(
+    report_id: str,
+    body: LinkSalesPeriodRequest,
+    user_id: str = Depends(get_current_user),
+) -> InboundReportResponse:
+    """
+    Link a confirmed inbound_report to the sales_period row produced by the
+    upload wizard. Transitions status from 'confirmed' to 'processed'.
+
+    This creates a durable audit trail: inbound email → inbound_reports row
+    → sales_periods row.
+    """
+    # Verify the report exists and belongs to this user
+    _get_report_for_user(report_id, user_id)
+
+    result = (
+        supabase_admin.table("inbound_reports")
+        .update({
+            "sales_period_id": body.sales_period_id,
+            "status": "processed",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
         .eq("id", report_id)

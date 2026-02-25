@@ -156,6 +156,7 @@ interface StepUploadProps {
   setOverrideIntent: (v: boolean) => void
   contractStartDate?: string | null
   contractEndDate?: string | null
+  isInboxSource?: boolean
 }
 
 function StepUpload({
@@ -169,6 +170,7 @@ function StepUpload({
   setOverrideIntent,
   contractStartDate,
   contractEndDate,
+  isInboxSource,
 }: StepUploadProps) {
   const [file, setFile] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
@@ -357,6 +359,13 @@ function StepUpload({
             />
           </div>
         </div>
+
+        {/* Inbox provenance hint */}
+        {isInboxSource && (
+          <p className="mt-2 text-xs text-blue-600">
+            Detected from email attachment — verify before continuing.
+          </p>
+        )}
 
         {/* Loading indicator while period check is in-flight */}
         {periodCheckState === 'loading' && (
@@ -663,13 +672,21 @@ export default function SalesUploadPage() {
   const searchParams = useSearchParams()
   const contractId = searchParams.get('contract_id') ?? ''
 
+  // Inbox integration params
+  const reportId = searchParams.get('report_id')
+  const inboxPeriodStart = searchParams.get('period_start')
+  const inboxPeriodEnd = searchParams.get('period_end')
+  const source = searchParams.get('source')
+  const isInboxSource = source === 'inbox'
+
   const [step, setStep] = useState<WizardStep>('upload')
   const [contract, setContract] = useState<Contract | null>(null)
   const [loadingContract, setLoadingContract] = useState(true)
 
   // Wizard state across steps
-  const [periodStart, setPeriodStartRaw] = useState('')
-  const [periodEnd, setPeriodEndRaw] = useState('')
+  // Pre-fill period dates from inbox params when source=inbox
+  const [periodStart, setPeriodStartRaw] = useState(isInboxSource && inboxPeriodStart ? inboxPeriodStart : '')
+  const [periodEnd, setPeriodEndRaw] = useState(isInboxSource && inboxPeriodEnd ? inboxPeriodEnd : '')
   const [overrideIntent, setOverrideIntentRaw] = useState(false)
   const [uploadPreview, setUploadPreview] = useState<UploadPreviewResponse | null>(null)
   const [confirmedMapping, setConfirmedMapping] = useState<ColumnMapping | null>(null)
@@ -895,9 +912,15 @@ export default function SalesUploadPage() {
 
       {/* Page title */}
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Upload Sales Report</h1>
-      <p className="text-gray-600 mb-8">
-        Upload a spreadsheet from {contractName} to calculate and verify royalties.
-      </p>
+      {isInboxSource ? (
+        <p className="text-gray-600 mb-8">
+          Processing emailed report from {contractName}.
+        </p>
+      ) : (
+        <p className="text-gray-600 mb-8">
+          Upload a spreadsheet from {contractName} to calculate and verify royalties.
+        </p>
+      )}
 
       {/* Step indicator */}
       <StepIndicator currentStep={step} />
@@ -916,6 +939,7 @@ export default function SalesUploadPage() {
             setOverrideIntent={setOverrideIntent}
             contractStartDate={contract?.contract_start_date}
             contractEndDate={contract?.contract_end_date}
+            isInboxSource={isInboxSource}
           />
         )}
 

@@ -1,11 +1,21 @@
 /**
- * Tests for Inbox Review Page
+ * Tests for Inbox Review Page (redesigned)
+ *
+ * Covers three contract-match states, confidence pill styles, "matched on" tags,
+ * attachment preview strip, detected period row, action button states, and
+ * post-confirm redirect behaviour.
  */
 
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { useParams, useRouter } from 'next/navigation'
 import InboxReviewPage from '@/app/(app)/inbox/[id]/page'
-import { getInboundReports, getContracts, confirmReport, rejectReport, ApiError } from '@/lib/api'
+import {
+  getInboundReports,
+  getContracts,
+  confirmReport,
+  rejectReport,
+  ApiError,
+} from '@/lib/api'
 import type { InboundReport, Contract } from '@/types'
 
 jest.mock('next/navigation', () => ({
@@ -34,6 +44,10 @@ jest.mock('@/lib/api', () => ({
     (err as { status: number }).status === 401,
 }))
 
+// ---------------------------------------------------------------------------
+// Factories
+// ---------------------------------------------------------------------------
+
 const makeReport = (overrides: Partial<InboundReport> = {}): InboundReport => ({
   id: 'report-1',
   user_id: 'user-1',
@@ -46,15 +60,19 @@ const makeReport = (overrides: Partial<InboundReport> = {}): InboundReport => ({
   match_confidence: 'high',
   status: 'pending',
   contract_name: 'Sunrise Apparel License',
+  candidate_contract_ids: null,
+  suggested_period_start: null,
+  suggested_period_end: null,
+  sales_period_id: null,
   ...overrides,
 })
 
-const makeContract = (id: string, name: string): Contract => ({
+const makeContract = (id: string, name: string, licenseeOverride?: string): Contract => ({
   id,
   user_id: 'user-1',
   status: 'active',
   filename: 'contract.pdf',
-  licensee_name: name,
+  licensee_name: licenseeOverride ?? name,
   contract_start_date: '2026-01-01',
   contract_end_date: '2026-12-31',
   royalty_rate: 0.1,
@@ -72,6 +90,10 @@ const makeContract = (id: string, name: string): Contract => ({
   updated_at: '2026-01-01T00:00:00Z',
 })
 
+// ---------------------------------------------------------------------------
+// Test suite
+// ---------------------------------------------------------------------------
+
 describe('Inbox Review Page', () => {
   const mockPush = jest.fn()
   const mockGetInboundReports = getInboundReports as jest.MockedFunction<typeof getInboundReports>
@@ -84,90 +106,18 @@ describe('Inbox Review Page', () => {
     ;(useRouter as jest.Mock).mockReturnValue({ push: mockPush })
     ;(useParams as jest.Mock).mockReturnValue({ id: 'report-1' })
     mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+    mockConfirmReport.mockResolvedValue({ redirect_url: null })
+    mockRejectReport.mockResolvedValue(undefined)
   })
+
+  // =========================================================================
+  // Loading / error states
+  // =========================================================================
 
   it('shows loading state initially', () => {
     mockGetInboundReports.mockImplementation(() => new Promise(() => {}))
     render(<InboxReviewPage />)
     expect(screen.getByText(/loading/i)).toBeInTheDocument()
-  })
-
-  it('displays report details after loading', async () => {
-    mockGetInboundReports.mockResolvedValue([makeReport()])
-    render(<InboxReviewPage />)
-    await waitFor(() => {
-      expect(screen.getByText('licensee@example.com')).toBeInTheDocument()
-      expect(screen.getByText('Q4 Royalty Report')).toBeInTheDocument()
-      expect(screen.getByText('report.xlsx')).toBeInTheDocument()
-    })
-  })
-
-  it('displays matched contract name', async () => {
-    mockGetInboundReports.mockResolvedValue([makeReport({ contract_name: 'Sunrise Apparel License' })])
-    render(<InboxReviewPage />)
-    await waitFor(() => {
-      expect(screen.getByText('Sunrise Apparel License')).toBeInTheDocument()
-    })
-  })
-
-  it('shows contract selector dropdown for unmatched report', async () => {
-    mockGetInboundReports.mockResolvedValue([
-      makeReport({ contract_id: null, contract_name: null, match_confidence: 'none' }),
-    ])
-    render(<InboxReviewPage />)
-    await waitFor(() => {
-      expect(screen.getByRole('combobox')).toBeInTheDocument()
-    })
-  })
-
-  it('renders Confirm & Process button', async () => {
-    mockGetInboundReports.mockResolvedValue([makeReport()])
-    render(<InboxReviewPage />)
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument()
-    })
-  })
-
-  it('renders Reject button', async () => {
-    mockGetInboundReports.mockResolvedValue([makeReport()])
-    render(<InboxReviewPage />)
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument()
-    })
-  })
-
-  it('calls confirmReport and navigates to inbox on confirm', async () => {
-    mockGetInboundReports.mockResolvedValue([makeReport()])
-    mockConfirmReport.mockResolvedValue(undefined)
-    render(<InboxReviewPage />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /confirm/i })).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: /confirm/i }))
-
-    await waitFor(() => {
-      expect(mockConfirmReport).toHaveBeenCalledWith('report-1', undefined)
-      expect(mockPush).toHaveBeenCalledWith('/inbox')
-    })
-  })
-
-  it('calls rejectReport and navigates to inbox on reject', async () => {
-    mockGetInboundReports.mockResolvedValue([makeReport()])
-    mockRejectReport.mockResolvedValue(undefined)
-    render(<InboxReviewPage />)
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument()
-    })
-
-    fireEvent.click(screen.getByRole('button', { name: /reject/i }))
-
-    await waitFor(() => {
-      expect(mockRejectReport).toHaveBeenCalledWith('report-1')
-      expect(mockPush).toHaveBeenCalledWith('/inbox')
-    })
   })
 
   it('shows error when report not found', async () => {
@@ -203,21 +153,446 @@ describe('Inbox Review Page', () => {
     })
   })
 
-  it('disables action buttons for already confirmed report', async () => {
-    mockGetInboundReports.mockResolvedValue([makeReport({ status: 'confirmed' })])
-    render(<InboxReviewPage />)
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /confirm/i })).toBeDisabled()
-      expect(screen.getByRole('button', { name: /reject/i })).toBeDisabled()
+  // =========================================================================
+  // 1. Auto-matched (high confidence)
+  // =========================================================================
+
+  describe('Auto-matched state (high confidence)', () => {
+    it('renders green card with matched contract name', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText('Sunrise Apparel License')).toBeInTheDocument()
+      })
+      // The matched contract card should be green
+      const matchedText = screen.getByText('Sunrise Apparel License')
+      const card = matchedText.closest('[class*="green"]') ?? matchedText.closest('[data-testid="auto-match-card"]')
+      expect(card).toBeTruthy()
+    })
+
+    it('shows "Wrong match?" toggle', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /wrong match/i })).toBeInTheDocument()
+      })
+    })
+
+    it('clicking "Wrong match?" reveals contract search/select state', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /wrong match/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /wrong match/i }))
+
+      await waitFor(() => {
+        // Should reveal a select/combobox to choose a different contract
+        expect(screen.getByRole('combobox')).toBeInTheDocument()
+      })
     })
   })
 
-  it('disables action buttons for already rejected report', async () => {
-    mockGetInboundReports.mockResolvedValue([makeReport({ status: 'rejected' })])
+  // =========================================================================
+  // 2. Suggestions (medium confidence)
+  // =========================================================================
+
+  describe('Suggestions state (medium confidence)', () => {
+    it('renders amber header indicating suggestions', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: null,
+          contract_name: null,
+          match_confidence: 'medium',
+          candidate_contract_ids: ['contract-1', 'contract-2'],
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+        makeContract('contract-2', 'Blue River Textiles'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText(/suggested match/i)).toBeInTheDocument()
+      })
+    })
+
+    it('renders candidate suggestion cards with contract names', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: null,
+          contract_name: null,
+          match_confidence: 'medium',
+          candidate_contract_ids: ['contract-1', 'contract-2'],
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+        makeContract('contract-2', 'Blue River Textiles'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText('Sunrise Apparel License')).toBeInTheDocument()
+        expect(screen.getByText('Blue River Textiles')).toBeInTheDocument()
+      })
+    })
+
+    it('renders confidence pill with green style on the auto-match card (high confidence)', async () => {
+      // The high-confidence auto-match card itself renders a green confidence pill
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: 'contract-1',
+          contract_name: 'Sunrise Apparel License',
+          match_confidence: 'high',
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        // Auto-matched state renders a green confidence pill (score >= 80)
+        const greenPill = document.querySelector('.bg-green-100.text-green-700')
+        expect(greenPill).toBeTruthy()
+      })
+    })
+
+    it('renders confidence pill with amber style for score 50-79', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: null,
+          contract_name: null,
+          match_confidence: 'medium',
+          candidate_contract_ids: ['contract-1'],
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        // At medium confidence, amber pill should be present
+        const amberPill = document.querySelector('.bg-amber-100.text-amber-700')
+        expect(amberPill).toBeTruthy()
+      })
+    })
+
+    it('clicking a suggestion card selects that contract', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: null,
+          contract_name: null,
+          match_confidence: 'medium',
+          candidate_contract_ids: ['contract-1'],
+        }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText('Sunrise Apparel License')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByText('Sunrise Apparel License'))
+
+      await waitFor(() => {
+        // After selection, "Confirm & Open Upload Wizard" should be enabled
+        const confirmWizardBtn = screen.getByRole('button', { name: /confirm.*open.*wizard/i })
+        expect(confirmWizardBtn).not.toBeDisabled()
+      })
+    })
+  })
+
+  // =========================================================================
+  // 3. No match
+  // =========================================================================
+
+  describe('No match state', () => {
+    it('renders amber header indicating no match', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: null, contract_name: null, match_confidence: 'none', candidate_contract_ids: null }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText(/no contract matched/i)).toBeInTheDocument()
+      })
+    })
+
+    it('renders searchable select for all active contracts', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: null, contract_name: null, match_confidence: 'none', candidate_contract_ids: null }),
+      ])
+      mockGetContracts.mockResolvedValue([makeContract('contract-1', 'Sunrise Apparel License')])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('combobox')).toBeInTheDocument()
+      })
+    })
+
+    it('lists all active contracts in the select', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: null, contract_name: null, match_confidence: 'none', candidate_contract_ids: null }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License'),
+        makeContract('contract-2', 'Blue River Textiles'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText('Sunrise Apparel License')).toBeInTheDocument()
+        expect(screen.getByText('Blue River Textiles')).toBeInTheDocument()
+      })
+    })
+  })
+
+  // =========================================================================
+  // 4. Attachment preview strip
+  // =========================================================================
+
+  describe('Attachment preview strip', () => {
+    it('shows filename in preview strip', async () => {
+      mockGetInboundReports.mockResolvedValue([makeReport({ attachment_filename: 'q4-report.xlsx' })])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText('q4-report.xlsx')).toBeInTheDocument()
+      })
+    })
+
+    it('shows "No attachment" badge when attachment is absent', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ attachment_filename: null, attachment_path: null }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText(/no attachment/i)).toBeInTheDocument()
+      })
+    })
+  })
+
+  // =========================================================================
+  // 5. Detected period row
+  // =========================================================================
+
+  describe('Detected period row', () => {
+    it('displays detected period when suggested dates are present', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          suggested_period_start: '2025-07-01',
+          suggested_period_end: '2025-09-30',
+        }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText(/detected period/i)).toBeInTheDocument()
+      })
+    })
+
+    it('shows a provenance badge next to the detected period', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          suggested_period_start: '2025-07-01',
+          suggested_period_end: '2025-09-30',
+        }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText(/from attachment/i)).toBeInTheDocument()
+      })
+    })
+
+    it('hides period row when no period detected', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ suggested_period_start: null, suggested_period_end: null }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.queryByText(/detected period/i)).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  // =========================================================================
+  // 6. Action buttons
+  // =========================================================================
+
+  describe('Action buttons', () => {
+    it('"Confirm & Open Upload Wizard" is disabled when no contract is selected', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: null, contract_name: null, match_confidence: 'none', candidate_contract_ids: null }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        const btn = screen.getByRole('button', { name: /confirm.*open.*wizard/i })
+        expect(btn).toBeDisabled()
+      })
+    })
+
+    it('"Confirm & Open Upload Wizard" is enabled when a contract is matched', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        const btn = screen.getByRole('button', { name: /confirm.*open.*wizard/i })
+        expect(btn).not.toBeDisabled()
+      })
+    })
+
+    it('"Confirm & Open Upload Wizard" calls confirm with open_wizard=true and redirects', async () => {
+      const redirectUrl = '/sales/upload?contract_id=contract-1&report_id=report-1&source=inbox'
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      mockConfirmReport.mockResolvedValue({ redirect_url: redirectUrl })
+      render(<InboxReviewPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm.*open.*wizard/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm.*open.*wizard/i }))
+
+      await waitFor(() => {
+        expect(mockConfirmReport).toHaveBeenCalledWith(
+          'report-1',
+          'contract-1',
+          true
+        )
+        expect(mockPush).toHaveBeenCalledWith(redirectUrl)
+      })
+    })
+
+    it('"Confirm Only" calls confirm with open_wizard=false and redirects to /inbox', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      mockConfirmReport.mockResolvedValue({ redirect_url: null })
+      render(<InboxReviewPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm only/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm only/i }))
+
+      await waitFor(() => {
+        expect(mockConfirmReport).toHaveBeenCalledWith(
+          'report-1',
+          'contract-1',
+          false
+        )
+        expect(mockPush).toHaveBeenCalledWith('/inbox')
+      })
+    })
+
+    it('"Reject Report" calls rejectReport and redirects to /inbox', async () => {
+      mockGetInboundReports.mockResolvedValue([makeReport()])
+      render(<InboxReviewPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /reject/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /reject/i }))
+
+      await waitFor(() => {
+        expect(mockRejectReport).toHaveBeenCalledWith('report-1')
+        expect(mockPush).toHaveBeenCalledWith('/inbox')
+      })
+    })
+
+    it('disables all action buttons for confirmed report', async () => {
+      mockGetInboundReports.mockResolvedValue([makeReport({ status: 'confirmed' })])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm.*open.*wizard/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: /confirm only/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: /reject/i })).toBeDisabled()
+      })
+    })
+
+    it('disables all action buttons for rejected report', async () => {
+      mockGetInboundReports.mockResolvedValue([makeReport({ status: 'rejected' })])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm.*open.*wizard/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: /confirm only/i })).toBeDisabled()
+        expect(screen.getByRole('button', { name: /reject/i })).toBeDisabled()
+      })
+    })
+
+    it('shows action error when confirmReport throws', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      mockConfirmReport.mockRejectedValue(new Error('Server error'))
+      render(<InboxReviewPage />)
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /confirm only/i })).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByRole('button', { name: /confirm only/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/server error/i)).toBeInTheDocument()
+      })
+    })
+  })
+
+  // =========================================================================
+  // 7. Multi-contract callout
+  // =========================================================================
+
+  describe('Multi-contract callout', () => {
+    it('shows informational callout when licensee has multiple active contracts', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({
+          contract_id: 'contract-1',
+          contract_name: 'Sunrise Apparel License',
+          match_confidence: 'high',
+        }),
+      ])
+      // Same licensee_name, different contracts
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License', 'Sunrise Apparel Co.'),
+        makeContract('contract-2', 'Sunrise Apparel License 2', 'Sunrise Apparel Co.'),
+        makeContract('contract-3', 'Sunrise Apparel License 3', 'Sunrise Apparel Co.'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.getByText(/multiple.*contract/i)).toBeInTheDocument()
+      })
+    })
+
+    it('does not show multi-contract callout when licensee has one contract', async () => {
+      mockGetInboundReports.mockResolvedValue([
+        makeReport({ contract_id: 'contract-1', contract_name: 'Sunrise Apparel License', match_confidence: 'high' }),
+      ])
+      mockGetContracts.mockResolvedValue([
+        makeContract('contract-1', 'Sunrise Apparel License', 'Sunrise Apparel Co.'),
+      ])
+      render(<InboxReviewPage />)
+      await waitFor(() => {
+        expect(screen.queryByText(/multiple.*contract/i)).not.toBeInTheDocument()
+      })
+    })
+  })
+
+  // =========================================================================
+  // Legacy tests updated for new API
+  // =========================================================================
+
+  it('displays report sender, subject, and attachment filename', async () => {
+    mockGetInboundReports.mockResolvedValue([makeReport()])
     render(<InboxReviewPage />)
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /confirm/i })).toBeDisabled()
-      expect(screen.getByRole('button', { name: /reject/i })).toBeDisabled()
+      expect(screen.getByText('licensee@example.com')).toBeInTheDocument()
+      expect(screen.getByText('Q4 Royalty Report')).toBeInTheDocument()
+      expect(screen.getByText('report.xlsx')).toBeInTheDocument()
     })
   })
 })

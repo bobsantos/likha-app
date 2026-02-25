@@ -1,5 +1,10 @@
 /**
  * Inbox Review Page - View and action a single inbound report
+ *
+ * Supports three contract-match states:
+ * 1. Auto-matched (high confidence) — green card + "Wrong match?" toggle
+ * 2. Suggestions (medium confidence) — amber header + clickable suggestion cards
+ * 3. No match — amber header + searchable select of all active contracts
  */
 
 'use client'
@@ -18,6 +23,8 @@ import {
   XCircle,
   AlertTriangle,
   RefreshCw,
+  Info,
+  ChevronDown,
 } from 'lucide-react'
 import {
   getInboundReports,
@@ -28,6 +35,30 @@ import {
 } from '@/lib/api'
 import type { InboundReport, Contract } from '@/types'
 
+// ---------------------------------------------------------------------------
+// Helper utilities
+// ---------------------------------------------------------------------------
+
+function formatDate(dateString: string): string {
+  try {
+    return format(new Date(dateString), 'MMM d, yyyy h:mm a')
+  } catch {
+    return 'N/A'
+  }
+}
+
+function formatShortDate(isoDate: string): string {
+  try {
+    return format(new Date(isoDate + 'T00:00:00'), 'MMM d, yyyy')
+  } catch {
+    return isoDate
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Status badge
+// ---------------------------------------------------------------------------
+
 function StatusBadge({ status }: { status: InboundReport['status'] }) {
   if (status === 'pending') {
     return (
@@ -36,11 +67,11 @@ function StatusBadge({ status }: { status: InboundReport['status'] }) {
       </span>
     )
   }
-  if (status === 'confirmed') {
+  if (status === 'confirmed' || status === 'processed') {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700">
         <CheckCircle className="w-3.5 h-3.5" />
-        Confirmed
+        {status === 'processed' ? 'Processed' : 'Confirmed'}
       </span>
     )
   }
@@ -52,13 +83,287 @@ function StatusBadge({ status }: { status: InboundReport['status'] }) {
   )
 }
 
-function formatDate(dateString: string): string {
-  try {
-    return format(new Date(dateString), 'MMM d, yyyy h:mm a')
-  } catch {
-    return 'N/A'
+// ---------------------------------------------------------------------------
+// Confidence pill
+// ---------------------------------------------------------------------------
+
+/**
+ * A pill that conveys how confident the auto-match is.
+ * score >= 80 → green, 50-79 → amber, <50 → gray
+ */
+function ConfidencePill({ score, label }: { score: number; label?: string }) {
+  let cls: string
+  let text: string
+
+  if (score >= 80) {
+    cls = 'bg-green-100 text-green-700'
+    text = label ?? 'Strong match'
+  } else if (score >= 50) {
+    cls = 'bg-amber-100 text-amber-700'
+    text = label ?? 'Possible match'
+  } else {
+    cls = 'bg-gray-100 text-gray-500'
+    text = label ?? 'Weak match'
   }
+
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${cls}`}>
+      {text}
+    </span>
+  )
 }
+
+// ---------------------------------------------------------------------------
+// Suggestion card
+// ---------------------------------------------------------------------------
+
+interface SuggestionCardProps {
+  contract: Contract
+  isSelected: boolean
+  onSelect: () => void
+}
+
+/**
+ * Confidence score is approximated from match_confidence for display purposes.
+ * When the backend returns per-candidate scores they can be threaded in.
+ * For now: medium = 65 (amber pill), high = 90 (green pill).
+ */
+function SuggestionCard({ contract, isSelected, onSelect }: SuggestionCardProps) {
+  // Medium confidence candidates: show amber pill (score 65)
+  const score = 65
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`
+        w-full text-left px-4 py-3 rounded-lg border transition-colors
+        ${isSelected
+          ? 'border-primary-500 bg-primary-50 ring-1 ring-primary-300'
+          : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
+        }
+      `}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-medium text-gray-900 text-sm">
+          {contract.licensee_name ?? contract.filename ?? 'Untitled'}
+        </span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <ConfidencePill score={score} />
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+            licensee name
+          </span>
+        </div>
+      </div>
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Contract match section (the three states)
+// ---------------------------------------------------------------------------
+
+interface ContractMatchSectionProps {
+  report: InboundReport
+  contracts: Contract[]
+  selectedContractId: string
+  setSelectedContractId: (id: string) => void
+  isSettled: boolean
+}
+
+function ContractMatchSection({
+  report,
+  contracts,
+  selectedContractId,
+  setSelectedContractId,
+  isSettled,
+}: ContractMatchSectionProps) {
+  const [showWrongMatch, setShowWrongMatch] = useState(false)
+
+  // Determine candidate contracts when there are candidate_contract_ids
+  const candidateContracts =
+    report.candidate_contract_ids && report.candidate_contract_ids.length > 0
+      ? contracts.filter((c) => report.candidate_contract_ids!.includes(c.id))
+      : []
+
+  // ---- State 1: Auto-matched (high confidence) ----
+  if (report.match_confidence === 'high' && report.contract_name && !showWrongMatch) {
+    return (
+      <div className="space-y-3">
+        <div
+          data-testid="auto-match-card"
+          className="flex items-center justify-between gap-3 p-3 bg-green-50 border border-green-200 rounded-lg"
+        >
+          <div className="flex items-center gap-3">
+            <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+            <div>
+              <p className="text-sm text-green-700 font-medium">Auto-matched contract</p>
+              <p className="text-green-900 font-semibold">{report.contract_name}</p>
+            </div>
+          </div>
+          <ConfidencePill score={90} label="Strong match" />
+        </div>
+        {!isSettled && (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => {
+                setShowWrongMatch(true)
+                setSelectedContractId('')
+              }}
+              className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2"
+            >
+              Wrong match?
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ---- State 2: Suggestions (medium confidence) ----
+  if (
+    report.match_confidence === 'medium' &&
+    candidateContracts.length > 0 &&
+    !showWrongMatch
+  ) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-800">Suggested match</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              Select the correct contract below.
+            </p>
+          </div>
+        </div>
+        <div className="space-y-2">
+          {candidateContracts.map((contract) => (
+            <SuggestionCard
+              key={contract.id}
+              contract={contract}
+              isSelected={selectedContractId === contract.id}
+              onSelect={() => setSelectedContractId(contract.id)}
+            />
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // ---- State 3: No match (or "Wrong match?" opened) ----
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+        <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+        <p className="text-sm text-amber-700">
+          No contract matched automatically. Select a contract below.
+        </p>
+      </div>
+      <div>
+        <label htmlFor="contract-select" className="block text-sm font-medium text-gray-700 mb-1">
+          Select Contract
+        </label>
+        <div className="relative">
+          <select
+            id="contract-select"
+            value={selectedContractId}
+            onChange={(e) => setSelectedContractId(e.target.value)}
+            disabled={isSettled}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 pr-8 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed appearance-none"
+          >
+            <option value="">-- Select a contract --</option>
+            {contracts.map((contract) => (
+              <option key={contract.id} value={contract.id}>
+                {contract.licensee_name ?? contract.filename ?? 'Untitled'}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Attachment preview strip
+// ---------------------------------------------------------------------------
+
+function AttachmentPreviewStrip({ filename }: { filename: string | null }) {
+  if (!filename) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+        <FileSpreadsheet className="w-4 h-4 text-gray-400 flex-shrink-0" />
+        <span className="text-sm text-gray-500 italic">No attachment</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
+      <FileSpreadsheet className="w-4 h-4 text-gray-500 flex-shrink-0" />
+      <span className="text-sm font-medium text-gray-900 truncate">{filename}</span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Detected period row
+// ---------------------------------------------------------------------------
+
+interface DetectedPeriodRowProps {
+  periodStart: string | null
+  periodEnd: string | null
+}
+
+function DetectedPeriodRow({ periodStart, periodEnd }: DetectedPeriodRowProps) {
+  if (!periodStart || !periodEnd) return null
+
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5 bg-blue-50 border border-blue-200 rounded-lg">
+      <Calendar className="w-4 h-4 text-blue-500 flex-shrink-0" />
+      <div className="flex-1 min-w-0">
+        <span className="text-sm font-medium text-blue-900">Detected period: </span>
+        <span className="text-sm text-blue-800">
+          {formatShortDate(periodStart)} – {formatShortDate(periodEnd)}
+        </span>
+      </div>
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-600 flex-shrink-0">
+        from attachment
+      </span>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Multi-contract callout
+// ---------------------------------------------------------------------------
+
+interface MultiContractCalloutProps {
+  licenseeContracts: Contract[]
+  licenseeName: string | null
+}
+
+function MultiContractCallout({ licenseeContracts, licenseeName }: MultiContractCalloutProps) {
+  if (licenseeContracts.length <= 1) return null
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+      <Info className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+      <p className="text-sm text-blue-800">
+        <span className="font-semibold">{licenseeName ?? 'This licensee'}</span> has{' '}
+        {licenseeContracts.length} active multiple contracts. If this report covers multiple
+        product lines, you may need to process it once per contract.
+      </p>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
 
 export default function InboxReviewPage() {
   const params = useParams()
@@ -71,7 +376,8 @@ export default function InboxReviewPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
-  const [confirming, setConfirming] = useState(false)
+  const [confirmingWizard, setConfirmingWizard] = useState(false)
+  const [confirmingOnly, setConfirmingOnly] = useState(false)
   const [rejecting, setRejecting] = useState(false)
 
   const fetchData = async () => {
@@ -92,7 +398,14 @@ export default function InboxReviewPage() {
       }
 
       setReport(found)
-      setContracts(contractList.filter((c) => c.status === 'active'))
+      const activeContracts = contractList.filter((c) => c.status === 'active')
+      setContracts(activeContracts)
+
+      // Pre-select the auto-matched contract if present
+      if (found.contract_id) {
+        setSelectedContractId(found.contract_id)
+      }
+
       setLoading(false)
     } catch (err) {
       if (isUnauthorizedError(err)) {
@@ -110,18 +423,35 @@ export default function InboxReviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reportId])
 
-  const handleConfirm = async () => {
-    if (!report || confirming) return
+  const handleConfirmWizard = async () => {
+    if (!report || confirmingWizard) return
     setActionError(null)
-    setConfirming(true)
+    setConfirmingWizard(true)
     try {
-      // Only pass contractId when the user explicitly selected one from the dropdown
       const contractId = selectedContractId || undefined
-      await confirmReport(report.id, contractId)
+      const result = await confirmReport(report.id, contractId, true)
+      if (result.redirect_url) {
+        router.push(result.redirect_url)
+      } else {
+        router.push('/inbox')
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to confirm report.')
+      setConfirmingWizard(false)
+    }
+  }
+
+  const handleConfirmOnly = async () => {
+    if (!report || confirmingOnly) return
+    setActionError(null)
+    setConfirmingOnly(true)
+    try {
+      const contractId = selectedContractId || undefined
+      await confirmReport(report.id, contractId, false)
       router.push('/inbox')
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to confirm report.')
-      setConfirming(false)
+      setConfirmingOnly(false)
     }
   }
 
@@ -180,6 +510,18 @@ export default function InboxReviewPage() {
   }
 
   const isSettled = report.status !== 'pending'
+  const isActing = confirmingWizard || confirmingOnly || rejecting
+
+  // Determine whether the confirm buttons should be enabled
+  // A contract must be selected (either auto-matched or user-chosen)
+  const hasContractSelected = !!selectedContractId
+
+  // Determine licensee name for multi-contract callout
+  const matchedContract = contracts.find((c) => c.id === selectedContractId)
+  const licenseeName = matchedContract?.licensee_name ?? report.contract_name
+  const licenseeContracts = licenseeName
+    ? contracts.filter((c) => c.licensee_name === licenseeName)
+    : []
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -205,7 +547,7 @@ export default function InboxReviewPage() {
       </div>
 
       {/* Report Details Card */}
-      <div className="card mb-6">
+      <div className="card mb-4">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Report Details</h2>
 
         <div className="space-y-4">
@@ -235,85 +577,78 @@ export default function InboxReviewPage() {
             </div>
           </div>
 
-          {report.attachment_filename && (
-            <div className="flex items-start gap-3">
-              <FileSpreadsheet className="w-5 h-5 text-gray-400 mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="text-sm text-gray-600">Attachment</p>
-                <p className="font-medium text-gray-900">{report.attachment_filename}</p>
-              </div>
-            </div>
-          )}
+          {/* Attachment preview strip */}
+          <AttachmentPreviewStrip filename={report.attachment_filename} />
+
+          {/* Detected period row (shown only when present) */}
+          <DetectedPeriodRow
+            periodStart={report.suggested_period_start}
+            periodEnd={report.suggested_period_end}
+          />
         </div>
       </div>
 
       {/* Contract Matching Card */}
-      <div className="card mb-6">
+      <div className="card mb-4">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Contract Match</h2>
 
-        {report.contract_name ? (
-          <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-            <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-            <div>
-              <p className="text-sm text-green-700 font-medium">Matched contract</p>
-              <p className="text-green-900 font-semibold">{report.contract_name}</p>
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div className="flex items-center gap-2 mb-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0" />
-              <p className="text-sm text-amber-700">
-                No contract matched automatically. Select a contract below.
-              </p>
-            </div>
-            <label htmlFor="contract-select" className="block text-sm font-medium text-gray-700 mb-1">
-              Select Contract
-            </label>
-            <select
-              id="contract-select"
-              value={selectedContractId}
-              onChange={(e) => setSelectedContractId(e.target.value)}
-              disabled={isSettled}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <option value="">-- Select a contract --</option>
-              {contracts.map((contract) => (
-                <option key={contract.id} value={contract.id}>
-                  {contract.licensee_name ?? contract.filename ?? 'Untitled'}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        <ContractMatchSection
+          report={report}
+          contracts={contracts}
+          selectedContractId={selectedContractId}
+          setSelectedContractId={setSelectedContractId}
+          isSettled={isSettled}
+        />
       </div>
+
+      {/* Multi-contract callout */}
+      {licenseeContracts.length > 1 && (
+        <div className="mb-4">
+          <MultiContractCallout
+            licenseeContracts={licenseeContracts}
+            licenseeName={licenseeName}
+          />
+        </div>
+      )}
 
       {/* Action Error */}
       {actionError && (
-        <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg mb-6">
+        <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-lg mb-4">
           <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
           <p className="text-sm text-red-700">{actionError}</p>
         </div>
       )}
 
       {/* Action Buttons */}
-      <div className="flex gap-3">
+      <div className="flex flex-wrap gap-3">
+        {/* Primary: Confirm & Open Upload Wizard */}
         <button
-          onClick={handleConfirm}
-          disabled={isSettled || confirming || rejecting}
+          onClick={handleConfirmWizard}
+          disabled={isSettled || isActing || !hasContractSelected}
           className="btn-primary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <CheckCircle className="w-4 h-4" />
-          {confirming ? 'Confirming...' : 'Confirm & Process'}
+          {confirmingWizard ? 'Opening wizard...' : 'Confirm & Open Upload Wizard'}
         </button>
 
+        {/* Secondary: Confirm Only */}
+        <button
+          onClick={handleConfirmOnly}
+          disabled={isSettled || isActing}
+          className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <CheckCircle className="w-4 h-4" />
+          {confirmingOnly ? 'Confirming...' : 'Confirm Only'}
+        </button>
+
+        {/* Destructive: Reject */}
         <button
           onClick={handleReject}
-          disabled={isSettled || confirming || rejecting}
+          disabled={isSettled || isActing}
           className="btn-secondary inline-flex items-center gap-2 text-red-600 hover:text-red-700 border-red-200 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <XCircle className="w-4 h-4" />
-          {rejecting ? 'Rejecting...' : 'Reject'}
+          {rejecting ? 'Rejecting...' : 'Reject Report'}
         </button>
       </div>
 

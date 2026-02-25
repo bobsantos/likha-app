@@ -4,7 +4,7 @@
 
 import { supabase } from './supabase'
 import { getApiUrl } from './url-utils'
-import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse, ConfirmSalesUploadResponse, DashboardSummary, ContractTotals, InboundReport, InboundAddressResponse, PeriodCheckResponse } from '@/types'
+import type { Contract, UploadPreviewResponse, UploadConfirmRequest, SalesPeriod, SavedMappingResponse, ConfirmSalesUploadResponse, DashboardSummary, ContractTotals, InboundReport, InboundAddressResponse, PeriodCheckResponse, ConfirmReportRequest, ConfirmReportResponse } from '@/types'
 
 // Re-export so existing imports of getApiUrl from '@/lib/api' keep working.
 export { getApiUrl } from './url-utils'
@@ -415,10 +415,14 @@ export async function getInboundReports(): Promise<InboundReport[]> {
   return response.json()
 }
 
-export async function confirmReport(reportId: string, contractId?: string): Promise<void> {
+export async function confirmReport(
+  reportId: string,
+  contractId?: string,
+  openWizard: boolean = false
+): Promise<ConfirmReportResponse> {
   const headers = await getAuthHeaders()
 
-  const body: { contract_id?: string } = {}
+  const body: ConfirmReportRequest = { open_wizard: openWizard }
   if (contractId) {
     body.contract_id = contractId
   }
@@ -435,6 +439,34 @@ export async function confirmReport(reportId: string, contractId?: string): Prom
       typeof responseBody?.detail === 'string' ? responseBody.detail : 'Failed to confirm report',
       response.status,
       responseBody
+    )
+  }
+
+  return response.json()
+}
+
+/**
+ * Link a sales period back to an inbound report after the upload wizard completes.
+ * Called after a successful confirmSalesUpload when source=inbox.
+ */
+export async function linkSalesPeriodToReport(
+  reportId: string,
+  salesPeriodId: string
+): Promise<void> {
+  const headers = await getAuthHeaders()
+
+  const response = await fetch(`${getResolvedApiUrl()}/api/email-intake/${reportId}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ sales_period_id: salesPeriodId }),
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new ApiError(
+      extractErrorMessage(body, 'Failed to link sales period to report'),
+      response.status,
+      body
     )
   }
 }
