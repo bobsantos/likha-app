@@ -2,9 +2,9 @@
  * Tests for Contract Detail Page
  */
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import ContractDetailPage from '@/app/(app)/contracts/[id]/page'
 import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, downloadReportTemplate } from '@/lib/api'
 import type { Contract, SalesPeriod, ContractTotals } from '@/types'
@@ -13,6 +13,7 @@ import type { Contract, SalesPeriod, ContractTotals } from '@/types'
 jest.mock('next/navigation', () => ({
   useParams: jest.fn(),
   useRouter: jest.fn(),
+  useSearchParams: jest.fn(),
 }))
 
 // Mock API
@@ -58,6 +59,8 @@ describe('Contract Detail Page', () => {
     status: 'active',
     filename: 'acme-contract.pdf',
     licensee_name: 'Acme Corp',
+    licensee_email: null,
+    agreement_number: null,
     contract_start_date: '2024-01-01',
     contract_end_date: '2025-12-31',
     royalty_rate: '15%',
@@ -99,6 +102,7 @@ describe('Contract Detail Page', () => {
     jest.clearAllMocks()
     ;(useParams as jest.Mock).mockReturnValue({ id: 'contract-1' })
     ;(useRouter as jest.Mock).mockReturnValue({ push: mockPush })
+    ;(useSearchParams as jest.Mock).mockReturnValue({ get: () => null })
   })
 
   it('shows loading skeleton initially', () => {
@@ -1137,6 +1141,266 @@ describe('Contract Detail Page', () => {
       await waitFor(() => {
         const downloadButton = screen.getByRole('button', { name: /download source report/i })
         expect(downloadButton).toHaveAttribute('title', 'Download source file')
+      })
+    })
+  })
+
+  // ============================================================
+  // licensee_email display
+  // ============================================================
+
+  describe('licensee_email field', () => {
+    it('displays licensee_email when present', async () => {
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        licensee_email: 'acme@example.com',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Licensee Email')).toBeInTheDocument()
+        expect(screen.getByText('acme@example.com')).toBeInTheDocument()
+      })
+    })
+
+    it('does not display licensee_email row when value is null', async () => {
+      mockGetContract.mockResolvedValue({ ...mockContract, licensee_email: null })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+      })
+
+      expect(screen.queryByText('Licensee Email')).not.toBeInTheDocument()
+    })
+  })
+
+  // ============================================================
+  // agreement_number copyable badge
+  // ============================================================
+
+  describe('agreement_number copyable badge', () => {
+    it('displays agreement_number badge in the header when present', async () => {
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        agreement_number: 'LKH-2025-1',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('agreement-number-badge')).toBeInTheDocument()
+        expect(screen.getByTestId('agreement-number-badge')).toHaveTextContent('LKH-2025-1')
+      })
+    })
+
+    it('does not display agreement_number badge when value is null', async () => {
+      mockGetContract.mockResolvedValue({ ...mockContract, agreement_number: null })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+      })
+
+      expect(screen.queryByTestId('agreement-number-badge')).not.toBeInTheDocument()
+    })
+
+    it('does not display agreement_number in the Contract Terms list', async () => {
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        agreement_number: 'LKH-2025-1',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Contract Terms')).toBeInTheDocument()
+      })
+
+      expect(screen.queryByText('Agreement Number')).not.toBeInTheDocument()
+    })
+
+    it('copies agreement number to clipboard when badge is clicked', async () => {
+      const user = userEvent.setup()
+      const writeTextMock = jest.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: writeTextMock },
+        configurable: true,
+      })
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        agreement_number: 'LKH-2025-1',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('agreement-number-badge')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByTestId('agreement-number-badge'))
+
+      await waitFor(() => {
+        expect(writeTextMock).toHaveBeenCalledWith('LKH-2025-1')
+      })
+    })
+
+    it('shows "Copy instructions for licensee" button when agreement_number is present', async () => {
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        agreement_number: 'LKH-2025-1',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('copy-instructions-button')).toBeInTheDocument()
+      })
+    })
+
+    it('does not show "Copy instructions for licensee" button when agreement_number is null', async () => {
+      mockGetContract.mockResolvedValue({ ...mockContract, agreement_number: null })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+      })
+
+      expect(screen.queryByTestId('copy-instructions-button')).not.toBeInTheDocument()
+    })
+
+    it('copies licensee instructions to clipboard when instructions button is clicked', async () => {
+      const user = userEvent.setup()
+      const writeTextMock = jest.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: writeTextMock },
+        configurable: true,
+      })
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        agreement_number: 'LKH-2025-1',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('copy-instructions-button')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByTestId('copy-instructions-button'))
+
+      await waitFor(() => {
+        expect(writeTextMock).toHaveBeenCalledWith(
+          'Please include the following reference in your royalty report emails:\nAgreement Reference: LKH-2025-1'
+        )
+      })
+    })
+  })
+
+  // ============================================================
+  // Post-confirmation callout (?success=period_created)
+  // ============================================================
+
+  describe('Post-confirmation success callout', () => {
+    it('shows callout when ?success=period_created and agreement_number is present', async () => {
+      ;(useSearchParams as jest.Mock).mockReturnValue({ get: (key: string) => key === 'success' ? 'period_created' : null })
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        agreement_number: 'LKH-2025-1',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('success-callout')).toBeInTheDocument()
+        expect(screen.getAllByText(/LKH-2025-1/).length).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('does not show callout when agreement_number is null even if success param is set', async () => {
+      ;(useSearchParams as jest.Mock).mockReturnValue({ get: (key: string) => key === 'success' ? 'period_created' : null })
+      mockGetContract.mockResolvedValue({ ...mockContract, agreement_number: null })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+      })
+
+      expect(screen.queryByTestId('success-callout')).not.toBeInTheDocument()
+    })
+
+    it('does not show callout when success param is absent', async () => {
+      // useSearchParams returns null for success (default beforeEach mock)
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        agreement_number: 'LKH-2025-1',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getAllByText('Acme Corp').length).toBeGreaterThanOrEqual(1)
+      })
+
+      expect(screen.queryByTestId('success-callout')).not.toBeInTheDocument()
+    })
+
+    it('copies instructions when callout copy button is clicked', async () => {
+      const user = userEvent.setup()
+      const writeTextMock = jest.fn().mockResolvedValue(undefined)
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: writeTextMock },
+        configurable: true,
+      })
+      ;(useSearchParams as jest.Mock).mockReturnValue({ get: (key: string) => key === 'success' ? 'period_created' : null })
+      mockGetContract.mockResolvedValue({
+        ...mockContract,
+        agreement_number: 'LKH-2025-1',
+      })
+      mockGetSalesPeriods.mockResolvedValue([])
+      mockGetContractTotals.mockResolvedValue({ contract_id: 'contract-1', total_royalties: 0, by_year: [] })
+
+      render(<ContractDetailPage />)
+
+      await waitFor(() => {
+        expect(screen.getByTestId('success-callout-copy-button')).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByTestId('success-callout-copy-button'))
+
+      await waitFor(() => {
+        expect(writeTextMock).toHaveBeenCalledWith(
+          'Please include the following reference in your royalty report emails:\nAgreement Reference: LKH-2025-1'
+        )
       })
     })
   })

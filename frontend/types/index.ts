@@ -28,6 +28,8 @@ export interface Contract {
   status: ContractStatus
   filename: string | null
   licensee_name: string | null          // nullable for drafts (not yet reviewed)
+  licensee_email: string | null         // optional contact email for auto-matching inbound reports
+  agreement_number: string | null       // optional reference number for matching reports
   contract_start_date: string | null    // ISO date string, e.g. "2024-01-01"
   contract_end_date: string | null      // ISO date string, e.g. "2025-12-31"
   royalty_rate: RoyaltyRate | null      // nullable for drafts
@@ -117,6 +119,8 @@ export interface ApiResponse<T> {
 export interface FormValues {
   licensee_name: string
   licensor_name: string
+  licensee_email: string | null
+  agreement_number: string | null
   royalty_rate: number | object | string
   royalty_base: 'net_sales' | 'gross_sales'
   minimum_guarantee: number | null

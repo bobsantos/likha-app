@@ -11,6 +11,7 @@ import tempfile
 import os
 import time
 import logging
+from datetime import date as _date
 
 from app.models.contract import (
     Contract,
@@ -253,6 +254,31 @@ async def confirm_contract(
             detail="Contract is already active and cannot be confirmed again.",
         )
 
+    # Auto-generate the agreement number: LKH-{year}-{sequential}.
+    # Query the most recent agreement_number for this user in the current year
+    # to determine the next sequential value.
+    current_year = _date.today().year
+    year_prefix = f"LKH-{current_year}-%"
+    existing_ref = (
+        supabase_admin.table("contracts")
+        .select("agreement_number")
+        .eq("user_id", user_id)
+        .like("agreement_number", year_prefix)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_seq = 1
+    if existing_ref.data:
+        last_num = existing_ref.data[0].get("agreement_number", "")
+        # Parse the trailing integer after the last '-'
+        try:
+            last_seq = int(last_num.rsplit("-", 1)[-1])
+            next_seq = last_seq + 1
+        except (ValueError, IndexError):
+            next_seq = 1
+    agreement_number = f"LKH-{current_year}-{next_seq}"
+
     # Build update payload from confirmed fields.
     # Use model_dump() for royalty_rate so that List[RoyaltyTier] Pydantic model
     # instances are converted to plain dicts before being passed to supabase-py,
@@ -262,6 +288,8 @@ async def confirm_contract(
     update_data = {
         "status": ContractStatus.ACTIVE,
         "licensee_name": confirm_data.licensee_name,
+        "licensee_email": confirm_data.licensee_email,
+        "agreement_number": agreement_number,
         "royalty_rate": _confirm_dump["royalty_rate"],
         "royalty_base": confirm_data.royalty_base,
         "territories": confirm_data.territories,
