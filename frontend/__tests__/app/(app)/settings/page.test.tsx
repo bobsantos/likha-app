@@ -6,6 +6,7 @@ import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { useRouter } from 'next/navigation'
 import SettingsPage from '@/app/(app)/settings/page'
 import { getInboundAddress, ApiError, isUnauthorizedError } from '@/lib/api'
+import { copyToClipboard } from '@/lib/clipboard'
 
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
@@ -31,12 +32,11 @@ jest.mock('@/lib/api', () => ({
     (err as { status: number }).status === 401,
 }))
 
-// Mock clipboard API
-Object.assign(navigator, {
-  clipboard: {
-    writeText: jest.fn().mockResolvedValue(undefined),
-  },
-})
+// Mock the clipboard utility so tests are not affected by secure-context
+// restrictions in jsdom.
+jest.mock('@/lib/clipboard', () => ({
+  copyToClipboard: jest.fn().mockResolvedValue(true),
+}))
 
 describe('Settings Page', () => {
   const mockPush = jest.fn()
@@ -112,7 +112,7 @@ describe('Settings Page', () => {
     fireEvent.click(screen.getByRole('button', { name: /copy/i }))
 
     await waitFor(() => {
-      expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      expect(copyToClipboard).toHaveBeenCalledWith(
         'reports-abc123@inbound.likha.app'
       )
     })

@@ -29,6 +29,7 @@ import {
 } from 'lucide-react'
 import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, downloadReportTemplate, isUnauthorizedError } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
+import { copyToClipboard } from '@/lib/clipboard'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate, ContractTotals } from '@/types'
 
 // ---------------------------------------------------------------------------
@@ -180,34 +181,28 @@ export default function ContractDetailPage() {
   }
 
   const handleCopyAgreementNumber = async (agreementNumber: string) => {
-    try {
-      await navigator.clipboard.writeText(agreementNumber)
+    const success = await copyToClipboard(agreementNumber)
+    if (success) {
       setAgreementNumberCopied(true)
       setTimeout(() => setAgreementNumberCopied(false), 2000)
-    } catch {
-      // Clipboard API may not be available in all environments
     }
   }
 
   const handleCopyInstructions = async (agreementNumber: string) => {
     const message = `Please include the following reference in your royalty report emails:\nAgreement Reference: ${agreementNumber}`
-    try {
-      await navigator.clipboard.writeText(message)
+    const success = await copyToClipboard(message)
+    if (success) {
       setInstructionsCopied(true)
       setTimeout(() => setInstructionsCopied(false), 2000)
-    } catch {
-      // Clipboard API may not be available in all environments
     }
   }
 
   const handleCopySuccessCallout = async (agreementNumber: string) => {
     const message = `Please include the following reference in your royalty report emails:\nAgreement Reference: ${agreementNumber}`
-    try {
-      await navigator.clipboard.writeText(message)
+    const success = await copyToClipboard(message)
+    if (success) {
       setSuccessCalloutCopied(true)
       setTimeout(() => setSuccessCalloutCopied(false), 2000)
-    } catch {
-      // Clipboard API may not be available in all environments
     }
   }
 

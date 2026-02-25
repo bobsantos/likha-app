@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { AlertCircle, Copy, Check, Mail } from 'lucide-react'
 import { getInboundAddress, isUnauthorizedError } from '@/lib/api'
+import { copyToClipboard } from '@/lib/clipboard'
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -38,9 +39,11 @@ export default function SettingsPage() {
 
   const handleCopy = async () => {
     if (!inboundAddress) return
-    await navigator.clipboard.writeText(inboundAddress)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    const success = await copyToClipboard(inboundAddress)
+    if (success) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
 
   if (loading) {

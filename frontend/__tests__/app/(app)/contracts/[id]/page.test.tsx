@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import ContractDetailPage from '@/app/(app)/contracts/[id]/page'
 import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, downloadReportTemplate } from '@/lib/api'
+import { copyToClipboard } from '@/lib/clipboard'
 import type { Contract, SalesPeriod, ContractTotals } from '@/types'
 
 // Mock next/navigation
@@ -37,6 +38,12 @@ jest.mock('@/lib/api', () => ({
     err instanceof Error &&
     err.name === 'ApiError' &&
     (err as { status: number }).status === 401,
+}))
+
+// Mock the clipboard utility so tests are not affected by secure-context
+// restrictions in jsdom.
+jest.mock('@/lib/clipboard', () => ({
+  copyToClipboard: jest.fn().mockResolvedValue(true),
 }))
 
 
@@ -1235,11 +1242,7 @@ describe('Contract Detail Page', () => {
 
     it('copies agreement number to clipboard when badge is clicked', async () => {
       const user = userEvent.setup()
-      const writeTextMock = jest.fn().mockResolvedValue(undefined)
-      Object.defineProperty(navigator, 'clipboard', {
-        value: { writeText: writeTextMock },
-        configurable: true,
-      })
+      const mockCopy = copyToClipboard as jest.MockedFunction<typeof copyToClipboard>
       mockGetContract.mockResolvedValue({
         ...mockContract,
         agreement_number: 'LKH-2025-1',
@@ -1256,7 +1259,7 @@ describe('Contract Detail Page', () => {
       await user.click(screen.getByTestId('agreement-number-badge'))
 
       await waitFor(() => {
-        expect(writeTextMock).toHaveBeenCalledWith('LKH-2025-1')
+        expect(mockCopy).toHaveBeenCalledWith('LKH-2025-1')
       })
     })
 
@@ -1291,11 +1294,7 @@ describe('Contract Detail Page', () => {
 
     it('copies licensee instructions to clipboard when instructions button is clicked', async () => {
       const user = userEvent.setup()
-      const writeTextMock = jest.fn().mockResolvedValue(undefined)
-      Object.defineProperty(navigator, 'clipboard', {
-        value: { writeText: writeTextMock },
-        configurable: true,
-      })
+      const mockCopy = copyToClipboard as jest.MockedFunction<typeof copyToClipboard>
       mockGetContract.mockResolvedValue({
         ...mockContract,
         agreement_number: 'LKH-2025-1',
@@ -1312,7 +1311,7 @@ describe('Contract Detail Page', () => {
       await user.click(screen.getByTestId('copy-instructions-button'))
 
       await waitFor(() => {
-        expect(writeTextMock).toHaveBeenCalledWith(
+        expect(mockCopy).toHaveBeenCalledWith(
           'Please include the following reference in your royalty report emails:\nAgreement Reference: LKH-2025-1'
         )
       })
@@ -1376,11 +1375,7 @@ describe('Contract Detail Page', () => {
 
     it('copies instructions when callout copy button is clicked', async () => {
       const user = userEvent.setup()
-      const writeTextMock = jest.fn().mockResolvedValue(undefined)
-      Object.defineProperty(navigator, 'clipboard', {
-        value: { writeText: writeTextMock },
-        configurable: true,
-      })
+      const mockCopy = copyToClipboard as jest.MockedFunction<typeof copyToClipboard>
       ;(useSearchParams as jest.Mock).mockReturnValue({ get: (key: string) => key === 'success' ? 'period_created' : null })
       mockGetContract.mockResolvedValue({
         ...mockContract,
@@ -1398,7 +1393,7 @@ describe('Contract Detail Page', () => {
       await user.click(screen.getByTestId('success-callout-copy-button'))
 
       await waitFor(() => {
-        expect(writeTextMock).toHaveBeenCalledWith(
+        expect(mockCopy).toHaveBeenCalledWith(
           'Please include the following reference in your royalty report emails:\nAgreement Reference: LKH-2025-1'
         )
       })
