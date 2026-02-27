@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Upload, FileText, Check, AlertCircle, Loader2, ExternalLink } from 'lucide-react'
-import { ApiError, getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload, checkPeriodOverlap } from '@/lib/api'
+import { ApiError, getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload, checkPeriodOverlap, parseFromStorage } from '@/lib/api'
 import ColumnMapper from '@/components/sales-upload/column-mapper'
 import CategoryMapper from '@/components/sales-upload/category-mapper'
 import UploadPreview, { type MappedHeader } from '@/components/sales-upload/upload-preview'
@@ -61,58 +61,69 @@ function stepToVisualNumber(step: WizardStep): number {
   return 3
 }
 
-function StepIndicator({ currentStep }: { currentStep: WizardStep }) {
+function StepIndicator({
+  currentStep,
+  step1Skipped = false,
+}: {
+  currentStep: WizardStep
+  step1Skipped?: boolean
+}) {
   const currentVisual = stepToVisualNumber(currentStep)
   return (
     <nav aria-label="Upload progress" className="mb-8">
       <ol className="flex items-center">
-        {VISUAL_STEPS.map((s, i) => (
-          <li key={s.number} className="flex items-center flex-1 last:flex-none">
-            <div className="flex flex-col items-center">
-              <div
-                className={`
-                  w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold
-                  ${s.number < currentVisual
-                    ? 'bg-primary-600 text-white'
-                    : s.number === currentVisual
-                    ? 'bg-primary-600 text-white ring-2 ring-primary-200 ring-offset-2'
-                    : 'bg-gray-200 text-gray-500'
+        {VISUAL_STEPS.map((s, i) => {
+          // When step 1 was skipped via inbox auto-parse, always show it as completed
+          const isCompleted = s.number < currentVisual || (step1Skipped && s.number === 1)
+          const isCurrent = s.number === currentVisual && !(step1Skipped && s.number === 1)
+          return (
+            <li key={s.number} className="flex items-center flex-1 last:flex-none">
+              <div className="flex flex-col items-center">
+                <div
+                  className={`
+                    w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold
+                    ${isCompleted
+                      ? 'bg-primary-600 text-white'
+                      : isCurrent
+                      ? 'bg-primary-600 text-white ring-2 ring-primary-200 ring-offset-2'
+                      : 'bg-gray-200 text-gray-500'
+                    }
+                  `}
+                  aria-label={
+                    isCompleted
+                      ? `Step ${s.number}: ${s.label} — completed`
+                      : `Step ${s.number}: ${s.label}`
                   }
-                `}
-                aria-label={
-                  s.number < currentVisual
-                    ? `Step ${s.number}: ${s.label} — completed`
-                    : `Step ${s.number}: ${s.label}`
-                }
-              >
-                {s.number < currentVisual ? <Check className="w-4 h-4" /> : s.number}
-              </div>
-              <span
-                className={`
-                  mt-1.5 text-xs font-medium hidden sm:block
-                  ${s.number === currentVisual ? 'text-primary-600' : 'text-gray-500'}
-                `}
-              >
-                {s.label}
-              </span>
-              {/* Sub-label shown only during Step 2.5 (map-categories) */}
-              {s.number === 2 && currentStep === 'map-categories' && (
-                <span className="mt-0.5 text-xs text-primary-500 hidden sm:block">
-                  Resolve Categories
+                >
+                  {isCompleted ? <Check className="w-4 h-4" /> : s.number}
+                </div>
+                <span
+                  className={`
+                    mt-1.5 text-xs font-medium hidden sm:block
+                    ${isCurrent ? 'text-primary-600' : 'text-gray-500'}
+                  `}
+                >
+                  {s.label}
                 </span>
-              )}
-            </div>
+                {/* Sub-label shown only during Step 2.5 (map-categories) */}
+                {s.number === 2 && currentStep === 'map-categories' && (
+                  <span className="mt-0.5 text-xs text-primary-500 hidden sm:block">
+                    Resolve Categories
+                  </span>
+                )}
+              </div>
 
-            {i < VISUAL_STEPS.length - 1 && (
-              <div
-                className={`
-                  flex-1 h-0.5 mx-2 mb-5
-                  ${s.number < currentVisual ? 'bg-primary-600' : 'bg-gray-200'}
-                `}
-              />
-            )}
-          </li>
-        ))}
+              {i < VISUAL_STEPS.length - 1 && (
+                <div
+                  className={`
+                    flex-1 h-0.5 mx-2 mb-5
+                    ${isCompleted ? 'bg-primary-600' : 'bg-gray-200'}
+                  `}
+                />
+              )}
+            </li>
+          )
+        })}
       </ol>
     </nav>
   )
@@ -679,11 +690,20 @@ export default function SalesUploadPage() {
   const inboxPeriodStart = searchParams.get('period_start')
   const inboxPeriodEnd = searchParams.get('period_end')
   const source = searchParams.get('source')
+  const storagePath = searchParams.get('storage_path')
   const isInboxSource = source === 'inbox'
+  const shouldAutoParse = isInboxSource && !!storagePath
 
   const [step, setStep] = useState<WizardStep>('upload')
   const [contract, setContract] = useState<Contract | null>(null)
   const [loadingContract, setLoadingContract] = useState(true)
+
+  // Auto-parse state for inbox flow
+  type AutoParseState = 'idle' | 'loading' | 'success' | 'error'
+  const [autoParseState, setAutoParseState] = useState<AutoParseState>(
+    shouldAutoParse ? 'loading' : 'idle'
+  )
+  const [autoParseError, setAutoParseError] = useState<string | null>(null)
 
   // Wizard state across steps
   // Pre-fill period dates from inbox params when source=inbox
@@ -733,6 +753,32 @@ export default function SalesUploadPage() {
     }
     fetchData()
   }, [contractId])
+
+  // Auto-parse effect: when source=inbox and storage_path is present,
+  // skip the upload step and parse the attachment directly from storage.
+  useEffect(() => {
+    if (!shouldAutoParse || !storagePath || !contractId) return
+
+    const runAutoParse = async () => {
+      setAutoParseState('loading')
+      try {
+        const preview = await parseFromStorage(storagePath, contractId)
+        setUploadPreview(preview)
+        setAutoParseState('success')
+        setStep('map-columns')
+      } catch {
+        setAutoParseState('error')
+        setAutoParseError(
+          'Could not parse the attachment. Please upload the file manually.'
+        )
+      }
+    }
+
+    runAutoParse()
+    // storagePath and contractId are derived from searchParams and stable for the
+    // lifetime of this page render — intentionally omit from deps to run once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleUploadSuccess = (preview: UploadPreviewResponse) => {
     setUploadPreview(preview)
@@ -925,24 +971,50 @@ export default function SalesUploadPage() {
       )}
 
       {/* Step indicator */}
-      <StepIndicator currentStep={step} />
+      <StepIndicator
+        currentStep={step}
+        step1Skipped={autoParseState === 'success'}
+      />
+
+      {/* Auto-parse loading state */}
+      {autoParseState === 'loading' && (
+        <div className="mt-8 flex flex-col items-center justify-center py-16 gap-4">
+          <Loader2 className="w-10 h-10 text-primary-600 animate-spin" />
+          <p className="text-gray-600 text-base font-medium">Parsing attachment...</p>
+        </div>
+      )}
 
       {/* Step content */}
       <div className="mt-8">
-        {step === 'upload' && (
-          <StepUpload
-            onUploadSuccess={handleUploadSuccess}
-            contractId={contractId}
-            periodStart={periodStart}
-            periodEnd={periodEnd}
-            setPeriodStart={setPeriodStart}
-            setPeriodEnd={setPeriodEnd}
-            overrideIntent={overrideIntent}
-            setOverrideIntent={setOverrideIntent}
-            contractStartDate={contract?.contract_start_date}
-            contractEndDate={contract?.contract_end_date}
-            isInboxSource={isInboxSource}
-          />
+        {step === 'upload' && autoParseState !== 'loading' && (
+          <>
+            {/* Auto-parse failure banner */}
+            {autoParseState === 'error' && autoParseError && (
+              <div
+                role="alert"
+                className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-lg mb-6 animate-fade-in"
+              >
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-red-900">Could not parse the attachment.</p>
+                  <p className="text-sm text-red-700 mt-0.5">Please upload the file manually.</p>
+                </div>
+              </div>
+            )}
+            <StepUpload
+              onUploadSuccess={handleUploadSuccess}
+              contractId={contractId}
+              periodStart={periodStart}
+              periodEnd={periodEnd}
+              setPeriodStart={setPeriodStart}
+              setPeriodEnd={setPeriodEnd}
+              overrideIntent={overrideIntent}
+              setOverrideIntent={setOverrideIntent}
+              contractStartDate={contract?.contract_start_date}
+              contractEndDate={contract?.contract_end_date}
+              isInboxSource={isInboxSource}
+            />
+          </>
         )}
 
         {step === 'map-columns' && uploadPreview && (

@@ -777,7 +777,14 @@ export default function InboxReviewPage() {
       const contractId = selectedContractId || undefined
       const result = await confirmReport(report.id, contractId, true)
       if (result.redirect_url) {
-        router.push(result.redirect_url)
+        // Append storage_path so the wizard can skip the upload step and
+        // parse the attachment directly from storage.
+        let destination = result.redirect_url
+        if (report.attachment_path) {
+          const separator = destination.includes('?') ? '&' : '?'
+          destination += `${separator}storage_path=${encodeURIComponent(report.attachment_path)}`
+        }
+        router.push(destination)
       } else {
         router.push('/inbox')
       }

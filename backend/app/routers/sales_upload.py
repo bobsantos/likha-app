@@ -624,6 +624,14 @@ class UploadConfirmRequest(BaseModel):
     override_duplicate: bool = False
 
 
+class ParseFromStorageRequest(BaseModel):
+    """Request body for POST /parse-from-storage."""
+    storage_path: str
+    contract_id: str
+    period_start: str = ""
+    period_end: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Helper: look up saved column mapping for a licensee
 # ---------------------------------------------------------------------------
@@ -795,6 +803,192 @@ async def upload_file(
         "period_end": period_end,
         "category_resolution": category_resolution,
     }
+
+
+# ---------------------------------------------------------------------------
+# Helper: build preview dict from parsed sheet + contract (shared logic)
+# ---------------------------------------------------------------------------
+
+def _build_preview_from_parsed(
+    parsed: "ParsedSheet",
+    contract: dict,
+    user_id: str,
+    filename: str,
+    period_start: str,
+    period_end: str,
+    raw_bytes: bytes = b"",
+) -> dict:
+    """
+    Given an already-parsed sheet, look up saved mapping, build column/category
+    resolution, store the upload in memory, and return the preview response dict.
+
+    This is the shared logic used by both ``upload_file`` (file upload path) and
+    ``parse_from_storage`` (storage download path).
+    """
+    licensee_name = contract.get("licensee_name", "")
+
+    # Look up saved mapping (column mapping and category mapping)
+    saved_mapping, saved_category_mapping = _get_saved_mapping_for_licensee(
+        user_id, licensee_name
+    )
+
+    # Build contract context for AI column mapping
+    royalty_rate = contract.get("royalty_rate")
+    is_category_contract = isinstance(royalty_rate, dict)
+    contract_context = {
+        "licensee_name": licensee_name,
+        "royalty_base": contract.get("royalty_base", ""),
+        "has_categories": is_category_contract,
+        "categories": list(royalty_rate.keys()) if is_category_contract else [],
+    }
+
+    # Determine mapping source
+    if saved_mapping:
+        suggested, _, mapping_sources = suggest_mapping(
+            parsed.column_names,
+            saved_mapping=saved_mapping,
+            return_source=True,
+            sample_rows=parsed.sample_rows,
+        )
+        mapping_source = "saved"
+    else:
+        suggested, mapping_source, mapping_sources = suggest_mapping(
+            parsed.column_names,
+            saved_mapping=None,
+            contract_context=contract_context,
+            return_source=True,
+            sample_rows=parsed.sample_rows,
+        )
+
+    # Build category_resolution for category-rate contracts
+    category_resolution: Optional[dict] = None
+    if is_category_contract:
+        category_col: Optional[str] = None
+        for col, field in suggested.items():
+            if field == "product_category":
+                category_col = col
+                break
+
+        if category_col:
+            report_categories: list[str] = []
+            seen_cats: set[str] = set()
+            for row in parsed.all_rows:
+                cat_val = row.get(category_col, "").strip()
+                if cat_val and cat_val not in seen_cats:
+                    report_categories.append(cat_val)
+                    seen_cats.add(cat_val)
+
+            contract_categories = list(royalty_rate.keys())
+            suggested_cat_mapping, cat_sources = suggest_category_mapping(
+                report_categories=report_categories,
+                contract_categories=contract_categories,
+                saved_category_mapping=saved_category_mapping,
+            )
+            has_mismatch = any(
+                src not in ("exact", "saved")
+                for src in cat_sources.values()
+            )
+            category_resolution = {
+                "required": has_mismatch,
+                "contract_categories": contract_categories,
+                "report_categories": report_categories,
+                "suggested_category_mapping": suggested_cat_mapping,
+                "category_mapping_sources": cat_sources,
+            }
+
+    # Store in memory so the confirm step can retrieve it
+    upload_id = _store_upload(
+        parsed,
+        contract["id"],
+        user_id,
+        raw_bytes=raw_bytes,
+        original_filename=filename,
+    )
+
+    return {
+        "upload_id": upload_id,
+        "filename": filename,
+        "sheet_name": parsed.sheet_name,
+        "total_rows": parsed.total_rows,
+        "data_rows": parsed.data_rows,
+        "detected_columns": parsed.column_names,
+        "sample_rows": parsed.sample_rows,
+        "suggested_mapping": suggested,
+        "mapping_source": mapping_source,
+        "mapping_sources": mapping_sources,
+        "period_start": period_start,
+        "period_end": period_end,
+        "category_resolution": category_resolution,
+    }
+
+
+@router.post("/parse-from-storage")
+async def parse_from_storage(
+    body: ParseFromStorageRequest,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """
+    Download a file already stored in Supabase Storage and parse it through the
+    same pipeline as the file-upload endpoint.
+
+    Intended for the inbox confirm flow: when a user confirms an inbound report
+    and chooses "Confirm & Upload", the attachment has already been stored at
+    ``body.storage_path`` in the ``contracts`` bucket during email ingestion.
+    This endpoint skips the file-upload step and jumps directly to column
+    mapping by returning the same ``UploadPreviewResponse`` shape.
+
+    Request body:
+      storage_path  — Supabase Storage path (e.g. "inbound/{user_id}/{report_id}/report.xlsx")
+      contract_id   — Contract the file belongs to (ownership is verified)
+      period_start  — Optional ISO date pre-fill (e.g. "2025-01-01")
+      period_end    — Optional ISO date pre-fill (e.g. "2025-03-31")
+
+    Returns the same shape as POST /upload/{contract_id}.
+    """
+    from app.db import supabase_admin as _admin
+
+    # Auth + ownership
+    await verify_contract_ownership(body.contract_id, user_id)
+
+    # Download file from Supabase Storage
+    try:
+        file_content: bytes = _admin.storage.from_("contracts").download(body.storage_path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not found in storage: {body.storage_path}",
+        ) from exc
+
+    # Derive filename from the last segment of the storage path
+    filename = body.storage_path.split("/")[-1] or "upload.xlsx"
+
+    # Parse the downloaded file
+    try:
+        parsed = parse_upload(file_content, filename)
+    except ParseError as exc:
+        raise _error(400, exc.message, exc.error_code)
+
+    # Load the contract
+    contract_result = (
+        supabase.table("contracts")
+        .select("*")
+        .eq("id", body.contract_id)
+        .execute()
+    )
+    if not contract_result.data:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    contract = contract_result.data[0]
+
+    return _build_preview_from_parsed(
+        parsed=parsed,
+        contract=contract,
+        user_id=user_id,
+        filename=filename,
+        period_start=body.period_start,
+        period_end=body.period_end,
+        raw_bytes=file_content,
+    )
 
 
 @router.post("/upload/{contract_id}/confirm", status_code=201)

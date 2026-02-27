@@ -463,7 +463,9 @@ describe('Inbox Review Page', () => {
           'contract-1',
           true
         )
-        expect(mockPush).toHaveBeenCalledWith(redirectUrl)
+        expect(mockPush).toHaveBeenCalledWith(
+          expect.stringContaining(redirectUrl)
+        )
       })
     })
 

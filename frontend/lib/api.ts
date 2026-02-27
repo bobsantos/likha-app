@@ -490,6 +490,38 @@ export async function rejectReport(reportId: string): Promise<void> {
 }
 
 /**
+ * Parse a sales report spreadsheet that is already stored in Supabase Storage
+ * (from an email attachment).  Used by the inbox auto-parse flow to skip the
+ * file upload step in the wizard.
+ *
+ * The backend reads the file directly from storage, so no file upload is needed.
+ * Returns the same UploadPreviewResponse as uploadSalesReport.
+ */
+export async function parseFromStorage(
+  storagePath: string,
+  contractId: string
+): Promise<UploadPreviewResponse> {
+  const headers = await getAuthHeaders()
+
+  const response = await fetch(`${getResolvedApiUrl()}/api/sales/parse-from-storage`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ storage_path: storagePath, contract_id: contractId }),
+  })
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    throw new ApiError(
+      extractErrorMessage(body, 'Failed to parse attachment from storage'),
+      response.status,
+      body
+    )
+  }
+
+  return response.json()
+}
+
+/**
  * Check whether any existing sales_periods for the given contract overlap the
  * requested date range.  Called from the Step 1 date fields with a 400 ms
  * debounce.  Errors are expected to be swallowed by the caller — the confirm-
