@@ -282,6 +282,12 @@ def _extract_period_dates(
     1. Quarter labels:   Q1 2025, Q3 2025, etc.
     2. Named ranges:     Jan-Mar 2025, Apr-Jun 2025, etc. (with optional prefix)
     3. Explicit ranges:  01/01/2025 - 03/31/2025  or  2025-01-01 to 2025-03-31
+    4. Separate metadata rows:
+         "Reporting Period Start,2025-04-01"  (start label on one row)
+         "Reporting Period End,2025-06-30"    (end label on a different row)
+       Labels are matched case-insensitively against a known set that mirrors
+       the ``_PERIOD_START_LABELS`` / ``_PERIOD_END_LABELS`` sets used by
+       the spreadsheet parser.
 
     Returns:
         (suggested_period_start, suggested_period_end) as ISO date strings,
@@ -335,6 +341,39 @@ def _extract_period_dates(
     m = iso_range_pattern.search(scan_text)
     if m:
         return m.group(1), m.group(2)
+
+    # Pattern 4: separate "Reporting Period Start / End" metadata rows.
+    # Each row is a CSV key/value pair, e.g.:
+    #   "Reporting Period Start,2025-04-01"
+    #   "Reporting Period End,2025-06-30"
+    # Labels are checked case-insensitively.
+    _START_LABELS = frozenset({
+        "reporting period start", "period start", "from", "start date",
+        "period from", "start",
+    })
+    _END_LABELS = frozenset({
+        "reporting period end", "period end", "through", "end date",
+        "period through", "to", "period to", "end",
+    })
+    iso_date_pattern = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+    sep_start: Optional[str] = None
+    sep_end: Optional[str] = None
+    for row in rows:
+        # Split on the first comma only — values may contain commas
+        parts = row.split(",", 1)
+        if len(parts) != 2:
+            continue
+        label = parts[0].strip().lower().rstrip(":")
+        value = parts[1].strip()
+        if not iso_date_pattern.match(value):
+            continue
+        if label in _START_LABELS and sep_start is None:
+            sep_start = value
+        elif label in _END_LABELS and sep_end is None:
+            sep_end = value
+
+    if sep_start and sep_end:
+        return sep_start, sep_end
 
     return None, None
 

@@ -134,7 +134,7 @@ describe('Sales Upload Wizard — inbox auto-parse flow', () => {
       })
     })
 
-    it('calls parseFromStorage with storage_path and contract_id', async () => {
+    it('calls parseFromStorage with storage_path, contract_id, and period dates', async () => {
       mockParseFromStorage.mockResolvedValue(mockUploadPreview)
       mockSearchParams(inboxParams)
 
@@ -143,7 +143,31 @@ describe('Sales Upload Wizard — inbox auto-parse flow', () => {
       await waitFor(() => {
         expect(mockParseFromStorage).toHaveBeenCalledWith(
           'email-attachments/user-1/q3-2025.xlsx',
-          'contract-1'
+          'contract-1',
+          '2025-07-01',
+          '2025-09-30'
+        )
+      })
+    })
+
+    it('calls parseFromStorage with undefined period dates when query params are absent', async () => {
+      mockParseFromStorage.mockResolvedValue(mockUploadPreview)
+      mockSearchParams({
+        contract_id: 'contract-1',
+        report_id: 'report-abc',
+        source: 'inbox',
+        storage_path: 'email-attachments/user-1/q3-2025.xlsx',
+        // no period_start / period_end
+      })
+
+      render(<SalesUploadPage />)
+
+      await waitFor(() => {
+        expect(mockParseFromStorage).toHaveBeenCalledWith(
+          'email-attachments/user-1/q3-2025.xlsx',
+          'contract-1',
+          undefined,
+          undefined
         )
       })
     })

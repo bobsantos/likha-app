@@ -824,7 +824,21 @@ def _build_preview_from_parsed(
 
     This is the shared logic used by both ``upload_file`` (file upload path) and
     ``parse_from_storage`` (storage download path).
+
+    When the caller supplies an empty ``period_start`` or ``period_end``, this
+    function falls back to the period dates extracted from the file's own
+    metadata rows (``parsed.metadata_period_start`` /
+    ``parsed.metadata_period_end``).  This handles the inbox auto-parse flow
+    where the inbound email had no detectable period in the subject/body but
+    the attached spreadsheet contains explicit "Reporting Period Start/End"
+    metadata rows.
     """
+    # Fall back to file-embedded period dates when the caller did not supply them.
+    if not period_start and parsed.metadata_period_start:
+        period_start = parsed.metadata_period_start
+    if not period_end and parsed.metadata_period_end:
+        period_end = parsed.metadata_period_end
+
     licensee_name = contract.get("licensee_name", "")
 
     # Look up saved mapping (column mapping and category mapping)

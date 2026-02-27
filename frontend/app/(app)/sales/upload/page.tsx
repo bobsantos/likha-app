@@ -762,7 +762,12 @@ export default function SalesUploadPage() {
     const runAutoParse = async () => {
       setAutoParseState('loading')
       try {
-        const preview = await parseFromStorage(storagePath, contractId)
+        const preview = await parseFromStorage(
+          storagePath,
+          contractId,
+          inboxPeriodStart ?? undefined,
+          inboxPeriodEnd ?? undefined
+        )
         setUploadPreview(preview)
         setAutoParseState('success')
         setStep('map-columns')
@@ -806,11 +811,19 @@ export default function SalesUploadPage() {
     setConfirmError(null)
     setDuplicatePeriodError(false)
     try {
+      // Prefer the wizard's periodStart/periodEnd state (which the user can edit
+      // in Step 1 or which are pre-filled from inbox query params) over the
+      // dates echoed back in uploadPreview.  uploadPreview.period_start can be
+      // an empty string when parseFromStorage was called without period dates
+      // (e.g. inbox auto-parse when the attachment had no detectable period).
+      const effectivePeriodStart = periodStart || uploadPreview.period_start
+      const effectivePeriodEnd = periodEnd || uploadPreview.period_end
+
       const response = await confirmSalesUpload(contractId, {
         upload_id: uploadPreview.upload_id,
         column_mapping: mapping,
-        period_start: uploadPreview.period_start,
-        period_end: uploadPreview.period_end,
+        period_start: effectivePeriodStart,
+        period_end: effectivePeriodEnd,
         save_mapping: save,
         ...(categoryMapping ? { category_mapping: categoryMapping } : {}),
         ...(shouldOverride ? { override_duplicate: true } : {}),
@@ -890,8 +903,8 @@ export default function SalesUploadPage() {
       const period = await confirmSalesUpload(contractId, {
         upload_id: uploadPreview.upload_id,
         column_mapping: confirmedMapping,
-        period_start: uploadPreview.period_start,
-        period_end: uploadPreview.period_end,
+        period_start: periodStart || uploadPreview.period_start,
+        period_end: periodEnd || uploadPreview.period_end,
         save_mapping: saveMapping,
       })
       setSalesPeriod(period)

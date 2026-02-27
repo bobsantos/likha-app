@@ -499,14 +499,23 @@ export async function rejectReport(reportId: string): Promise<void> {
  */
 export async function parseFromStorage(
   storagePath: string,
-  contractId: string
+  contractId: string,
+  periodStart?: string,
+  periodEnd?: string
 ): Promise<UploadPreviewResponse> {
   const headers = await getAuthHeaders()
+
+  const payload: Record<string, string> = {
+    storage_path: storagePath,
+    contract_id: contractId,
+  }
+  if (periodStart) payload.period_start = periodStart
+  if (periodEnd) payload.period_end = periodEnd
 
   const response = await fetch(`${getResolvedApiUrl()}/api/sales/parse-from-storage`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ storage_path: storagePath, contract_id: contractId }),
+    body: JSON.stringify(payload),
   })
 
   if (!response.ok) {

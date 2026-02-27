@@ -1545,6 +1545,92 @@ class TestExtractPeriodDates:
         assert start is None
         assert end is None
 
+    def test_separate_metadata_rows_iso_dates(self):
+        """'Reporting Period Start,2025-04-01' / 'Reporting Period End,2025-06-30' → correct ISO dates."""
+        from app.routers.email_intake import _extract_period_dates
+
+        text = (
+            "Licensee,Acme Corp\n"
+            "Reporting Period Start,2025-04-01\n"
+            "Reporting Period End,2025-06-30\n"
+            "Product,Net Sales,Royalty\n"
+            "Widget,10000,800\n"
+        )
+        start, end = _extract_period_dates(text)
+        assert start == "2025-04-01"
+        assert end == "2025-06-30"
+
+    def test_separate_metadata_rows_period_start_end_labels(self):
+        """'Period Start' / 'Period End' short-form labels are recognised."""
+        from app.routers.email_intake import _extract_period_dates
+
+        text = (
+            "Period Start,2025-01-01\n"
+            "Period End,2025-03-31\n"
+            "SKU,Amount\n"
+            "ABC,500\n"
+        )
+        start, end = _extract_period_dates(text)
+        assert start == "2025-01-01"
+        assert end == "2025-03-31"
+
+    def test_separate_metadata_rows_label_with_colon(self):
+        """Labels ending with ':' are stripped before matching."""
+        from app.routers.email_intake import _extract_period_dates
+
+        text = (
+            "Reporting Period Start:,2025-07-01\n"
+            "Reporting Period End:,2025-09-30\n"
+            "Col1,Col2\n"
+            "1,2\n"
+        )
+        start, end = _extract_period_dates(text)
+        assert start == "2025-07-01"
+        assert end == "2025-09-30"
+
+    def test_separate_metadata_rows_only_start_no_end_returns_none_none(self):
+        """Start label present but end label absent → (None, None) — both required."""
+        from app.routers.email_intake import _extract_period_dates
+
+        text = (
+            "Reporting Period Start,2025-04-01\n"
+            "Col1,Col2\n"
+            "1,2\n"
+        )
+        start, end = _extract_period_dates(text)
+        assert start is None
+        assert end is None
+
+    def test_separate_metadata_rows_non_iso_value_ignored(self):
+        """A metadata row whose value is not ISO format is not used."""
+        from app.routers.email_intake import _extract_period_dates
+
+        text = (
+            "Reporting Period Start,April 2025\n"
+            "Reporting Period End,June 2025\n"
+            "Col1,Col2\n"
+            "1,2\n"
+        )
+        start, end = _extract_period_dates(text)
+        assert start is None
+        assert end is None
+
+    def test_separate_metadata_rows_higher_priority_patterns_win(self):
+        """Quarter label in earlier rows takes priority over separate metadata rows."""
+        from app.routers.email_intake import _extract_period_dates
+
+        text = (
+            "Q2 2025\n"
+            "Reporting Period Start,2025-01-01\n"
+            "Reporting Period End,2025-03-31\n"
+            "Col1,Col2\n"
+            "1,2\n"
+        )
+        start, end = _extract_period_dates(text)
+        # Q2 2025 should win (Pattern 1 has higher priority)
+        assert start == "2025-04-01"
+        assert end == "2025-06-30"
+
 
 # ===========================================================================
 # Confirm endpoint: open_wizard support
