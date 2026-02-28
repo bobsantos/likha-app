@@ -7,7 +7,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter, usePathname } from 'next/navigation'
-import { LayoutDashboard, FileText, LogOut, Upload } from 'lucide-react'
+import { LayoutDashboard, FileText, LogOut, Upload, Settings, Mail } from 'lucide-react'
 import { signOut } from '@/lib/auth'
 
 interface NavProps {
@@ -66,6 +66,28 @@ export default function Nav({ userEmail }: NavProps) {
               >
                 <FileText className="w-4 h-4" />
                 Contracts
+              </Link>
+              <Link
+                href="/inbox"
+                className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 ${
+                  isActive('/inbox')
+                    ? 'bg-primary-50 text-primary-600'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <Mail className="w-4 h-4" />
+                Inbox
+              </Link>
+              <Link
+                href="/settings"
+                className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors flex items-center gap-2 ${
+                  isActive('/settings')
+                    ? 'bg-primary-50 text-primary-600'
+                    : 'text-gray-700 hover:text-gray-900 hover:bg-gray-50'
+                }`}
+              >
+                <Settings className="w-4 h-4" />
+                Settings
               </Link>
             </div>
           </div>

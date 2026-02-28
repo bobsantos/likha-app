@@ -17,6 +17,9 @@ anthropic>=0.39.0
 pydantic>=2.6.0
 pydantic-settings>=2.1.0
 
+# JWT verification (local, avoids network round-trip to Supabase Auth API)
+python-jose[cryptography]>=3.3.0
+
 # Utils
 python-dotenv>=1.0.0
 

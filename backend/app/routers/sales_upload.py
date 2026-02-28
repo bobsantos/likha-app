@@ -10,11 +10,11 @@ Endpoints:
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.auth import get_current_user, verify_contract_ownership
@@ -30,6 +30,7 @@ from app.services.spreadsheet_parser import (
     extract_cross_check_values,
     parse_upload,
     suggest_mapping,
+    suggest_category_mapping,
 )
 
 logger = logging.getLogger(__name__)
@@ -226,12 +227,18 @@ def _build_upload_warnings(
     contract: dict,
     period_start: date,
     period_end: date,
+    metadata_period_start: Optional[str] = None,
+    metadata_period_end: Optional[str] = None,
 ) -> list[dict]:
     """
     Compare cross-check values against contract data and return a list of warnings.
 
     Each warning is a dict with keys: field, extracted_value, contract_value, message.
     Returns an empty list when no mismatches are found.
+
+    When metadata_period_start and/or metadata_period_end are provided, they are
+    compared against the user-entered period.  If there is no date overlap, an
+    amber warning is emitted.
     """
     warnings: list[dict] = []
 
@@ -295,7 +302,312 @@ def _build_upload_warnings(
                     ),
                 })
 
+    # --- metadata period mismatch check ---
+    if metadata_period_start is not None or metadata_period_end is not None:
+        # Only check when we have at least one metadata period value to compare
+        meta_start_parsed = _parse_period_string(metadata_period_start) if metadata_period_start else None
+        meta_end_parsed = _parse_period_string(metadata_period_end) if metadata_period_end else None
+
+        # Build a unified metadata date range from what we have
+        # Each parsed result is a (start, end) tuple for that single value
+        meta_range_start: Optional[date] = None
+        meta_range_end: Optional[date] = None
+
+        if meta_start_parsed is not None:
+            meta_range_start = meta_start_parsed[0]
+        if meta_end_parsed is not None:
+            meta_range_end = meta_end_parsed[1]
+
+        # Fill in whichever side is missing from the other
+        if meta_range_start is not None and meta_range_end is None:
+            meta_range_end = meta_start_parsed[1]  # type: ignore[index]
+        if meta_range_end is not None and meta_range_start is None:
+            meta_range_start = meta_end_parsed[0]  # type: ignore[index]
+
+        if meta_range_start is not None and meta_range_end is not None:
+            # Check overlap with user-entered period
+            overlaps = (meta_range_start <= period_end) and (period_start <= meta_range_end)
+            if not overlaps:
+                extracted_label = (
+                    f"{metadata_period_start} to {metadata_period_end}"
+                    if metadata_period_start and metadata_period_end
+                    else (metadata_period_start or metadata_period_end)
+                )
+                user_label = f"{period_start} to {period_end}"
+                warnings.append({
+                    "field": "metadata_period",
+                    "extracted_value": extracted_label,
+                    "contract_value": user_label,
+                    "message": (
+                        f"The spreadsheet metadata indicates a period of {extracted_label} "
+                        f"but you entered {user_label}. "
+                        "Verify the file is for the correct reporting period."
+                    ),
+                })
+
+    # --- contract date range check ---
+    contract_start_str = contract.get("contract_start_date")
+    contract_end_str = contract.get("contract_end_date")
+    if contract_start_str and contract_end_str:
+        try:
+            c_start = date.fromisoformat(str(contract_start_str))
+            c_end = date.fromisoformat(str(contract_end_str))
+            if period_start < c_start or period_end > c_end:
+                warnings.append({
+                    "field": "contract_range",
+                    "extracted_value": f"{period_start} to {period_end}",
+                    "contract_value": f"{c_start} to {c_end}",
+                    "message": (
+                        f"The reporting period falls outside this contract's date range "
+                        f"({c_start} to {c_end})."
+                    ),
+                })
+        except (ValueError, TypeError):
+            pass  # unparseable contract dates — skip
+
+    # --- reporting frequency mismatch check ---
+    reporting_frequency = contract.get("reporting_frequency")
+    if reporting_frequency:
+        _FREQUENCY_BANDS_LOCAL: dict[str, tuple[int, int]] = {
+            "monthly": (15, 55),
+            "quarterly": (45, 135),
+            "semi_annually": (120, 215),
+            "annually": (270, 400),
+        }
+        band = _FREQUENCY_BANDS_LOCAL.get(str(reporting_frequency))
+        if band is not None:
+            days = (period_end - period_start).days + 1
+            lo, hi = band
+            if days < lo or days > hi:
+                # Suppress for first/last partial periods (within 7 days of contract boundary)
+                suppress = False
+                if days < lo:
+                    c_start_str = contract.get("contract_start_date")
+                    c_end_str = contract.get("contract_end_date")
+                    try:
+                        if c_start_str:
+                            c_start = date.fromisoformat(str(c_start_str))
+                            if abs((period_start - c_start).days) <= 7:
+                                suppress = True
+                        if not suppress and c_end_str:
+                            c_end = date.fromisoformat(str(c_end_str))
+                            if abs((period_end - c_end).days) <= 7:
+                                suppress = True
+                    except (ValueError, TypeError):
+                        pass
+                if not suppress:
+                    warnings.append({
+                        "field": "frequency_mismatch",
+                        "extracted_value": f"{days} days",
+                        "contract_value": str(reporting_frequency),
+                        "message": (
+                            f"This contract expects {reporting_frequency} reports. "
+                            f"The period spans {days} days."
+                        ),
+                    })
+
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# Period-check helpers (Gap 3)
+# ---------------------------------------------------------------------------
+
+# Tolerance bands for reporting frequency (inclusive day range)
+_FREQUENCY_BANDS: dict[str, tuple[int, int]] = {
+    "monthly": (15, 55),
+    "quarterly": (45, 135),
+    "semi_annually": (120, 215),
+    "annually": (270, 400),
+}
+
+
+def _compute_out_of_range(
+    period_start: date,
+    period_end: date,
+    contract: dict,
+) -> bool:
+    """
+    Return True if the period falls partially or fully outside the contract date range.
+    Returns False when either contract date is None (skip the check).
+    """
+    start_str = contract.get("contract_start_date")
+    end_str = contract.get("contract_end_date")
+    if not start_str or not end_str:
+        return False
+    try:
+        c_start = date.fromisoformat(str(start_str))
+        c_end = date.fromisoformat(str(end_str))
+    except (ValueError, TypeError):
+        return False
+    return period_start < c_start or period_end > c_end
+
+
+def _compute_frequency_warning(
+    period_start: date,
+    period_end: date,
+    contract: dict,
+) -> Optional[dict]:
+    """
+    Return a frequency_warning dict when the period duration does not match
+    the contract's reporting_frequency tolerance band, or None when it does.
+    Returns None when reporting_frequency is null or unrecognised.
+
+    Suppresses the warning for first/last partial periods — when the period
+    starts near the contract start date or ends near the contract end date,
+    the user is likely uploading a short first or final period.
+    """
+    freq = contract.get("reporting_frequency")
+    if not freq:
+        return None
+    band = _FREQUENCY_BANDS.get(str(freq))
+    if band is None:
+        return None  # unrecognised frequency — skip
+    days = (period_end - period_start).days + 1
+    lo, hi = band
+    if lo <= days <= hi:
+        return None  # within acceptable range
+
+    # Suppress warning for first/last partial periods (within 7 days of contract boundary)
+    if days < lo:
+        tolerance = timedelta(days=7)
+        c_start_str = contract.get("contract_start_date")
+        c_end_str = contract.get("contract_end_date")
+        try:
+            if c_start_str:
+                c_start = date.fromisoformat(str(c_start_str))
+                if abs((period_start - c_start).days) <= tolerance.days:
+                    return None  # likely first partial period
+            if c_end_str:
+                c_end = date.fromisoformat(str(c_end_str))
+                if abs((period_end - c_end).days) <= tolerance.days:
+                    return None  # likely last partial period
+        except (ValueError, TypeError):
+            pass
+
+    return {
+        "expected_frequency": str(freq),
+        "entered_days": days,
+        "expected_range": [lo, hi],
+        "message": (
+            f"This contract expects {freq} reports (~{(lo + hi) // 2} days). "
+            f"The period you entered spans {days} days."
+        ),
+    }
+
+
+def _compute_suggested_end_date(
+    period_start: date,
+    frequency: str,
+) -> Optional[date]:
+    """
+    Return a suggested end date when period_start aligns to a natural boundary
+    for the given frequency (within 3 days). Returns None otherwise.
+
+    Natural boundaries per frequency:
+      monthly:       any 1st of month → last day of that month
+      quarterly:     Jan 1, Apr 1, Jul 1, Oct 1 → last day of 3rd month
+      semi_annually: Jan 1, Jul 1 → Jun 30 or Dec 31
+      annually:      Jan 1 → Dec 31
+    """
+    import calendar
+
+    TOLERANCE_DAYS = 3
+
+    if frequency == "monthly":
+        # Any 1st of month (within tolerance)
+        first_of_month = date(period_start.year, period_start.month, 1)
+        if abs((period_start - first_of_month).days) <= TOLERANCE_DAYS:
+            last_day = calendar.monthrange(period_start.year, period_start.month)[1]
+            return date(period_start.year, period_start.month, last_day)
+        return None
+
+    if frequency == "quarterly":
+        # Quarter starts: Jan 1, Apr 1, Jul 1, Oct 1
+        quarter_starts = [
+            date(period_start.year, 1, 1),
+            date(period_start.year, 4, 1),
+            date(period_start.year, 7, 1),
+            date(period_start.year, 10, 1),
+        ]
+        for qs in quarter_starts:
+            if abs((period_start - qs).days) <= TOLERANCE_DAYS:
+                # Last day of the 3rd month of the quarter
+                end_month = qs.month + 2
+                last_day = calendar.monthrange(qs.year, end_month)[1]
+                return date(qs.year, end_month, last_day)
+        return None
+
+    if frequency == "semi_annually":
+        # Semi-annual starts: Jan 1 → Jun 30, Jul 1 → Dec 31
+        jan1 = date(period_start.year, 1, 1)
+        jul1 = date(period_start.year, 7, 1)
+        if abs((period_start - jan1).days) <= TOLERANCE_DAYS:
+            return date(period_start.year, 6, 30)
+        if abs((period_start - jul1).days) <= TOLERANCE_DAYS:
+            return date(period_start.year, 12, 31)
+        return None
+
+    if frequency == "annually":
+        # Annual start: Jan 1 → Dec 31
+        jan1 = date(period_start.year, 1, 1)
+        if abs((period_start - jan1).days) <= TOLERANCE_DAYS:
+            return date(period_start.year, 12, 31)
+        return None
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Category resolution helper
+# ---------------------------------------------------------------------------
+
+def _resolve_category(
+    report_cat: str,
+    contract_cats: "Iterable[str]",
+    explicit_mapping: dict[str, Optional[str]],
+) -> Optional[str]:
+    """
+    Resolve a report category name to a contract category name.
+
+    Resolution order:
+    1. Explicit mapping from the request body (user-confirmed). A value of None
+       means "Exclude from calculation" — returns None.
+    2. Exact match (case-insensitive).
+    3. Substring match (existing logic).
+    4. None (unresolved).
+
+    Args:
+        report_cat: The category name as it appears in the uploaded file.
+        contract_cats: Iterable of canonical category names from the contract.
+        explicit_mapping: User-confirmed mapping from report cat to contract cat
+                          (or None to exclude). Empty dict means no user mapping.
+
+    Returns:
+        The resolved contract category name, or None if the category is excluded
+        or cannot be resolved.
+    """
+    # 1. Explicit user mapping
+    if report_cat in explicit_mapping:
+        return explicit_mapping[report_cat]  # may be None (exclude)
+
+    contract_cats_list = list(contract_cats)
+    if not contract_cats_list:
+        return None
+
+    normalized = report_cat.lower().strip()
+    contract_lower = {c.lower(): c for c in contract_cats_list}
+
+    # 2. Exact match (case-insensitive)
+    if normalized in contract_lower:
+        return contract_lower[normalized]
+
+    # 3. Substring match
+    for contract_cat_lower, contract_cat in contract_lower.items():
+        if contract_cat_lower in normalized or normalized in contract_cat_lower:
+            return contract_cat
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +620,16 @@ class UploadConfirmRequest(BaseModel):
     period_start: str
     period_end: str
     save_mapping: bool = True
+    category_mapping: Optional[dict[str, Optional[str]]] = None
+    override_duplicate: bool = False
+
+
+class ParseFromStorageRequest(BaseModel):
+    """Request body for POST /parse-from-storage."""
+    storage_path: str
+    contract_id: str
+    period_start: str = ""
+    period_end: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -316,8 +638,12 @@ class UploadConfirmRequest(BaseModel):
 
 def _get_saved_mapping_for_licensee(
     user_id: str, licensee_name: str
-) -> Optional[dict]:
-    """Return the saved column_mapping dict for this user+licensee, or None."""
+) -> tuple[Optional[dict], Optional[dict]]:
+    """
+    Return (saved_column_mapping, saved_category_mapping) for this user+licensee.
+
+    Returns (None, None) if no saved mapping exists or on error.
+    """
     try:
         result = (
             supabase.table("licensee_column_mappings")
@@ -328,10 +654,11 @@ def _get_saved_mapping_for_licensee(
             .execute()
         )
         if result.data:
-            return result.data[0].get("column_mapping")
+            row = result.data[0]
+            return row.get("column_mapping"), row.get("category_mapping")
     except Exception as e:
         logger.warning(f"Could not load saved mapping: {e}")
-    return None
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -387,22 +714,76 @@ async def upload_file(
     contract = contract_result.data[0]
     licensee_name = contract.get("licensee_name", "")
 
-    # Look up saved mapping
-    saved_mapping = _get_saved_mapping_for_licensee(user_id, licensee_name)
+    # Look up saved mapping (column mapping and category mapping)
+    saved_mapping, saved_category_mapping = _get_saved_mapping_for_licensee(user_id, licensee_name)
+
+    # Build contract context for AI column mapping
+    royalty_rate = contract.get("royalty_rate")
+    is_category_contract = isinstance(royalty_rate, dict)
+    contract_context = {
+        "licensee_name": licensee_name,
+        "royalty_base": contract.get("royalty_base", ""),
+        "has_categories": is_category_contract,
+        "categories": list(royalty_rate.keys()) if is_category_contract else [],
+    }
 
     # Determine mapping source
     if saved_mapping:
+        suggested, _, mapping_sources = suggest_mapping(
+            parsed.column_names,
+            saved_mapping=saved_mapping,
+            return_source=True,
+            sample_rows=parsed.sample_rows,
+        )
         mapping_source = "saved"
     else:
-        mapping_source = "suggested"
+        # Generate suggested mapping with AI second-pass for unresolved columns
+        suggested, mapping_source, mapping_sources = suggest_mapping(
+            parsed.column_names,
+            saved_mapping=None,
+            contract_context=contract_context,
+            return_source=True,
+            sample_rows=parsed.sample_rows,
+        )
 
-    # Generate suggested mapping (uses saved_mapping if available, else keyword matching)
-    suggested = suggest_mapping(parsed.column_names, saved_mapping=saved_mapping)
+    # Build category_resolution for category-rate contracts
+    category_resolution: Optional[dict] = None
+    if is_category_contract:
+        # Identify the product_category column from the suggested mapping
+        category_col: Optional[str] = None
+        for col, field in suggested.items():
+            if field == "product_category":
+                category_col = col
+                break
 
-    # If keyword matching produced all-ignore, change source to "none"
-    if mapping_source == "suggested":
-        if all(v == "ignore" for v in suggested.values()):
-            mapping_source = "none"
+        if category_col:
+            # Extract distinct category values from ALL rows (not just sample)
+            report_categories: list[str] = []
+            seen_cats: set[str] = set()
+            for row in parsed.all_rows:
+                cat_val = row.get(category_col, "").strip()
+                if cat_val and cat_val not in seen_cats:
+                    report_categories.append(cat_val)
+                    seen_cats.add(cat_val)
+
+            contract_categories = list(royalty_rate.keys())
+            suggested_cat_mapping, cat_sources = suggest_category_mapping(
+                report_categories=report_categories,
+                contract_categories=contract_categories,
+                saved_category_mapping=saved_category_mapping,
+            )
+            # Only require manual resolution if there are actual mismatches
+            has_mismatch = any(
+                src not in ("exact", "saved")
+                for src in cat_sources.values()
+            )
+            category_resolution = {
+                "required": has_mismatch,
+                "contract_categories": contract_categories,
+                "report_categories": report_categories,
+                "suggested_category_mapping": suggested_cat_mapping,
+                "category_mapping_sources": cat_sources,
+            }
 
     # Store in memory (including raw bytes for later upload to storage at confirm time)
     upload_id = _store_upload(parsed, contract_id, user_id, raw_bytes=file_content, original_filename=filename)
@@ -417,9 +798,211 @@ async def upload_file(
         "sample_rows": parsed.sample_rows,
         "suggested_mapping": suggested,
         "mapping_source": mapping_source,
+        "mapping_sources": mapping_sources,
         "period_start": period_start,
         "period_end": period_end,
+        "category_resolution": category_resolution,
     }
+
+
+# ---------------------------------------------------------------------------
+# Helper: build preview dict from parsed sheet + contract (shared logic)
+# ---------------------------------------------------------------------------
+
+def _build_preview_from_parsed(
+    parsed: "ParsedSheet",
+    contract: dict,
+    user_id: str,
+    filename: str,
+    period_start: str,
+    period_end: str,
+    raw_bytes: bytes = b"",
+) -> dict:
+    """
+    Given an already-parsed sheet, look up saved mapping, build column/category
+    resolution, store the upload in memory, and return the preview response dict.
+
+    This is the shared logic used by both ``upload_file`` (file upload path) and
+    ``parse_from_storage`` (storage download path).
+
+    When the caller supplies an empty ``period_start`` or ``period_end``, this
+    function falls back to the period dates extracted from the file's own
+    metadata rows (``parsed.metadata_period_start`` /
+    ``parsed.metadata_period_end``).  This handles the inbox auto-parse flow
+    where the inbound email had no detectable period in the subject/body but
+    the attached spreadsheet contains explicit "Reporting Period Start/End"
+    metadata rows.
+    """
+    # Fall back to file-embedded period dates when the caller did not supply them.
+    if not period_start and parsed.metadata_period_start:
+        period_start = parsed.metadata_period_start
+    if not period_end and parsed.metadata_period_end:
+        period_end = parsed.metadata_period_end
+
+    licensee_name = contract.get("licensee_name", "")
+
+    # Look up saved mapping (column mapping and category mapping)
+    saved_mapping, saved_category_mapping = _get_saved_mapping_for_licensee(
+        user_id, licensee_name
+    )
+
+    # Build contract context for AI column mapping
+    royalty_rate = contract.get("royalty_rate")
+    is_category_contract = isinstance(royalty_rate, dict)
+    contract_context = {
+        "licensee_name": licensee_name,
+        "royalty_base": contract.get("royalty_base", ""),
+        "has_categories": is_category_contract,
+        "categories": list(royalty_rate.keys()) if is_category_contract else [],
+    }
+
+    # Determine mapping source
+    if saved_mapping:
+        suggested, _, mapping_sources = suggest_mapping(
+            parsed.column_names,
+            saved_mapping=saved_mapping,
+            return_source=True,
+            sample_rows=parsed.sample_rows,
+        )
+        mapping_source = "saved"
+    else:
+        suggested, mapping_source, mapping_sources = suggest_mapping(
+            parsed.column_names,
+            saved_mapping=None,
+            contract_context=contract_context,
+            return_source=True,
+            sample_rows=parsed.sample_rows,
+        )
+
+    # Build category_resolution for category-rate contracts
+    category_resolution: Optional[dict] = None
+    if is_category_contract:
+        category_col: Optional[str] = None
+        for col, field in suggested.items():
+            if field == "product_category":
+                category_col = col
+                break
+
+        if category_col:
+            report_categories: list[str] = []
+            seen_cats: set[str] = set()
+            for row in parsed.all_rows:
+                cat_val = row.get(category_col, "").strip()
+                if cat_val and cat_val not in seen_cats:
+                    report_categories.append(cat_val)
+                    seen_cats.add(cat_val)
+
+            contract_categories = list(royalty_rate.keys())
+            suggested_cat_mapping, cat_sources = suggest_category_mapping(
+                report_categories=report_categories,
+                contract_categories=contract_categories,
+                saved_category_mapping=saved_category_mapping,
+            )
+            has_mismatch = any(
+                src not in ("exact", "saved")
+                for src in cat_sources.values()
+            )
+            category_resolution = {
+                "required": has_mismatch,
+                "contract_categories": contract_categories,
+                "report_categories": report_categories,
+                "suggested_category_mapping": suggested_cat_mapping,
+                "category_mapping_sources": cat_sources,
+            }
+
+    # Store in memory so the confirm step can retrieve it
+    upload_id = _store_upload(
+        parsed,
+        contract["id"],
+        user_id,
+        raw_bytes=raw_bytes,
+        original_filename=filename,
+    )
+
+    return {
+        "upload_id": upload_id,
+        "filename": filename,
+        "sheet_name": parsed.sheet_name,
+        "total_rows": parsed.total_rows,
+        "data_rows": parsed.data_rows,
+        "detected_columns": parsed.column_names,
+        "sample_rows": parsed.sample_rows,
+        "suggested_mapping": suggested,
+        "mapping_source": mapping_source,
+        "mapping_sources": mapping_sources,
+        "period_start": period_start,
+        "period_end": period_end,
+        "category_resolution": category_resolution,
+    }
+
+
+@router.post("/parse-from-storage")
+async def parse_from_storage(
+    body: ParseFromStorageRequest,
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """
+    Download a file already stored in Supabase Storage and parse it through the
+    same pipeline as the file-upload endpoint.
+
+    Intended for the inbox confirm flow: when a user confirms an inbound report
+    and chooses "Confirm & Upload", the attachment has already been stored at
+    ``body.storage_path`` in the ``contracts`` bucket during email ingestion.
+    This endpoint skips the file-upload step and jumps directly to column
+    mapping by returning the same ``UploadPreviewResponse`` shape.
+
+    Request body:
+      storage_path  — Supabase Storage path (e.g. "inbound/{user_id}/{report_id}/report.xlsx")
+      contract_id   — Contract the file belongs to (ownership is verified)
+      period_start  — Optional ISO date pre-fill (e.g. "2025-01-01")
+      period_end    — Optional ISO date pre-fill (e.g. "2025-03-31")
+
+    Returns the same shape as POST /upload/{contract_id}.
+    """
+    from app.db import supabase_admin as _admin
+
+    # Auth + ownership
+    await verify_contract_ownership(body.contract_id, user_id)
+
+    # Download file from Supabase Storage
+    try:
+        file_content: bytes = _admin.storage.from_("contracts").download(body.storage_path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"File not found in storage: {body.storage_path}",
+        ) from exc
+
+    # Derive filename from the last segment of the storage path
+    filename = body.storage_path.split("/")[-1] or "upload.xlsx"
+
+    # Parse the downloaded file
+    try:
+        parsed = parse_upload(file_content, filename)
+    except ParseError as exc:
+        raise _error(400, exc.message, exc.error_code)
+
+    # Load the contract
+    contract_result = (
+        supabase.table("contracts")
+        .select("*")
+        .eq("id", body.contract_id)
+        .execute()
+    )
+    if not contract_result.data:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    contract = contract_result.data[0]
+
+    return _build_preview_from_parsed(
+        parsed=parsed,
+        contract=contract,
+        user_id=user_id,
+        filename=filename,
+        period_start=body.period_start,
+        period_end=body.period_end,
+        raw_bytes=file_content,
+    )
 
 
 @router.post("/upload/{contract_id}/confirm", status_code=201)
@@ -503,32 +1086,42 @@ async def confirm_upload(
             contract=contract,
             period_start=period_start,
             period_end=period_end,
+            metadata_period_start=entry.parsed.metadata_period_start,
+            metadata_period_end=entry.parsed.metadata_period_end,
         )
     except Exception as e:
         logger.warning(f"Cross-check failed (non-blocking): {e}")
         upload_warnings = []
 
-    # Validate unknown categories for category-rate contracts
+    # Resolve and validate categories for category-rate contracts
+    category_breakdown: Optional[dict[str, Decimal]] = None
     if is_category_contract and mapped.category_sales:
-        for category in mapped.category_sales.keys():
-            normalized = category.lower().strip()
-            found = False
-            for rate_cat in royalty_rate.keys():
-                if normalized in rate_cat.lower() or rate_cat.lower() in normalized:
-                    found = True
-                    break
-            if not found:
+        explicit_mapping: dict[str, Optional[str]] = body.category_mapping or {}
+        contract_cats = list(royalty_rate.keys())
+        resolved_sales: dict[str, Decimal] = {}
+
+        for report_cat, sales_amount in mapped.category_sales.items():
+            resolved_cat = _resolve_category(
+                report_cat=report_cat,
+                contract_cats=contract_cats,
+                explicit_mapping=explicit_mapping,
+            )
+            if resolved_cat is None:
+                # Check whether user explicitly excluded this category (mapped to None)
+                if report_cat in explicit_mapping and explicit_mapping[report_cat] is None:
+                    # Excluded — skip (contributes $0 royalty)
+                    continue
+                # Truly unresolved — raise error
                 raise _error(
                     400,
-                    f"Category '{category}' in the uploaded file has no matching rate in this contract. "
+                    f"Category '{report_cat}' in the uploaded file has no matching rate in this contract. "
                     "Update your contract's royalty rates or correct the file.",
                     "unknown_category",
                 )
+            # Accumulate into resolved contract category
+            resolved_sales[resolved_cat] = resolved_sales.get(resolved_cat, Decimal("0")) + sales_amount
 
-    # Build category_breakdown for calculation (convert to Dict[str, Decimal])
-    category_breakdown: Optional[dict[str, Decimal]] = None
-    if is_category_contract and mapped.category_sales:
-        category_breakdown = mapped.category_sales
+        category_breakdown = resolved_sales if resolved_sales else None
 
     # Calculate royalty: sales × rate only.
     # The minimum guarantee is an ANNUAL true-up check, not a per-period floor.
@@ -545,31 +1138,42 @@ async def confirm_upload(
     except Exception as e:
         raise _error(400, f"Royalty calculation failed: {e}", "royalty_calculation_failed")
 
-    # Check for duplicate period (exact match only)
-    dupe_result = (
+    # Check for overlapping periods (matches the DB exclusion constraint)
+    # A period [A, B] overlaps [C, D] when A <= D and C <= B
+    overlap_result = (
         supabase.table("sales_periods")
-        .select("id")
+        .select("id, period_start, period_end")
         .eq("contract_id", contract_id)
-        .eq("period_start", str(period_start))
+        .lte("period_start", str(period_end))
+        .gte("period_end", str(period_start))
         .execute()
     )
-    if dupe_result.data:
-        raise _error(
-            409,
-            "A sales period for this contract already exists with the same start date.",
-            "duplicate_period",
-        )
+    if overlap_result.data:
+        if body.override_duplicate:
+            # Delete overlapping record(s) before inserting the replacement
+            for existing in overlap_result.data:
+                supabase.table("sales_periods").delete().eq("id", existing["id"]).execute()
+        else:
+            raise _error(
+                409,
+                "A sales period for this contract already exists that overlaps with the selected dates.",
+                "duplicate_period",
+            )
 
     # Save mapping if requested
     if body.save_mapping and licensee_name:
         try:
+            upsert_data: dict = {
+                "user_id": user_id,
+                "licensee_name": licensee_name,
+                "column_mapping": body.column_mapping,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            # Persist category aliases if provided
+            if body.category_mapping is not None:
+                upsert_data["category_mapping"] = body.category_mapping
             supabase.table("licensee_column_mappings").upsert(
-                {
-                    "user_id": user_id,
-                    "licensee_name": licensee_name,
-                    "column_mapping": body.column_mapping,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                },
+                upsert_data,
                 on_conflict="user_id,licensee_name",
             ).execute()
         except Exception as e:
@@ -673,6 +1277,76 @@ async def get_saved_mapping(
         "licensee_name": licensee_name,
         "column_mapping": None,
         "updated_at": None,
+    }
+
+
+@router.get("/upload/{contract_id}/period-check")
+async def period_check(
+    contract_id: str,
+    start: str = Query(..., description="Period start date (YYYY-MM-DD)"),
+    end: str = Query(..., description="Period end date (YYYY-MM-DD)"),
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """
+    Check for existing sales_periods that overlap the requested date range.
+
+    Returns has_overlap and the list of overlapping period records so the
+    frontend can show an early inline warning before the user picks a file.
+
+    Also returns Gap 3 fields: out_of_range, contract_start_date,
+    contract_end_date, frequency_warning, and suggested_end_date.
+    """
+    # Auth + ownership — returns the full contract row, reuse it below
+    contract = await verify_contract_ownership(contract_id, user_id)
+
+    # Validate dates
+    try:
+        from datetime import date as _date
+        period_start = _date.fromisoformat(start)
+        period_end = _date.fromisoformat(end)
+    except ValueError:
+        raise _error(400, "Invalid date format. Use YYYY-MM-DD.", "invalid_date")
+
+    if period_end < period_start:
+        raise _error(400, "end must be on or after start.", "period_end_before_start")
+
+    # Query for overlapping periods: period_start <= end AND period_end >= start
+    overlap_result = (
+        supabase.table("sales_periods")
+        .select("id, period_start, period_end, net_sales, royalty_calculated, created_at")
+        .eq("contract_id", contract_id)
+        .lte("period_start", str(period_end))
+        .gte("period_end", str(period_start))
+        .execute()
+    )
+
+    overlapping = overlap_result.data or []
+
+    # --- Gap 3a: contract date range check ---
+    out_of_range = _compute_out_of_range(period_start, period_end, contract)
+    contract_start_date: Optional[str] = contract.get("contract_start_date")
+    contract_end_date: Optional[str] = contract.get("contract_end_date")
+
+    # --- Gap 3b: reporting frequency check ---
+    frequency_warning = _compute_frequency_warning(period_start, period_end, contract)
+
+    # --- Gap 3: suggested end date (only when there is a frequency mismatch) ---
+    suggested_end_date: Optional[str] = None
+    if frequency_warning is not None:
+        freq = contract.get("reporting_frequency")
+        if freq:
+            suggested = _compute_suggested_end_date(period_start, str(freq))
+            if suggested is not None:
+                suggested_end_date = suggested.isoformat()
+
+    return {
+        "has_overlap": len(overlapping) > 0,
+        "overlapping_periods": overlapping,
+        "out_of_range": out_of_range,
+        "contract_start_date": contract_start_date,
+        "contract_end_date": contract_end_date,
+        "frequency_warning": frequency_warning,
+        "suggested_end_date": suggested_end_date,
     }
 
 

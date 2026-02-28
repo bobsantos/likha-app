@@ -11,7 +11,9 @@ Public API:
 """
 
 import io
+import json
 import logging
+import os
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -51,6 +53,8 @@ class ParsedSheet:
     data_rows: int                    # total data rows (excl. header + summary rows)
     sheet_name: str = "Sheet1"
     total_rows: int = 0               # total rows in file including header
+    metadata_period_start: Optional[str] = None  # period start extracted from file metadata rows
+    metadata_period_end: Optional[str] = None    # period end extracted from file metadata rows
 
 
 @dataclass
@@ -444,6 +448,71 @@ def _parse_xls_bytes(file_content: bytes) -> tuple[list[list[list]], list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Metadata period extraction
+# ---------------------------------------------------------------------------
+
+# Label sets for extracting reporting period start/end from metadata rows.
+_PERIOD_START_LABELS: frozenset[str] = frozenset({
+    "reporting period start",
+    "period start",
+    "from",
+    "start date",
+    "period from",
+})
+
+_PERIOD_END_LABELS: frozenset[str] = frozenset({
+    "reporting period end",
+    "period end",
+    "through",
+    "end date",
+    "period through",
+    "to",
+    "period to",
+})
+
+
+def _extract_metadata_periods(
+    raw_rows: list[list],
+    header_idx: int,
+) -> tuple[Optional[str], Optional[str]]:
+    """
+    Scan rows before the detected header (indices 0..header_idx-1) for period
+    label/value pairs and return (period_start, period_end).
+
+    For each row, each cell (lowercased and stripped) is checked against the
+    known start and end label sets.  When a match is found the next cell in
+    the same row is used as the value.
+
+    Returns:
+        A 2-tuple (start_value, end_value).  Either or both may be None if
+        the corresponding label was not found.
+    """
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+
+    for row in raw_rows[:header_idx]:
+        for col_idx, cell in enumerate(row):
+            if cell is None:
+                continue
+            label = str(cell).strip().lower()
+            # Look at the next cell in the same row for the value
+            next_idx = col_idx + 1
+            if next_idx >= len(row):
+                continue
+            next_cell = row[next_idx]
+            if next_cell is None or str(next_cell).strip() == "":
+                continue
+            value = str(next_cell).strip()
+
+            if label in _PERIOD_START_LABELS and period_start is None:
+                period_start = value
+            elif label in _PERIOD_END_LABELS and period_end is None:
+                period_end = value
+
+    return period_start, period_end
+
+
+# ---------------------------------------------------------------------------
 # Core parse_upload
 # ---------------------------------------------------------------------------
 
@@ -499,6 +568,9 @@ def parse_upload(file_content: bytes, filename: str) -> ParsedSheet:
     # Detect header row
     header_idx = _detect_header_row(raw_rows)
     header_row = raw_rows[header_idx]
+
+    # Extract metadata periods from rows before the detected header
+    metadata_period_start, metadata_period_end = _extract_metadata_periods(raw_rows, header_idx)
 
     # Forward-fill None headers (merged header cells)
     filled_headers: list[Optional[str]] = []
@@ -566,6 +638,8 @@ def parse_upload(file_content: bytes, filename: str) -> ParsedSheet:
         data_rows=len(data_rows_list),
         sheet_name=sheet_name,
         total_rows=total_rows,
+        metadata_period_start=metadata_period_start,
+        metadata_period_end=metadata_period_end,
     )
 
 
@@ -758,13 +832,100 @@ def extract_cross_check_values(
 
 
 # ---------------------------------------------------------------------------
+# claude_suggest
+# ---------------------------------------------------------------------------
+
+# Timeout in seconds for the Claude AI column mapping call.
+_AI_MAPPING_TIMEOUT = 5
+
+
+def claude_suggest(
+    columns: list[dict],
+    contract_context: dict,
+) -> dict[str, str]:
+    """
+    Ask Claude to suggest canonical field names for unresolved spreadsheet columns.
+
+    This is a best-effort function: it returns an empty dict on any error
+    (timeout, API failure, bad JSON, missing API key).  Callers must never
+    depend on it succeeding.
+
+    Args:
+        columns: List of {"name": str, "samples": list[str]} dicts for each
+                 unresolved column.
+        contract_context: Dict with keys licensee_name, royalty_base,
+                          has_categories, and categories.
+
+    Returns:
+        Dict mapping column name -> canonical field name for columns Claude
+        could classify.  Invalid field names are silently discarded.
+        Returns {} on any failure.
+    """
+    if not columns:
+        return {}
+
+    try:
+        import anthropic
+        import httpx
+
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+
+        valid_fields_list = sorted(VALID_FIELDS)
+
+        prompt = (
+            "You are a royalty-report data analyst.\n"
+            "Given the contract context and a list of spreadsheet columns "
+            "(each with sample values), map every column to exactly one "
+            "canonical field name from the valid_fields list.\n\n"
+            f"Contract context:\n{json.dumps(contract_context, indent=2)}\n\n"
+            f"Valid field names: {json.dumps(valid_fields_list)}\n\n"
+            f"Columns to classify:\n{json.dumps(columns, indent=2)}\n\n"
+            "Respond with ONLY a JSON object mapping column name to field name. "
+            "Example: {\"Rev\": \"net_sales\", \"Sku Group\": \"product_category\"}. "
+            "Do not include any explanation or markdown."
+        )
+
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=512,
+            timeout=_AI_MAPPING_TIMEOUT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw_text = response.content[0].text.strip()
+
+        # Strip markdown code fences if present
+        if raw_text.startswith("```"):
+            lines = raw_text.split("\n")
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
+            raw_text = "\n".join(lines).strip()
+
+        parsed: dict = json.loads(raw_text)
+
+        # Discard any field values that are not in VALID_FIELDS
+        return {
+            col: field_val
+            for col, field_val in parsed.items()
+            if field_val in VALID_FIELDS
+        }
+
+    except Exception:
+        logger.debug("claude_suggest: silent fallback", exc_info=True)
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # suggest_mapping
 # ---------------------------------------------------------------------------
 
 def suggest_mapping(
     column_names: list[str],
     saved_mapping: Optional[dict[str, str]],
-) -> dict[str, str]:
+    contract_context: Optional[dict] = None,
+    return_source: bool = False,
+    sample_rows: Optional[list[dict]] = None,
+) -> "dict[str, str] | tuple[dict[str, str], str, dict[str, str]]":
     """
     Suggest a column mapping based on keyword synonyms and/or a saved mapping.
 
@@ -772,19 +933,42 @@ def suggest_mapping(
     use their saved value.  New columns (not in the saved mapping) fall back
     to keyword matching.
 
+    When contract_context is provided, columns that keyword matching could
+    not resolve (mapped to "ignore") are sent to Claude AI for a second-pass
+    suggestion.  If Claude is unavailable or times out the result falls back
+    gracefully to the keyword-only output.
+
     Args:
         column_names: List of detected column names from the uploaded file.
         saved_mapping: Optional previously-saved mapping for this licensee.
+        contract_context: Optional dict with contract metadata for AI mapping.
+                          Keys: licensee_name, royalty_base, has_categories,
+                          categories.  When None, AI step is skipped.
+        return_source: When True, return a 3-tuple (mapping, source_str,
+                       col_sources) instead of just the mapping dict.
+                       source_str is one of: "saved", "ai", "suggested",
+                       "none".  col_sources maps every column name to its
+                       individual source: "saved", "keyword", "ai", "none".
+        sample_rows: Optional list of sample data rows (dicts keyed by column
+                     name) used to extract per-column sample values that are
+                     sent to Claude.  When None or empty, samples default to [].
 
     Returns:
-        Dict mapping each column name to a canonical Likha field name.
+        When return_source is False (default): dict mapping each column name
+        to a canonical Likha field name.
+        When return_source is True: (mapping_dict, source_str, col_sources)
+        3-tuple.
     """
     result: dict[str, str] = {}
+    col_sources: dict[str, str] = {}
+    any_saved = False
 
     for col in column_names:
         # 1. Check saved mapping first
         if saved_mapping and col in saved_mapping:
             result[col] = saved_mapping[col]
+            col_sources[col] = "saved"
+            any_saved = True
             continue
 
         # 2. Keyword synonym matching (case-insensitive, substring)
@@ -804,5 +988,210 @@ def suggest_mapping(
                 break
 
         result[col] = matched_field
+        col_sources[col] = "keyword" if matched_field != "ignore" else "none"
 
-    return result
+    # 3. AI second-pass: only when contract_context is provided
+    ai_resolved_any = False
+    if contract_context is not None:
+        unresolved = [
+            {
+                "name": col,
+                "samples": _extract_column_samples(col, sample_rows),
+            }
+            for col, val in result.items()
+            if val == "ignore" and (not saved_mapping or col not in saved_mapping)
+        ]
+
+        if unresolved:
+            ai_suggestions = claude_suggest(unresolved, contract_context)
+            for col, field_val in ai_suggestions.items():
+                if col in result and result[col] == "ignore":
+                    result[col] = field_val
+                    col_sources[col] = "ai"
+                    ai_resolved_any = True
+
+    if not return_source:
+        return result
+
+    # Determine overall source label
+    all_ignore = all(v == "ignore" for v in result.values())
+    if any_saved:
+        source = "saved"
+    elif ai_resolved_any:
+        source = "ai"
+    elif all_ignore:
+        source = "none"
+    else:
+        source = "suggested"
+
+    return result, source, col_sources
+
+
+def _extract_column_samples(col: str, sample_rows: Optional[list[dict]]) -> list[str]:
+    """Return up to 5 non-empty string values for *col* from *sample_rows*."""
+    if not sample_rows:
+        return []
+    samples: list[str] = []
+    for row in sample_rows:
+        val = row.get(col)
+        if val is None:
+            continue
+        s = str(val).strip()
+        if s:
+            samples.append(s)
+        if len(samples) == 5:
+            break
+    return samples
+
+
+# ---------------------------------------------------------------------------
+# claude_suggest_categories
+# ---------------------------------------------------------------------------
+
+def claude_suggest_categories(
+    report_categories: list[str],
+    contract_categories: list[str],
+) -> dict[str, str]:
+    """
+    Ask Claude to map report category names to contract category names.
+
+    This is a best-effort function: returns {} on any failure (timeout, API
+    failure, bad JSON, missing API key). Callers must never depend on it
+    succeeding.
+
+    Args:
+        report_categories: Category names found in the uploaded report.
+        contract_categories: Canonical category names from the contract.
+
+    Returns:
+        Dict mapping report_category -> contract_category.
+        Only entries where the suggested contract_category is in
+        contract_categories are included. Returns {} on any failure.
+    """
+    if not report_categories:
+        return {}
+
+    try:
+        import anthropic
+
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+
+        prompt = (
+            "You are a royalty-report data analyst.\n"
+            "A licensee's sales report uses different category names than the contract.\n"
+            "Map each report category to the single best-matching contract category.\n\n"
+            f"Contract categories: {json.dumps(contract_categories)}\n\n"
+            f"Report categories to map: {json.dumps(report_categories)}\n\n"
+            "Respond with ONLY a JSON object mapping each report category to a contract "
+            "category. Use exactly the contract category name as it appears above. "
+            "Example: {\"Tops & Bottoms\": \"Apparel\", \"Footwear\": \"Footwear\"}. "
+            "Do not include any explanation or markdown."
+        )
+
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=512,
+            timeout=_AI_MAPPING_TIMEOUT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+
+        raw_text = response.content[0].text.strip()
+
+        # Strip markdown code fences if present
+        if raw_text.startswith("```"):
+            lines = raw_text.split("\n")
+            lines = [ln for ln in lines if not ln.strip().startswith("```")]
+            raw_text = "\n".join(lines).strip()
+
+        parsed_response: dict = json.loads(raw_text)
+
+        # Only keep entries where the suggested category is a valid contract category
+        valid_set = set(contract_categories)
+        return {
+            report_cat: contract_cat
+            for report_cat, contract_cat in parsed_response.items()
+            if contract_cat in valid_set
+        }
+
+    except Exception:
+        logger.debug("claude_suggest_categories: silent fallback", exc_info=True)
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# suggest_category_mapping
+# ---------------------------------------------------------------------------
+
+def suggest_category_mapping(
+    report_categories: list[str],
+    contract_categories: list[str],
+    saved_category_mapping: Optional[dict[str, str]],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """
+    Suggest a mapping from report category names to contract category names.
+
+    Resolution order for each report category:
+    1. Saved alias (from licensee_column_mappings.category_mapping)
+    2. Exact match (case-insensitive)
+    3. Substring match (report cat contains contract cat or vice versa)
+    4. AI suggestion (Claude, for remaining unresolved)
+
+    Args:
+        report_categories: Distinct category values found in the uploaded file.
+        contract_categories: Canonical category names from the contract's royalty_rate.
+        saved_category_mapping: Previously saved aliases for this licensee, or None.
+
+    Returns:
+        A 2-tuple of:
+          - mapping: dict mapping report_category -> contract_category (only
+            resolved entries; unresolved categories are absent or None).
+          - sources: dict mapping report_category -> source string, one of:
+            "saved", "exact", "substring", "ai", "none".
+    """
+    result: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    unresolved: list[str] = []
+
+    contract_lower: dict[str, str] = {c.lower(): c for c in contract_categories}
+
+    for report_cat in report_categories:
+        # 1. Saved alias
+        if saved_category_mapping and report_cat in saved_category_mapping:
+            result[report_cat] = saved_category_mapping[report_cat]
+            sources[report_cat] = "saved"
+            continue
+
+        normalized = report_cat.lower().strip()
+
+        # 2. Exact match (case-insensitive)
+        if normalized in contract_lower:
+            result[report_cat] = contract_lower[normalized]
+            sources[report_cat] = "exact"
+            continue
+
+        # 3. Substring match
+        matched: Optional[str] = None
+        for contract_cat_lower, contract_cat in contract_lower.items():
+            if contract_cat_lower in normalized or normalized in contract_cat_lower:
+                matched = contract_cat
+                break
+
+        if matched is not None:
+            result[report_cat] = matched
+            sources[report_cat] = "substring"
+            continue
+
+        # 4. Needs AI
+        unresolved.append(report_cat)
+        sources[report_cat] = "none"
+
+    # AI pass for unresolved categories
+    if unresolved:
+        ai_suggestions = claude_suggest_categories(unresolved, contract_categories)
+        for report_cat, contract_cat in ai_suggestions.items():
+            if report_cat in sources and sources[report_cat] == "none":
+                result[report_cat] = contract_cat
+                sources[report_cat] = "ai"
+
+    return result, sources

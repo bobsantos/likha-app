@@ -10,6 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first for better caching
 COPY requirements.txt .
 
+# Upgrade pip and install build dependencies for wheels
+RUN pip install --upgrade pip setuptools wheel
+
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 

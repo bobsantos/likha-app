@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Upload, AlertCircle, RefreshCw } from 'lucide-react'
 import { getContracts, getDashboardSummary, isUnauthorizedError } from '@/lib/api'
 import ContractCard from '@/components/ContractCard'
@@ -103,13 +104,13 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-sm text-gray-600 mt-1">Manage your licensing contracts and track royalties</p>
         </div>
-        <a
+        <Link
           href="/contracts/upload"
           className="btn-primary inline-flex items-center gap-2"
         >
           <Upload className="w-4 h-4" />
           Upload Contract
-        </a>
+        </Link>
       </div>
 
       {contracts.length === 0 ? (

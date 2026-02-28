@@ -5,10 +5,10 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
-import { getCurrentUser } from '@/lib/auth'
+import { getSession } from '@/lib/auth'
 import Nav from '@/components/Nav'
 
 export default function AppLayout({
@@ -17,23 +17,29 @@ export default function AppLayout({
   children: React.ReactNode
 }) {
   const router = useRouter()
-  const [user, setUser] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
+  // null = not yet resolved, string = authenticated email, false = unauthenticated
+  const [userEmail, setUserEmail] = useState<string | null | false>(null)
+  // Only show the full-screen spinner on the very first mount.
+  // Subsequent re-renders (navigating between pages) skip the loading gate.
+  const isFirstCheck = useRef(true)
 
   useEffect(() => {
+    // Already resolved on a previous render — skip the network gate entirely.
+    if (!isFirstCheck.current) return
+    isFirstCheck.current = false
+
     async function checkAuth() {
       try {
-        const { user, error } = await getCurrentUser()
+        const { session, error } = await getSession()
 
-        if (!user || error) {
+        if (!session || error) {
           router.push('/login')
           return
         }
 
-        setUser(user)
-        setLoading(false)
+        setUserEmail(session.user.email ?? '')
       } catch {
-        // Unexpected error (e.g. network failure during session check) — treat as unauthenticated
+        // Unexpected error — treat as unauthenticated
         router.push('/login')
       }
     }
@@ -41,7 +47,8 @@ export default function AppLayout({
     checkAuth()
   }, [router])
 
-  if (loading) {
+  // Still resolving session on the initial load — show full-screen spinner
+  if (userEmail === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
@@ -52,13 +59,14 @@ export default function AppLayout({
     )
   }
 
-  if (!user) {
+  // Unauthenticated — render nothing while the redirect fires
+  if (userEmail === false) {
     return null
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Nav userEmail={user.email} />
+      <Nav userEmail={userEmail} />
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 animate-fade-in">
         {children}
       </main>

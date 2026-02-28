@@ -322,10 +322,8 @@ class TestConfirmEndpointMultiRate:
 
         with patch("app.routers.contracts.verify_contract_ownership") as mock_verify:
             with patch("app.routers.contracts.supabase_admin") as mock_supabase:
-                mock_verify.return_value = None
-
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+                # verify_contract_ownership now returns the contract row directly
+                mock_verify.return_value = draft_row
 
                 mock_supabase.table.return_value.update.return_value \
                     .eq.return_value.execute.return_value = Mock(data=[active_row])
@@ -366,10 +364,8 @@ class TestConfirmEndpointMultiRate:
 
         with patch("app.routers.contracts.verify_contract_ownership") as mock_verify:
             with patch("app.routers.contracts.supabase_admin") as mock_supabase:
-                mock_verify.return_value = None
-
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+                # verify_contract_ownership now returns the contract row directly
+                mock_verify.return_value = draft_row
 
                 mock_supabase.table.return_value.update.return_value \
                     .eq.return_value.execute.return_value = Mock(data=[active_row])
@@ -418,10 +414,8 @@ class TestConfirmEndpointMultiRate:
 
         with patch("app.routers.contracts.verify_contract_ownership") as mock_verify:
             with patch("app.routers.contracts.supabase_admin") as mock_supabase:
-                mock_verify.return_value = None
-
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+                # verify_contract_ownership now returns the contract row directly
+                mock_verify.return_value = draft_row
 
                 mock_supabase.table.return_value.update.return_value \
                     .eq.return_value.execute.return_value = Mock(data=[active_row])
@@ -465,10 +459,8 @@ class TestConfirmEndpointMultiRate:
 
         with patch("app.routers.contracts.verify_contract_ownership") as mock_verify:
             with patch("app.routers.contracts.supabase_admin") as mock_supabase:
-                mock_verify.return_value = None
-
-                mock_supabase.table.return_value.select.return_value \
-                    .eq.return_value.execute.return_value = Mock(data=[draft_row])
+                # verify_contract_ownership now returns the contract row directly
+                mock_verify.return_value = draft_row
 
                 mock_supabase.table.return_value.update.return_value \
                     .eq.return_value.execute.return_value = Mock(data=[active_row])

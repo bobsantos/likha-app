@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import {
@@ -21,9 +21,15 @@ import {
   TrendingDown,
   TrendingUp,
   Download,
+  Mail,
+  Hash,
+  CheckCircle2,
+  ClipboardList,
+  Copy,
 } from 'lucide-react'
-import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, isUnauthorizedError } from '@/lib/api'
+import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, downloadReportTemplate, isUnauthorizedError } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
+import { copyToClipboard } from '@/lib/clipboard'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate, ContractTotals } from '@/types'
 
 // ---------------------------------------------------------------------------
@@ -99,6 +105,7 @@ function DiscrepancyCell({
 export default function ContractDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const contractId = params.id as string
 
   const [contract, setContract] = useState<Contract | null>(null)
@@ -107,6 +114,19 @@ export default function ContractDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [downloadingPeriodId, setDownloadingPeriodId] = useState<string | null>(null)
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false)
+  const [templateDownloadError, setTemplateDownloadError] = useState<string | null>(null)
+  const [agreementNumberCopied, setAgreementNumberCopied] = useState(false)
+  const [instructionsCopied, setInstructionsCopied] = useState(false)
+  const [successCalloutCopied, setSuccessCalloutCopied] = useState(false)
+
+  // Scroll to hash anchor after data loads (e.g., #sales-periods from upload wizard link)
+  useEffect(() => {
+    if (!loading && window.location.hash) {
+      const el = document.querySelector(window.location.hash)
+      el?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [loading])
 
   const fetchData = async () => {
     setLoading(true)
@@ -144,6 +164,45 @@ export default function ContractDetailPage() {
       // Silently ignore — the backend will log the error
     } finally {
       setDownloadingPeriodId(null)
+    }
+  }
+
+  const handleDownloadTemplate = async () => {
+    if (downloadingTemplate) return
+    setTemplateDownloadError(null)
+    setDownloadingTemplate(true)
+    try {
+      await downloadReportTemplate(contractId)
+    } catch (err) {
+      setTemplateDownloadError(err instanceof Error ? err.message : 'Failed to download template')
+    } finally {
+      setDownloadingTemplate(false)
+    }
+  }
+
+  const handleCopyAgreementNumber = async (agreementNumber: string) => {
+    const success = await copyToClipboard(agreementNumber)
+    if (success) {
+      setAgreementNumberCopied(true)
+      setTimeout(() => setAgreementNumberCopied(false), 2000)
+    }
+  }
+
+  const handleCopyInstructions = async (agreementNumber: string) => {
+    const message = `Please include the following reference in your royalty report emails:\nAgreement Reference: ${agreementNumber}`
+    const success = await copyToClipboard(message)
+    if (success) {
+      setInstructionsCopied(true)
+      setTimeout(() => setInstructionsCopied(false), 2000)
+    }
+  }
+
+  const handleCopySuccessCallout = async (agreementNumber: string) => {
+    const message = `Please include the following reference in your royalty report emails:\nAgreement Reference: ${agreementNumber}`
+    const success = await copyToClipboard(message)
+    if (success) {
+      setSuccessCalloutCopied(true)
+      setTimeout(() => setSuccessCalloutCopied(false), 2000)
     }
   }
 
@@ -280,6 +339,8 @@ export default function ContractDetailPage() {
     )
   }
 
+  const isJustConfirmed = searchParams.get('success') === 'period_created'
+
   const totalRoyalties = contractTotals?.total_royalties ?? 0
   const royaltiesByYear = contractTotals?.by_year ?? []
 
@@ -323,6 +384,35 @@ export default function ContractDetailPage() {
         </div>
       )}
 
+      {/* Post-confirmation callout */}
+      {isJustConfirmed && contract.agreement_number && (
+        <div
+          className="flex items-start gap-3 px-4 py-3 bg-green-50 border border-green-200 rounded-lg mb-6 animate-fade-in"
+          data-testid="success-callout"
+        >
+          <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-green-900">Contract confirmed</p>
+            <p className="text-sm text-green-700 mt-0.5">
+              Your agreement reference is{' '}
+              <span className="font-mono font-semibold">{contract.agreement_number}</span>
+              {' '}— share this with your licensee so their reports can be auto-matched.
+            </p>
+          </div>
+          <button
+            onClick={() => handleCopySuccessCallout(contract.agreement_number!)}
+            aria-label="Copy agreement reference instructions"
+            className="flex items-center gap-1.5 text-sm font-medium text-green-700 hover:text-green-900 transition-colors flex-shrink-0"
+            data-testid="success-callout-copy-button"
+          >
+            {successCalloutCopied
+              ? <><CheckCircle2 className="w-4 h-4" />Copied!</>
+              : <><Copy className="w-4 h-4" />Copy</>
+            }
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="card mb-6 animate-fade-in">
         <div className="flex items-start justify-between">
@@ -330,30 +420,75 @@ export default function ContractDetailPage() {
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
               {contract.licensee_name ?? contract.filename ?? 'Untitled Draft'}
             </h1>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               {contract.status === 'draft' ? (
                 <span className="badge-warning">Draft</span>
               ) : (
                 <span className="badge-success">Active</span>
               )}
+              {contract.agreement_number && (
+                <>
+                  <button
+                    onClick={() => handleCopyAgreementNumber(contract.agreement_number!)}
+                    aria-label={`Copy agreement number ${contract.agreement_number}`}
+                    title="Click to copy agreement number"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 transition-colors text-sm font-mono text-gray-700"
+                    data-testid="agreement-number-badge"
+                  >
+                    {agreementNumberCopied
+                      ? <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
+                      : <Hash className="w-3.5 h-3.5 text-gray-400" />
+                    }
+                    {contract.agreement_number}
+                  </button>
+                  <button
+                    onClick={() => handleCopyInstructions(contract.agreement_number!)}
+                    aria-label="Copy instructions for licensee"
+                    title="Copy instructions for licensee"
+                    className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                    data-testid="copy-instructions-button"
+                  >
+                    {instructionsCopied
+                      ? <><CheckCircle2 className="w-4 h-4 text-green-600" /><span className="text-green-600">Copied!</span></>
+                      : <><ClipboardList className="w-4 h-4" />Copy instructions for licensee</>
+                    }
+                  </button>
+                </>
+              )}
             </div>
           </div>
-          <div className="flex gap-3">
-            {contract.pdf_url && (
-              <a
-                href={resolveUrl(contract.pdf_url)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-secondary flex items-center gap-2"
-              >
-                <ExternalLink className="w-4 h-4" />
-                View PDF
-              </a>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex gap-3">
+              {contract.status === 'active' && (
+                <button
+                  onClick={handleDownloadTemplate}
+                  disabled={downloadingTemplate}
+                  aria-label="Download template"
+                  className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download className="w-4 h-4" />
+                  Download Template
+                </button>
+              )}
+              {contract.pdf_url && (
+                <a
+                  href={resolveUrl(contract.pdf_url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-secondary flex items-center gap-2"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  View PDF
+                </a>
+              )}
+              <Link href="/contracts" className="btn-secondary flex items-center gap-2">
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Link>
+            </div>
+            {templateDownloadError && (
+              <p className="text-sm text-red-600">{templateDownloadError}</p>
             )}
-            <Link href="/contracts" className="btn-secondary flex items-center gap-2">
-              <ArrowLeft className="w-4 h-4" />
-              Back
-            </Link>
           </div>
         </div>
       </div>
@@ -374,6 +509,16 @@ export default function ContractDetailPage() {
                   <div>
                     <p className="text-sm text-gray-600">Licensor</p>
                     <p className="font-medium text-gray-900">{contract.licensor_name}</p>
+                  </div>
+                </div>
+              )}
+
+              {contract.licensee_email && (
+                <div className="flex items-start gap-3">
+                  <Mail className="w-5 h-5 text-gray-400 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-gray-600">Licensee Email</p>
+                    <p className="font-medium text-gray-900">{contract.licensee_email}</p>
                   </div>
                 </div>
               )}
@@ -547,7 +692,7 @@ export default function ContractDetailPage() {
       </div>
 
       {/* Sales Periods Section */}
-      <div className="card mt-6 animate-fade-in">
+      <div id="sales-periods" className="card mt-6 animate-fade-in">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">

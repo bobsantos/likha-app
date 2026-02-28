@@ -24,6 +24,7 @@ import RoyaltyRateInput from '@/components/RoyaltyRateInput'
 export interface ContractFormData {
   licensee_name: string
   licensor_name: string
+  licensee_email: string
   contract_start_date: string
   contract_end_date: string
   royalty_rate: string
@@ -108,6 +109,23 @@ export default function ContractForm({
             className="input"
             data-testid="licensor-name-input"
           />
+        </div>
+
+        {/* Licensee Email */}
+        <div>
+          <label htmlFor="licensee_email" className="block text-sm font-medium text-gray-700 mb-2">
+            Licensee Email
+          </label>
+          <input
+            id="licensee_email"
+            type="email"
+            value={data.licensee_email}
+            onChange={(e) => onChange('licensee_email', e.target.value)}
+            placeholder="licensee@company.com"
+            className="input"
+            data-testid="licensee-email-input"
+          />
+          <p className="mt-1.5 text-xs text-gray-500">Used to auto-match inbound email reports</p>
         </div>
 
         {/* Contract Start Date */}

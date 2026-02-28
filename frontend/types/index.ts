@@ -28,6 +28,8 @@ export interface Contract {
   status: ContractStatus
   filename: string | null
   licensee_name: string | null          // nullable for drafts (not yet reviewed)
+  licensee_email: string | null         // optional contact email for auto-matching inbound reports
+  agreement_number: string | null       // optional reference number for matching reports
   contract_start_date: string | null    // ISO date string, e.g. "2024-01-01"
   contract_end_date: string | null      // ISO date string, e.g. "2025-12-31"
   royalty_rate: RoyaltyRate | null      // nullable for drafts
@@ -117,6 +119,8 @@ export interface ApiResponse<T> {
 export interface FormValues {
   licensee_name: string
   licensor_name: string
+  licensee_email: string | null
+  agreement_number: string | null
   royalty_rate: number | object | string
   royalty_base: 'net_sales' | 'gross_sales'
   minimum_guarantee: number | null
@@ -164,10 +168,22 @@ export type LikhaField =
   | 'metadata'
   | 'ignore'
 
-export type MappingSource = 'saved' | 'suggested' | 'none'
+export type MappingSource = 'saved' | 'suggested' | 'ai' | 'none'
 
 export interface ColumnMapping {
   [detectedColumnName: string]: LikhaField
+}
+
+export interface CategoryMapping {
+  [reportCategory: string]: string  // report_cat -> contract_cat (empty string means "Exclude")
+}
+
+export interface CategoryResolution {
+  required: boolean
+  contract_categories: string[]
+  report_categories: string[]
+  suggested_category_mapping: CategoryMapping
+  category_mapping_sources: Record<string, 'saved' | 'exact' | 'ai' | 'none'>
 }
 
 export interface UploadPreviewResponse {
@@ -180,8 +196,10 @@ export interface UploadPreviewResponse {
   sample_rows: Record<string, string>[]
   suggested_mapping: ColumnMapping
   mapping_source: MappingSource
+  mapping_sources?: Record<string, 'keyword' | 'ai' | 'none'>
   period_start: string
   period_end: string
+  category_resolution?: CategoryResolution | null
 }
 
 export interface UploadConfirmRequest {
@@ -190,6 +208,8 @@ export interface UploadConfirmRequest {
   period_start: string
   period_end: string
   save_mapping: boolean
+  category_mapping?: CategoryMapping
+  override_duplicate?: boolean
 }
 
 export interface SavedMappingResponse {
@@ -225,4 +245,88 @@ export interface ContractTotals {
   contract_id: string
   total_royalties: number
   by_year: YearlyRoyalties[]
+}
+
+// --- Phase 2: Email Intake / Inbox ---
+
+export interface InboundAddressResponse {
+  inbound_address: string
+}
+
+// One row from the attachment header block (key/value metadata pair).
+// e.g. { key: "Licensee Name", value: "Sunrise Apparel Co." }
+export interface AttachmentMetadataRow {
+  key: string
+  value: string
+}
+
+// Parsed header row + up to 3 data rows from the attachment spreadsheet.
+// headers: column name strings (e.g. ["Product Description", "Net Sales", ...])
+// rows: string arrays aligned to headers, at most 3 rows
+export interface AttachmentSampleRows {
+  headers: string[]
+  rows: string[][]
+}
+
+export interface InboundReport {
+  id: string
+  user_id: string
+  contract_id: string | null
+  sender_email: string
+  subject: string | null
+  received_at: string
+  attachment_filename: string | null
+  attachment_path: string | null
+  match_confidence: 'high' | 'medium' | 'none'
+  status: 'pending' | 'confirmed' | 'rejected' | 'processed'
+  contract_name: string | null
+  // New fields from email intake matching ADR
+  candidate_contract_ids: string[] | null
+  suggested_period_start: string | null
+  suggested_period_end: string | null
+  sales_period_id: string | null
+  // Attachment preview fields (migration 20260225220000).
+  // Populated at ingestion time by scanning the first ~20 rows of the
+  // attachment.  null when no attachment or parsing could not extract structure.
+  attachment_metadata_rows: AttachmentMetadataRow[] | null
+  attachment_sample_rows: AttachmentSampleRows | null
+}
+
+export interface ConfirmReportRequest {
+  contract_id?: string
+  open_wizard: boolean
+}
+
+export interface ConfirmReportResponse {
+  redirect_url: string | null
+}
+
+// --- Period overlap check ---
+
+/** One existing sales_period record returned by GET /api/upload/{contract_id}/period-check */
+export interface OverlapRecord {
+  id: string
+  period_start: string           // ISO date string
+  period_end: string             // ISO date string
+  net_sales: number
+  royalty_calculated: number
+  created_at: string             // ISO datetime string
+}
+
+export interface FrequencyWarning {
+  expected_frequency: string
+  entered_days: number
+  expected_range: [number, number]
+  message: string
+}
+
+export interface PeriodCheckResponse {
+  has_overlap: boolean
+  overlapping_periods: OverlapRecord[]
+  // Gap 3 fields:
+  out_of_range: boolean
+  contract_start_date: string | null
+  contract_end_date: string | null
+  frequency_warning: FrequencyWarning | null
+  suggested_end_date: string | null
 }

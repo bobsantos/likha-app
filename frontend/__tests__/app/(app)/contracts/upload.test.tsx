@@ -388,7 +388,7 @@ describe('Upload Contract Page', () => {
     fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
 
     await waitFor(() => {
-      expect(mockPush).toHaveBeenCalledWith('/contracts/new-contract-123')
+      expect(mockPush).toHaveBeenCalledWith('/contracts/new-contract-123?success=period_created')
     })
   })
 
@@ -972,7 +972,7 @@ describe('Upload Contract Page', () => {
       fireEvent.click(screen.getByRole('button', { name: /confirm and save/i }))
 
       await waitFor(() => {
-        expect(mockPush).toHaveBeenCalledWith('/contracts/new-contract-123')
+        expect(mockPush).toHaveBeenCalledWith('/contracts/new-contract-123?success=period_created')
       })
 
       expect(sessionStorage.getItem('upload_draft')).toBeNull()

@@ -129,14 +129,16 @@ def _mock_periods_table(insert_result):
       - select("id").eq(...).eq(...).execute() -> data=[] (no dupe)
       - insert({...}).execute() -> data=[insert_result]
     """
-    # Duplicate check chain: .select("id").eq("contract_id",...).eq("period_start",...).execute()
+    # Overlap check chain: .select("id, ...").eq("contract_id",...).lte("period_start",...).gte("period_end",...).execute()
     mock_dupe_exec = MagicMock()
     mock_dupe_exec.execute.return_value = Mock(data=[])
 
     mock_dupe_chain = MagicMock()
-    # Any .eq() call on mock_dupe_chain returns another mock with no data
+    # Any .eq()/.lte()/.gte() call on the chain returns another mock with no data
     mock_dupe_chain.eq.return_value = mock_dupe_exec
-    mock_dupe_exec.eq.return_value = mock_dupe_exec  # chain continues with no data
+    mock_dupe_exec.eq.return_value = mock_dupe_exec
+    mock_dupe_exec.lte.return_value = mock_dupe_exec
+    mock_dupe_exec.gte.return_value = mock_dupe_exec
 
     mock_insert_result = MagicMock()
     mock_insert_result.execute.return_value = Mock(data=[insert_result])
@@ -2393,3 +2395,467 @@ class TestConfirmEndpointMetadataMapping:
             )
 
         assert result.id == "sp-1"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/sales/upload/{contract_id} — mapping_sources in response
+# ---------------------------------------------------------------------------
+
+class TestUploadEndpointMappingSources:
+    """Upload endpoint includes mapping_sources dict in its response.
+
+    mapping_sources maps every detected column to its source:
+    'keyword', 'ai', or 'none'.  When a saved mapping is used the source
+    for those columns is 'saved'.
+    """
+
+    @pytest.mark.asyncio
+    async def test_response_includes_mapping_sources_key(self):
+        """The upload response always contains a 'mapping_sources' key."""
+        rows = [
+            ["Net Sales", "Rev"],
+            [12000, 8500],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.services.spreadsheet_parser.claude_suggest", return_value={"Rev": "net_sales"}):
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import upload_file
+            from fastapi import UploadFile
+
+            upload_file_mock = MagicMock(spec=UploadFile)
+            upload_file_mock.filename = "report.xlsx"
+            upload_file_mock.read = AsyncMock(return_value=xlsx_bytes)
+            upload_file_mock.size = len(xlsx_bytes)
+
+            result = await upload_file(
+                contract_id="contract-123",
+                file=upload_file_mock,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                user_id="user-123",
+            )
+
+        assert "mapping_sources" in result
+
+    @pytest.mark.asyncio
+    async def test_keyword_column_gets_keyword_source(self):
+        """A column resolved by keyword matching has source 'keyword' in mapping_sources."""
+        rows = [
+            ["Net Sales", "Rev"],
+            [12000, 8500],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.services.spreadsheet_parser.claude_suggest", return_value={"Rev": "net_sales"}):
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import upload_file
+            from fastapi import UploadFile
+
+            upload_file_mock = MagicMock(spec=UploadFile)
+            upload_file_mock.filename = "report.xlsx"
+            upload_file_mock.read = AsyncMock(return_value=xlsx_bytes)
+            upload_file_mock.size = len(xlsx_bytes)
+
+            result = await upload_file(
+                contract_id="contract-123",
+                file=upload_file_mock,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                user_id="user-123",
+            )
+
+        assert result["mapping_sources"]["Net Sales"] == "keyword"
+
+    @pytest.mark.asyncio
+    async def test_ai_resolved_column_gets_ai_source(self):
+        """A column resolved by AI has source 'ai' in mapping_sources."""
+        rows = [
+            ["Net Sales", "Rev"],
+            [12000, 8500],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.services.spreadsheet_parser.claude_suggest", return_value={"Rev": "net_sales"}):
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import upload_file
+            from fastapi import UploadFile
+
+            upload_file_mock = MagicMock(spec=UploadFile)
+            upload_file_mock.filename = "report.xlsx"
+            upload_file_mock.read = AsyncMock(return_value=xlsx_bytes)
+            upload_file_mock.size = len(xlsx_bytes)
+
+            result = await upload_file(
+                contract_id="contract-123",
+                file=upload_file_mock,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                user_id="user-123",
+            )
+
+        assert result["mapping_sources"]["Rev"] == "ai"
+
+    @pytest.mark.asyncio
+    async def test_sample_rows_passed_to_suggest_mapping(self):
+        """
+        The router passes parsed.sample_rows to suggest_mapping so that
+        claude_suggest receives actual cell values instead of empty lists.
+        """
+        rows = [
+            ["Net Sales", "Rev"],
+            [12000, 8500],
+            [9000, 7200],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.services.spreadsheet_parser.claude_suggest", return_value={"Rev": "net_sales"}) as mock_claude:
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+
+            from app.routers.sales_upload import upload_file
+            from fastapi import UploadFile
+
+            upload_file_mock = MagicMock(spec=UploadFile)
+            upload_file_mock.filename = "report.xlsx"
+            upload_file_mock.read = AsyncMock(return_value=xlsx_bytes)
+            upload_file_mock.size = len(xlsx_bytes)
+
+            await upload_file(
+                contract_id="contract-123",
+                file=upload_file_mock,
+                period_start="2025-01-01",
+                period_end="2025-03-31",
+                user_id="user-123",
+            )
+
+        # claude_suggest should have been called with actual sample values,
+        # not empty lists
+        assert mock_claude.called
+        sent_columns = mock_claude.call_args[0][0]
+        rev_col = next((c for c in sent_columns if c["name"] == "Rev"), None)
+        assert rev_col is not None
+        # The sample values from the xlsx rows should be present
+        assert len(rev_col["samples"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# Inbox period date flow — regression tests for the inbox confirm → wizard bug
+# ---------------------------------------------------------------------------
+#
+# Root cause:
+#   When source=inbox and storage_path is present, the upload wizard calls
+#   parseFromStorage() without forwarding the inbox period dates from the URL
+#   query params.  The backend returns period_start="" and period_end="" in
+#   the UploadPreviewResponse.  doConfirm() then sends those empty strings to
+#   POST /upload/{contract_id}/confirm, which calls date.fromisoformat("") and
+#   raises ValueError → 400 "Invalid date format. Use YYYY-MM-DD."
+#
+# Fix: the frontend must pass inboxPeriodStart/inboxPeriodEnd to
+#   parseFromStorage() so they are echoed back in the response, and doConfirm()
+#   must prefer the wizard's periodStart/periodEnd state over the (potentially
+#   empty) uploadPreview dates.
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmEndpointInboxEmptyDates:
+    """
+    Confirm endpoint returns 400 with invalid_date when period_start or
+    period_end is an empty string (as happens in the inbox auto-parse flow
+    when the frontend does not forward the inbox period dates).
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_period_start_returns_400_invalid_date(self):
+        """
+        Sending period_start="" to confirm_upload must return 400 invalid_date.
+
+        This is the exact failure that occurs in the inbox flow when the wizard
+        calls parseFromStorage without passing the inbox dates.
+        """
+        rows = [
+            ["Net Sales"],
+            [50000],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+
+        with patch("app.routers.sales_upload.supabase"), \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock):
+
+            from app.routers.sales_upload import _upload_store, _UploadEntry, confirm_upload, UploadConfirmRequest
+            from app.services.spreadsheet_parser import parse_upload
+            from fastapi import HTTPException
+            import uuid
+
+            upload_id = str(uuid.uuid4())
+            parsed = parse_upload(xlsx_bytes, "report.xlsx")
+            _upload_store[upload_id] = _UploadEntry(
+                parsed=parsed,
+                contract_id="contract-123",
+                user_id="user-123",
+            )
+
+            # Empty string — this is what the inbox auto-parse flow sends when
+            # parseFromStorage() is not given the inbox period dates.
+            request = UploadConfirmRequest(
+                upload_id=upload_id,
+                column_mapping={"Net Sales": "net_sales"},
+                period_start="",
+                period_end="",
+                save_mapping=False,
+            )
+
+            with pytest.raises(HTTPException) as exc_info:
+                await confirm_upload(
+                    contract_id="contract-123",
+                    body=request,
+                    user_id="user-123",
+                )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail["error_code"] == "invalid_date"
+        assert "Invalid date format" in exc_info.value.detail["detail"]
+
+    @pytest.mark.asyncio
+    async def test_valid_inbox_dates_forwarded_via_parse_from_storage_succeed(self):
+        """
+        When parseFromStorage is called with valid inbox period dates (as the
+        fixed frontend will do), those dates are echoed back in the response so
+        that doConfirm can forward them to confirm_upload.
+
+        This is the happy path that the fix enables.
+        """
+        rows = [
+            ["Product", "Net Sales", "Royalty Due"],
+            ["Apparel", 10000, 800],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.db.supabase_admin") as mock_admin:
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+            mock_admin.storage.from_.return_value.download.return_value = xlsx_bytes
+
+            from app.routers.sales_upload import parse_from_storage, ParseFromStorageRequest
+
+            result = await parse_from_storage(
+                body=ParseFromStorageRequest(
+                    storage_path="inbound/user-123/report-abc/report.xlsx",
+                    contract_id="contract-123",
+                    # The fixed frontend passes these inbox dates through
+                    period_start="2025-01-01",
+                    period_end="2025-03-31",
+                ),
+                user_id="user-123",
+            )
+
+        # The fix relies on these being echoed back in the response so doConfirm
+        # can use them — they must NOT be empty strings.
+        assert result["period_start"] == "2025-01-01"
+        assert result["period_end"] == "2025-03-31"
+
+
+# ---------------------------------------------------------------------------
+# _build_preview_from_parsed: metadata period fallback
+# ---------------------------------------------------------------------------
+#
+# When parse_from_storage is called without period dates (inbox auto-parse
+# flow where the inbound email had no detectable period in subject/body),
+# the backend should fall back to any period dates embedded in the
+# spreadsheet's own metadata rows rather than echoing back empty strings.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildPreviewMetadataPeriodFallback:
+    """
+    _build_preview_from_parsed falls back to parsed.metadata_period_start /
+    metadata_period_end when the caller-supplied period strings are empty.
+    """
+
+    @pytest.mark.asyncio
+    async def test_parse_from_storage_uses_file_metadata_when_no_inbox_dates(self):
+        """
+        When parse_from_storage is called with empty period_start/period_end
+        AND the file has 'Reporting Period Start/End' metadata rows, those
+        values are returned in the response — not empty strings.
+        """
+        # Build a CSV with explicit "Reporting Period Start/End" metadata rows
+        csv_content = (
+            b"Reporting Period Start,2025-04-01\n"
+            b"Reporting Period End,2025-06-30\n"
+            b"Product,Net Sales,Royalty\n"
+            b"Widget,10000,800\n"
+        )
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.db.supabase_admin") as mock_admin:
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+            mock_admin.storage.from_.return_value.download.return_value = csv_content
+
+            from app.routers.sales_upload import parse_from_storage, ParseFromStorageRequest
+
+            result = await parse_from_storage(
+                body=ParseFromStorageRequest(
+                    storage_path="inbound/user-123/report-abc/report.csv",
+                    contract_id="contract-123",
+                    # No period dates supplied — simulates the inbox flow
+                    # where the email subject had no detectable period
+                ),
+                user_id="user-123",
+            )
+
+        # The file's embedded metadata should be used instead of empty strings
+        assert result["period_start"] == "2025-04-01"
+        assert result["period_end"] == "2025-06-30"
+
+    @pytest.mark.asyncio
+    async def test_parse_from_storage_caller_dates_take_precedence_over_metadata(self):
+        """
+        When parse_from_storage is called WITH period dates, those caller-
+        supplied dates are used even if the file has its own metadata rows.
+        """
+        csv_content = (
+            b"Reporting Period Start,2025-04-01\n"
+            b"Reporting Period End,2025-06-30\n"
+            b"Product,Net Sales,Royalty\n"
+            b"Widget,10000,800\n"
+        )
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.db.supabase_admin") as mock_admin:
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+            mock_admin.storage.from_.return_value.download.return_value = csv_content
+
+            from app.routers.sales_upload import parse_from_storage, ParseFromStorageRequest
+
+            result = await parse_from_storage(
+                body=ParseFromStorageRequest(
+                    storage_path="inbound/user-123/report-abc/report.csv",
+                    contract_id="contract-123",
+                    # Caller-supplied dates override file metadata
+                    period_start="2025-01-01",
+                    period_end="2025-03-31",
+                ),
+                user_id="user-123",
+            )
+
+        # Caller-supplied dates win
+        assert result["period_start"] == "2025-01-01"
+        assert result["period_end"] == "2025-03-31"
+
+    @pytest.mark.asyncio
+    async def test_parse_from_storage_no_metadata_and_no_caller_dates_returns_empty(self):
+        """
+        When neither caller dates nor file metadata are present, period_start
+        and period_end are empty strings (existing behaviour — no crash).
+        """
+        rows = [
+            ["Product", "Net Sales", "Royalty"],
+            ["Widget", 10000, 800],
+        ]
+        xlsx_bytes = _make_xlsx_bytes(rows)
+        contract = _make_db_contract()
+
+        with patch("app.routers.sales_upload.supabase") as mock_supabase, \
+             patch("app.routers.sales_upload.verify_contract_ownership", new_callable=AsyncMock), \
+             patch("app.db.supabase_admin") as mock_admin:
+
+            def table_side_effect(name):
+                if name == "contracts":
+                    return _mock_contract_query(mock_supabase, contract)
+                if name == "licensee_column_mappings":
+                    return _mock_mapping_query(mock_supabase, None)
+                return MagicMock()
+
+            mock_supabase.table.side_effect = table_side_effect
+            mock_admin.storage.from_.return_value.download.return_value = xlsx_bytes
+
+            from app.routers.sales_upload import parse_from_storage, ParseFromStorageRequest
+
+            result = await parse_from_storage(
+                body=ParseFromStorageRequest(
+                    storage_path="inbound/user-123/report-abc/report.xlsx",
+                    contract_id="contract-123",
+                ),
+                user_id="user-123",
+            )
+
+        # No metadata, no caller dates → empty strings (unset)
+        assert result["period_start"] == ""
+        assert result["period_end"] == ""

@@ -3,11 +3,15 @@ Contract management API endpoints.
 """
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
+from fastapi.responses import StreamingResponse
 from typing import List, Optional
+import io
+import re
 import tempfile
 import os
 import time
 import logging
+from datetime import date as _date
 
 from app.models.contract import (
     Contract,
@@ -20,6 +24,7 @@ from app.models.contract import (
 from app.services.extractor import extract_contract
 from app.services.normalizer import normalize_extracted_terms
 from app.services.storage import upload_contract_pdf, get_signed_url, delete_contract_pdf
+from app.services.report_template import generate_report_template
 from app.db import supabase, supabase_admin
 from app.auth import get_current_user, verify_contract_ownership
 
@@ -238,16 +243,9 @@ async def confirm_contract(
 
     Requires authentication. User must own the contract.
     """
-    # Verify ownership first (raises 404 or 403 as appropriate)
-    await verify_contract_ownership(contract_id, user_id)
+    # Verify ownership and get the contract row in one query (no double fetch)
+    current = await verify_contract_ownership(contract_id, user_id)
 
-    # Fetch the current contract to check its status
-    result = supabase_admin.table("contracts").select("*").eq("id", contract_id).execute()
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    current = result.data[0]
     current_status = current.get("status", "active")
 
     if current_status == ContractStatus.ACTIVE:
@@ -255,6 +253,31 @@ async def confirm_contract(
             status_code=409,
             detail="Contract is already active and cannot be confirmed again.",
         )
+
+    # Auto-generate the agreement number: LKH-{year}-{sequential}.
+    # Query the most recent agreement_number for this user in the current year
+    # to determine the next sequential value.
+    current_year = _date.today().year
+    year_prefix = f"LKH-{current_year}-%"
+    existing_ref = (
+        supabase_admin.table("contracts")
+        .select("agreement_number")
+        .eq("user_id", user_id)
+        .like("agreement_number", year_prefix)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_seq = 1
+    if existing_ref.data:
+        last_num = existing_ref.data[0].get("agreement_number", "")
+        # Parse the trailing integer after the last '-'
+        try:
+            last_seq = int(last_num.rsplit("-", 1)[-1])
+            next_seq = last_seq + 1
+        except (ValueError, IndexError):
+            next_seq = 1
+    agreement_number = f"LKH-{current_year}-{next_seq}"
 
     # Build update payload from confirmed fields.
     # Use model_dump() for royalty_rate so that List[RoyaltyTier] Pydantic model
@@ -265,6 +288,8 @@ async def confirm_contract(
     update_data = {
         "status": ContractStatus.ACTIVE,
         "licensee_name": confirm_data.licensee_name,
+        "licensee_email": confirm_data.licensee_email,
+        "agreement_number": agreement_number,
         "royalty_rate": _confirm_dump["royalty_rate"],
         "royalty_base": confirm_data.royalty_base,
         "territories": confirm_data.territories,
@@ -339,6 +364,10 @@ async def list_contracts(
     By default returns only active contracts (status='active').
     Pass include_drafts=true to include draft contracts as well.
 
+    Returns the stored pdf_url as-is — signed URL refresh is intentionally
+    skipped here to avoid N network calls to Supabase Storage (one per contract).
+    Use GET /{contract_id} for a fresh signed URL on a specific contract.
+
     Requires authentication.
     """
     query = supabase_admin.table("contracts").select("*").eq("user_id", user_id)
@@ -348,8 +377,11 @@ async def list_contracts(
 
     result = query.execute()
 
-    contracts = [Contract(**row) for row in result.data]
-    return [_refresh_pdf_url(c) for c in contracts]
+    # Return stored pdf_url as-is — do NOT call _refresh_pdf_url in a loop.
+    # Each get_signed_url call is a network round-trip; refreshing N contracts
+    # on every list request is O(N) latency.  The single-contract GET endpoint
+    # still refreshes the URL for the detail view.
+    return [Contract(**row) for row in result.data]
 
 
 @router.get("/{contract_id}", response_model=ContractWithFormValues)
@@ -369,15 +401,9 @@ async def get_contract(
 
     Requires authentication. User must own the contract.
     """
-    # Verify user owns this contract
-    await verify_contract_ownership(contract_id, user_id)
+    # Verify ownership and reuse the returned row — no second SELECT needed
+    row = await verify_contract_ownership(contract_id, user_id)
 
-    result = supabase_admin.table("contracts").select("*").eq("id", contract_id).execute()
-
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    row = result.data[0]
     contract = _refresh_pdf_url(Contract(**row))
 
     form_values = None
@@ -394,6 +420,61 @@ async def get_contract(
     return ContractWithFormValues(**contract.model_dump(), form_values=form_values)
 
 
+@router.get("/{contract_id}/report-template")
+async def get_report_template(
+    contract_id: str,
+    user_id: str = Depends(get_current_user),
+) -> StreamingResponse:
+    """
+    Generate and download a pre-formatted Excel report template for a contract.
+
+    The template is designed to be emailed to the licensee who fills it in
+    and returns it. Column headers match what the spreadsheet parser's
+    suggest_mapping function auto-recognizes, enabling zero-effort column
+    mapping when the completed file is uploaded back.
+
+    - For flat-rate contracts: Period Start, Period End, Net Sales, Royalty Due
+    - For category-rate contracts: adds a Category column
+
+    Returns:
+        An .xlsx file as a streaming response (attachment download).
+
+    Raises:
+        404 if the contract does not exist.
+        409 if the contract is in draft status (not yet active).
+
+    Requires authentication. User must own the contract.
+    """
+    # Verify ownership and reuse the returned row — no second SELECT needed
+    contract = await verify_contract_ownership(contract_id, user_id)
+
+    if contract.get("status") != ContractStatus.ACTIVE:
+        raise HTTPException(
+            status_code=409,
+            detail="Report templates can only be generated for active contracts.",
+        )
+
+    try:
+        xlsx_bytes = generate_report_template(contract)
+    except Exception as e:
+        logger.error(f"Failed to generate report template for {contract_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to generate report template")
+
+    # Build a safe filename from the licensee name
+    licensee_name = contract.get("licensee_name") or "report"
+    safe_name = re.sub(r"[^\w\s-]", "", licensee_name).strip()
+    safe_name = re.sub(r"[\s]+", "_", safe_name)
+    filename = f"royalty_report_template_{safe_name}.xlsx"
+
+    return StreamingResponse(
+        io.BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
+
+
 @router.delete("/{contract_id}")
 async def delete_contract(
     contract_id: str,
@@ -406,25 +487,25 @@ async def delete_contract(
 
     Requires authentication. User must own the contract.
     """
-    # Verify user owns this contract
-    await verify_contract_ownership(contract_id, user_id)
+    # Verify ownership and reuse the returned row — no second SELECT needed
+    contract = await verify_contract_ownership(contract_id, user_id)
 
-    # Get contract to retrieve PDF URL
-    contract_result = supabase_admin.table("contracts").select("*").eq("id", contract_id).execute()
-
-    if not contract_result.data:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    contract = contract_result.data[0]
+    storage_path = contract.get("storage_path")
     pdf_url = contract.get("pdf_url")
 
     # Delete PDF from storage (best-effort, continue if it fails)
-    if pdf_url:
+    if storage_path:
+        try:
+            delete_contract_pdf(storage_path)
+            logger.info(f"Deleted PDF from storage: {storage_path}")
+        except Exception as e:
+            logger.error(f"Failed to delete PDF from storage: {str(e)}")
+    elif pdf_url:
+        # Fallback for older rows that only have pdf_url
         try:
             delete_contract_pdf(pdf_url)
             logger.info(f"Deleted PDF from storage: {pdf_url}")
         except Exception as e:
-            # Log error but don't fail the request
             logger.error(f"Failed to delete PDF from storage: {str(e)}")
 
     # TODO: Delete associated sales periods (will be handled by cascade delete in DB)

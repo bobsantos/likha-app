@@ -1,0 +1,24 @@
+Operator,Meridian Goods LLC
+Submitted To,BrandCo Holdings LLC
+Ref #,BC-2024-0078
+From,2025-10-01
+Through,2025-12-31
+Submission Date,2026-02-12
+
+Invoice #,Merchandise Description,Sku Group,Invoice Amt,Returned Goods,Sales $,Calculated Fee
+MG-10001,BrandCo Logo Tee - Short Sleeve,Tops & Bottoms,22400.00,1100.00,21300.00,2130.00
+MG-10002,BrandCo Crewneck Sweatshirt,Tops & Bottoms,31500.00,1400.00,30100.00,3010.00
+MG-10003,BrandCo Athletic Short,Tops & Bottoms,18200.00,600.00,17600.00,1760.00
+MG-10004,BrandCo Varsity Jacket,Tops & Bottoms,27600.00,900.00,26700.00,2670.00
+MG-10005,BrandCo Snapback Cap,Hard Accessories,19800.00,500.00,19300.00,2316.00
+MG-10006,BrandCo Tote Bag - Canvas,Hard Accessories,14400.00,350.00,14050.00,1686.00
+MG-10007,BrandCo Crossbody Bag,Hard Accessories,21000.00,800.00,20200.00,2424.00
+MG-10008,BrandCo Keychain Set (3-pack),Hard Accessories,8700.00,200.00,8500.00,1020.00
+MG-10009,BrandCo Low-Top Sneaker,Footwear,38400.00,1800.00,36600.00,2928.00
+MG-10010,BrandCo High-Top Sneaker,Footwear,29100.00,1100.00,28000.00,2240.00
+MG-10011,BrandCo Slide Sandal,Footwear,12500.00,400.00,12100.00,968.00
+TOTAL,,,243600.00,9150.00,234450.00,23152.00
+
+Amt Due This Statement,23152.00
+Preparer,J. Okafor - Finance Manager
+Notes,"Tops & Bottoms = Apparel (10%). Hard Accessories = Accessories (12%). Footwear = 8%. Returns itemized by Sku Group in attached schedule."

@@ -136,6 +136,7 @@ export default function UploadContractPage() {
         const populated = {
           licensee_name: fv?.licensee_name || '',
           licensor_name: fv?.licensor_name || '',
+          licensee_email: fv?.licensee_email || '',
           contract_start_date: fv?.contract_start_date || '',
           contract_end_date: fv?.contract_end_date || '',
           royalty_rate: typeof fv?.royalty_rate === 'number'
@@ -291,6 +292,7 @@ export default function UploadContractPage() {
       const newFormData = {
         licensee_name: fv.licensee_name || '',
         licensor_name: fv.licensor_name || '',
+        licensee_email: fv.licensee_email || '',
         // Use the same date key names as the backend ContractConfirm model expects.
         contract_start_date: fv.contract_start_date || '',
         contract_end_date: fv.contract_end_date || '',
@@ -407,6 +409,7 @@ export default function UploadContractPage() {
 
       const contractData = {
         licensee_name: formData.licensee_name,
+        licensee_email: formData.licensee_email?.trim() || null,
         // contract_start_date / contract_end_date match the backend ContractConfirm field names.
         // Both are validated as non-empty above before reaching this point.
         contract_start_date: formData.contract_start_date,
@@ -423,7 +426,7 @@ export default function UploadContractPage() {
 
       const contract = await confirmDraft(draftContractId, contractData)
       clearDraftFromStorage()
-      router.push(`/contracts/${contract.id}`)
+      router.push(`/contracts/${contract.id}?success=period_created`)
     } catch (err) {
       setError('Your extracted terms are still here — nothing was lost. Please try saving again.')
       setErrorType('save')
@@ -745,6 +748,20 @@ export default function UploadContractPage() {
                   onChange={(e) => handleInputChange('licensor_name', e.target.value)}
                   className="input"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Licensee Email
+                </label>
+                <input
+                  type="email"
+                  value={formData.licensee_email}
+                  onChange={(e) => handleInputChange('licensee_email', e.target.value)}
+                  placeholder="licensee@company.com"
+                  className="input"
+                />
+                <p className="mt-1.5 text-xs text-gray-500">Used to auto-match inbound email reports</p>
               </div>
 
               <div>

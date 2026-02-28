@@ -5,7 +5,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { useRouter } from 'next/navigation'
 import AppLayout from '@/app/(app)/layout'
-import { getCurrentUser } from '@/lib/auth'
+import { getSession } from '@/lib/auth'
 
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
@@ -15,7 +15,7 @@ jest.mock('next/navigation', () => ({
 
 // Mock auth
 jest.mock('@/lib/auth', () => ({
-  getCurrentUser: jest.fn(),
+  getSession: jest.fn(),
   signOut: jest.fn(),
 }))
 
@@ -28,7 +28,7 @@ jest.mock('@/components/Nav', () => {
 
 describe('App Layout', () => {
   const mockPush = jest.fn()
-  const mockGetCurrentUser = getCurrentUser as jest.MockedFunction<typeof getCurrentUser>
+  const mockGetSession = getSession as jest.MockedFunction<typeof getSession>
 
   beforeEach(() => {
     jest.clearAllMocks()
@@ -38,7 +38,7 @@ describe('App Layout', () => {
   })
 
   it('shows loading state initially', () => {
-    mockGetCurrentUser.mockImplementation(() => new Promise(() => {}))
+    mockGetSession.mockImplementation(() => new Promise(() => {}))
 
     render(
       <AppLayout>
@@ -50,7 +50,7 @@ describe('App Layout', () => {
   })
 
   it('redirects to login if not authenticated', async () => {
-    mockGetCurrentUser.mockResolvedValue({ user: null, error: null })
+    mockGetSession.mockResolvedValue({ session: null, error: null })
 
     render(
       <AppLayout>
@@ -63,9 +63,9 @@ describe('App Layout', () => {
     })
   })
 
-  it('redirects to login when getCurrentUser returns an error', async () => {
-    mockGetCurrentUser.mockResolvedValue({
-      user: null,
+  it('redirects to login when getSession returns an error', async () => {
+    mockGetSession.mockResolvedValue({
+      session: null,
       error: { message: 'JWT expired', status: 401 } as unknown as import('@supabase/supabase-js').AuthError,
     })
 
@@ -80,8 +80,8 @@ describe('App Layout', () => {
     })
   })
 
-  it('redirects to login when getCurrentUser throws unexpectedly', async () => {
-    mockGetCurrentUser.mockRejectedValue(new Error('Network error'))
+  it('redirects to login when getSession throws unexpectedly', async () => {
+    mockGetSession.mockRejectedValue(new Error('Network error'))
 
     render(
       <AppLayout>
@@ -95,8 +95,8 @@ describe('App Layout', () => {
   })
 
   it('renders children with nav when authenticated', async () => {
-    mockGetCurrentUser.mockResolvedValue({
-      user: { id: 'user-1', email: 'test@example.com' },
+    mockGetSession.mockResolvedValue({
+      session: { user: { id: 'user-1', email: 'test@example.com' } } as import('@supabase/supabase-js').Session,
       error: null,
     })
 
@@ -113,8 +113,8 @@ describe('App Layout', () => {
   })
 
   it('passes user email to Nav component', async () => {
-    mockGetCurrentUser.mockResolvedValue({
-      user: { id: 'user-1', email: 'user@example.com' },
+    mockGetSession.mockResolvedValue({
+      session: { user: { id: 'user-1', email: 'user@example.com' } } as import('@supabase/supabase-js').Session,
       error: null,
     })
 
