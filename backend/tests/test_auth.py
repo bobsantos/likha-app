@@ -5,6 +5,7 @@ Tests JWT verification, user extraction, and ownership verification.
 
 import pytest
 import os
+import jwt as pyjwt
 from fastapi import HTTPException
 from unittest.mock import Mock, patch, AsyncMock
 
@@ -12,7 +13,7 @@ from unittest.mock import Mock, patch, AsyncMock
 os.environ['SUPABASE_URL'] = 'https://test.supabase.co'
 os.environ['SUPABASE_KEY'] = 'test-anon-key'
 
-from app.auth import get_current_user, verify_contract_ownership
+from app.auth import get_current_user, verify_contract_ownership, _verify_jwt_locally
 
 
 class TestGetCurrentUser:
@@ -171,3 +172,73 @@ class TestVerifyContractOwnership:
 
             assert exc_info.value.status_code == 500
             assert "Failed to verify ownership" in str(exc_info.value.detail)
+
+
+class TestVerifyJwtLocally:
+    """
+    Unit tests for _verify_jwt_locally — the PyJWT-based local verification path.
+
+    Uses a real HS256-signed JWT (created inline with PyJWT) so that the token
+    structure is authentic. The secret is a fixed test value; it never leaves
+    this test module.
+    """
+
+    TEST_SECRET = "test-jwt-secret-for-unit-tests"
+
+    def _make_token(self, payload: dict) -> str:
+        """Helper: sign a JWT with the test secret."""
+        return pyjwt.encode(payload, self.TEST_SECRET, algorithm="HS256")
+
+    def test_valid_token_returns_user_id(self):
+        """A well-formed, unexpired HS256 token should return the sub claim."""
+        import time
+        token = self._make_token({"sub": "user-abc", "exp": int(time.time()) + 3600})
+
+        with patch("app.auth.SUPABASE_JWT_SECRET", self.TEST_SECRET):
+            user_id = _verify_jwt_locally(token)
+
+        assert user_id == "user-abc"
+
+    def test_expired_token_raises_401(self):
+        """An expired token should raise 401 with 'Token expired'."""
+        import time
+        token = self._make_token({"sub": "user-abc", "exp": int(time.time()) - 10})
+
+        with patch("app.auth.SUPABASE_JWT_SECRET", self.TEST_SECRET):
+            with pytest.raises(HTTPException) as exc_info:
+                _verify_jwt_locally(token)
+
+        assert exc_info.value.status_code == 401
+        assert "expired" in str(exc_info.value.detail).lower()
+
+    def test_invalid_signature_raises_401(self):
+        """A token signed with the wrong secret should raise 401."""
+        import time
+        token = self._make_token({"sub": "user-abc", "exp": int(time.time()) + 3600})
+
+        with patch("app.auth.SUPABASE_JWT_SECRET", "wrong-secret"):
+            with pytest.raises(HTTPException) as exc_info:
+                _verify_jwt_locally(token)
+
+        assert exc_info.value.status_code == 401
+        assert "Invalid token" in str(exc_info.value.detail)
+
+    def test_missing_sub_claim_raises_401(self):
+        """A token without a sub claim should raise 401."""
+        import time
+        token = self._make_token({"role": "authenticated", "exp": int(time.time()) + 3600})
+
+        with patch("app.auth.SUPABASE_JWT_SECRET", self.TEST_SECRET):
+            with pytest.raises(HTTPException) as exc_info:
+                _verify_jwt_locally(token)
+
+        assert exc_info.value.status_code == 401
+        assert "Invalid token" in str(exc_info.value.detail)
+
+    def test_garbage_token_raises_401(self):
+        """A completely malformed token string should raise 401."""
+        with patch("app.auth.SUPABASE_JWT_SECRET", self.TEST_SECRET):
+            with pytest.raises(HTTPException) as exc_info:
+                _verify_jwt_locally("not.a.real.jwt.at.all")
+
+        assert exc_info.value.status_code == 401

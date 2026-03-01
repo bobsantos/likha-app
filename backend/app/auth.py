@@ -3,7 +3,7 @@ Authentication middleware for Supabase JWT verification.
 Provides user authentication and resource ownership verification.
 
 Performance notes:
-- get_current_user verifies JWTs locally with python-jose when SUPABASE_JWT_SECRET
+- get_current_user verifies JWTs locally with PyJWT when SUPABASE_JWT_SECRET
   is set, avoiding a network round-trip to the Supabase Auth API (~50-150ms saved
   per request).
 - verify_contract_ownership returns the full contract row so callers can reuse it
@@ -27,7 +27,7 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> str:
     """
     Extract and verify JWT token from Authorization header.
 
-    When SUPABASE_JWT_SECRET is set, verifies the JWT locally using python-jose
+    When SUPABASE_JWT_SECRET is set, verifies the JWT locally using PyJWT
     (HS256) — no network call required. Falls back to supabase.auth.get_user()
     when the secret is not configured.
 
@@ -71,7 +71,7 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> str:
 
 def _verify_jwt_locally(token: str) -> str:
     """
-    Verify a Supabase JWT locally using python-jose and return the user ID.
+    Verify a Supabase JWT locally using PyJWT and return the user ID.
 
     Supabase issues HS256 JWTs signed with the project's JWT secret.
     This avoids the ~50-150ms network round-trip to the Supabase Auth API.
@@ -80,15 +80,16 @@ def _verify_jwt_locally(token: str) -> str:
         HTTPException 401 on any verification failure.
     """
     try:
-        from jose import jwt, JWTError, ExpiredSignatureError
+        import jwt as pyjwt
+        from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
     except ImportError:
         raise HTTPException(
             status_code=500,
-            detail="python-jose is not installed; cannot verify JWT locally",
+            detail="PyJWT is not installed; cannot verify JWT locally",
         )
 
     try:
-        payload = jwt.decode(
+        payload = pyjwt.decode(
             token,
             SUPABASE_JWT_SECRET,
             algorithms=["HS256"],
@@ -96,7 +97,7 @@ def _verify_jwt_locally(token: str) -> str:
         )
     except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
-    except JWTError:
+    except InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")

@@ -59,7 +59,7 @@ def _make_db_contract(
 
 def _make_valid_jwt(user_id: str = "user-123", secret: str = "test-jwt-secret") -> str:
     """Build a valid HS256 JWT signed with the given secret."""
-    from jose import jwt
+    import jwt as pyjwt
     import time
     payload = {
         "sub": user_id,
@@ -68,12 +68,12 @@ def _make_valid_jwt(user_id: str = "user-123", secret: str = "test-jwt-secret") 
         "iss": "supabase",
         "role": "authenticated",
     }
-    return jwt.encode(payload, secret, algorithm="HS256")
+    return pyjwt.encode(payload, secret, algorithm="HS256")
 
 
 def _make_expired_jwt(user_id: str = "user-123", secret: str = "test-jwt-secret") -> str:
     """Build an expired HS256 JWT."""
-    from jose import jwt
+    import jwt as pyjwt
     import time
     payload = {
         "sub": user_id,
@@ -81,7 +81,7 @@ def _make_expired_jwt(user_id: str = "user-123", secret: str = "test-jwt-secret"
         "iat": int(time.time()) - 7200,
         "iss": "supabase",
     }
-    return jwt.encode(payload, secret, algorithm="HS256")
+    return pyjwt.encode(payload, secret, algorithm="HS256")
 
 
 # ===========================================================================
@@ -188,13 +188,13 @@ class TestLocalJWTVerification:
     async def test_no_sub_claim_raises_401(self):
         """A JWT without a 'sub' claim should raise 401."""
         from app.auth import get_current_user
-        from jose import jwt
+        import jwt as pyjwt
         import time
 
         secret = "test-jwt-secret"
         # JWT with no 'sub' field
         payload = {"exp": int(time.time()) + 3600, "iss": "supabase"}
-        token = jwt.encode(payload, secret, algorithm="HS256")
+        token = pyjwt.encode(payload, secret, algorithm="HS256")
 
         with patch("app.auth.SUPABASE_JWT_SECRET", secret):
             with pytest.raises(HTTPException) as exc_info:
