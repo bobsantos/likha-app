@@ -13,6 +13,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Upload, FileText, Check, AlertCircle, Loader2, ExternalLink } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { ApiError, getContract, getContracts, getSavedMapping, uploadSalesReport, confirmSalesUpload, checkPeriodOverlap, parseFromStorage, linkSalesPeriodToReport } from '@/lib/api'
 import ColumnMapper from '@/components/sales-upload/column-mapper'
 import CategoryMapper from '@/components/sales-upload/category-mapper'
@@ -320,6 +321,13 @@ function StepUpload({
 
   const handleUploadClick = async () => {
     if (!file || !periodStart || !periodEnd) return
+
+    // Validate date ordering
+    if (periodEnd <= periodStart) {
+      setUploadError('Period end date must be after the start date.')
+      return
+    }
+
     setUploading(true)
     setUploadError(null)
     try {
@@ -910,6 +918,7 @@ export default function SalesUploadPage() {
   const handleConfirmFinal = () => {
     // Sales period was already created in step 2->3 (or 2.5->3) transition
     // Just redirect
+    toast.success('Sales period saved')
     router.push(`/contracts/${contractId}?success=period_created`)
   }
 
@@ -936,6 +945,7 @@ export default function SalesUploadPage() {
         save_mapping: saveMapping,
       })
       setSalesPeriod(period)
+      toast.success('Sales period saved')
       router.push(`/contracts/${contractId}?success=period_created`)
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : 'Failed to create sales period')

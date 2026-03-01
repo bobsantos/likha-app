@@ -27,9 +27,11 @@ import {
   ClipboardList,
   Copy,
 } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, downloadReportTemplate, isUnauthorizedError } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
 import { copyToClipboard } from '@/lib/clipboard'
+import ContractDetailSkeleton from '@/components/skeletons/ContractDetailSkeleton'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate, ContractTotals } from '@/types'
 
 // ---------------------------------------------------------------------------
@@ -115,10 +117,6 @@ export default function ContractDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [downloadingPeriodId, setDownloadingPeriodId] = useState<string | null>(null)
   const [downloadingTemplate, setDownloadingTemplate] = useState(false)
-  const [templateDownloadError, setTemplateDownloadError] = useState<string | null>(null)
-  const [agreementNumberCopied, setAgreementNumberCopied] = useState(false)
-  const [instructionsCopied, setInstructionsCopied] = useState(false)
-  const [successCalloutCopied, setSuccessCalloutCopied] = useState(false)
 
   // Scroll to hash anchor after data loads (e.g., #sales-periods from upload wizard link)
   useEffect(() => {
@@ -149,7 +147,7 @@ export default function ContractDetailPage() {
         // Keep loading=true so no error panel flashes before navigation
         return
       }
-      setError(err instanceof Error ? err.message : 'Failed to load contract data')
+      setError("We couldn't load this contract. Please try again.")
       setLoading(false)
     }
   }
@@ -161,7 +159,7 @@ export default function ContractDetailPage() {
       const rawUrl = await getSalesReportDownloadUrl(contractId, periodId)
       window.open(resolveUrl(rawUrl), '_blank', 'noopener,noreferrer')
     } catch {
-      // Silently ignore — the backend will log the error
+      toast.error('Could not download file. Please try again.')
     } finally {
       setDownloadingPeriodId(null)
     }
@@ -169,12 +167,11 @@ export default function ContractDetailPage() {
 
   const handleDownloadTemplate = async () => {
     if (downloadingTemplate) return
-    setTemplateDownloadError(null)
     setDownloadingTemplate(true)
     try {
       await downloadReportTemplate(contractId)
-    } catch (err) {
-      setTemplateDownloadError(err instanceof Error ? err.message : 'Failed to download template')
+    } catch {
+      toast.error('Template download failed. Please try again.')
     } finally {
       setDownloadingTemplate(false)
     }
@@ -183,8 +180,9 @@ export default function ContractDetailPage() {
   const handleCopyAgreementNumber = async (agreementNumber: string) => {
     const success = await copyToClipboard(agreementNumber)
     if (success) {
-      setAgreementNumberCopied(true)
-      setTimeout(() => setAgreementNumberCopied(false), 2000)
+      toast.success('Copied to clipboard')
+    } else {
+      toast.error('Could not copy — select the text manually')
     }
   }
 
@@ -192,8 +190,9 @@ export default function ContractDetailPage() {
     const message = `Please include the following reference in your royalty report emails:\nAgreement Reference: ${agreementNumber}`
     const success = await copyToClipboard(message)
     if (success) {
-      setInstructionsCopied(true)
-      setTimeout(() => setInstructionsCopied(false), 2000)
+      toast.success('Copied to clipboard')
+    } else {
+      toast.error('Could not copy — select the text manually')
     }
   }
 
@@ -201,8 +200,9 @@ export default function ContractDetailPage() {
     const message = `Please include the following reference in your royalty report emails:\nAgreement Reference: ${agreementNumber}`
     const success = await copyToClipboard(message)
     if (success) {
-      setSuccessCalloutCopied(true)
-      setTimeout(() => setSuccessCalloutCopied(false), 2000)
+      toast.success('Copied to clipboard')
+    } else {
+      toast.error('Could not copy — select the text manually')
     }
   }
 
@@ -300,13 +300,7 @@ export default function ContractDetailPage() {
   }
 
   if (loading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="skeleton h-8 w-48 mb-6" />
-        <div className="skeleton h-24 mb-6" />
-        <div className="skeleton h-96" />
-      </div>
-    )
+    return <ContractDetailSkeleton />
   }
 
   if (error || !contract) {
@@ -405,10 +399,7 @@ export default function ContractDetailPage() {
             className="flex items-center gap-1.5 text-sm font-medium text-green-700 hover:text-green-900 transition-colors flex-shrink-0"
             data-testid="success-callout-copy-button"
           >
-            {successCalloutCopied
-              ? <><CheckCircle2 className="w-4 h-4" />Copied!</>
-              : <><Copy className="w-4 h-4" />Copy</>
-            }
+            <Copy className="w-4 h-4" />Copy
           </button>
         </div>
       )}
@@ -435,10 +426,7 @@ export default function ContractDetailPage() {
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 transition-colors text-sm font-mono text-gray-700"
                     data-testid="agreement-number-badge"
                   >
-                    {agreementNumberCopied
-                      ? <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
-                      : <Hash className="w-3.5 h-3.5 text-gray-400" />
-                    }
+                    <Hash className="w-3.5 h-3.5 text-gray-400" />
                     {contract.agreement_number}
                   </button>
                   <button
@@ -448,10 +436,7 @@ export default function ContractDetailPage() {
                     className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
                     data-testid="copy-instructions-button"
                   >
-                    {instructionsCopied
-                      ? <><CheckCircle2 className="w-4 h-4 text-green-600" /><span className="text-green-600">Copied!</span></>
-                      : <><ClipboardList className="w-4 h-4" />Copy instructions for licensee</>
-                    }
+                    <ClipboardList className="w-4 h-4" />Copy instructions for licensee
                   </button>
                 </>
               )}
@@ -486,9 +471,6 @@ export default function ContractDetailPage() {
                 Back
               </Link>
             </div>
-            {templateDownloadError && (
-              <p className="text-sm text-red-600">{templateDownloadError}</p>
-            )}
           </div>
         </div>
       </div>

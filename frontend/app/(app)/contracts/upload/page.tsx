@@ -120,6 +120,7 @@ export default function UploadContractPage() {
   const [hasSavedDraft, setHasSavedDraft] = useState(false)
   const [savedDraftData, setSavedDraftData] = useState<{ draftContractId: string; formData: any } | null>(null)
   const [loadingDraft, setLoadingDraft] = useState(false)
+  const [emailWarning, setEmailWarning] = useState<string | null>(null)
 
   // Load a draft contract by ID and populate the review form.
   // Used both by the ?draft= query param effect and by the "Resume review" button
@@ -357,7 +358,7 @@ export default function UploadContractPage() {
   const handleSaveContract = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // Validate required fields before submitting
+    // --- Validate required fields ---
     if (!formData.licensee_name?.trim()) {
       setError('Licensee name is required.')
       setErrorType('validation')
@@ -375,6 +376,47 @@ export default function UploadContractPage() {
       setErrorType('validation')
       setErrorTitle('Required fields missing')
       return
+    }
+
+    // --- Date ordering: end date must be strictly after start date ---
+    if (formData.contract_start_date && formData.contract_end_date) {
+      if (formData.contract_end_date <= formData.contract_start_date) {
+        setError('Contract end date must be after the start date.')
+        setErrorType('validation')
+        setErrorTitle('Invalid dates')
+        return
+      }
+    }
+
+    // --- Royalty rate must not be empty ---
+    if (!formData.royalty_rate?.trim()) {
+      setError('Royalty rate is required.')
+      setErrorType('validation')
+      setErrorTitle('Required fields missing')
+      return
+    }
+
+    // --- Negative number check ---
+    if (formData.minimum_guarantee && parseFloat(formData.minimum_guarantee) < 0) {
+      setError('Must be 0 or greater.')
+      setErrorType('validation')
+      setErrorTitle('Invalid value')
+      return
+    }
+    if (formData.advance_payment && parseFloat(formData.advance_payment) < 0) {
+      setError('Must be 0 or greater.')
+      setErrorType('validation')
+      setErrorTitle('Invalid value')
+      return
+    }
+
+    // --- Email format: warning only (non-blocking) ---
+    const emailValue = formData.licensee_email?.trim()
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (emailValue && !emailRegex.test(emailValue)) {
+      setEmailWarning('Licensee email is not a valid email address.')
+    } else {
+      setEmailWarning(null)
     }
 
     try {
@@ -499,6 +541,18 @@ export default function UploadContractPage() {
               Dismiss
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Email format warning (persists across steps — non-blocking) */}
+      {emailWarning && (
+        <div
+          className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg mb-6 animate-slide-up"
+          role="alert"
+          data-testid="email-warning-banner"
+        >
+          <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+          <p className="text-sm text-amber-700">{emailWarning}</p>
         </div>
       )}
 
@@ -723,7 +777,7 @@ export default function UploadContractPage() {
             </div>
           )}
 
-          <form onSubmit={handleSaveContract} className="space-y-6">
+          <form onSubmit={handleSaveContract} className="space-y-6" data-testid="contract-form">
             <div className="grid gap-6 md:grid-cols-2">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">

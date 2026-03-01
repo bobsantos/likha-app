@@ -46,6 +46,22 @@ jest.mock('@/lib/clipboard', () => ({
   copyToClipboard: jest.fn().mockResolvedValue(true),
 }))
 
+// Mock react-hot-toast — the page now uses toast instead of inline state
+const mockToastError = jest.fn()
+const mockToastSuccess = jest.fn()
+jest.mock('react-hot-toast', () => ({
+  __esModule: true,
+  default: {
+    success: (...args: unknown[]) => mockToastSuccess(...args),
+    error: (...args: unknown[]) => mockToastError(...args),
+  },
+  toast: {
+    success: (...args: unknown[]) => mockToastSuccess(...args),
+    error: (...args: unknown[]) => mockToastError(...args),
+  },
+  Toaster: () => null,
+}))
+
 
 describe('Contract Detail Page', () => {
   const mockPush = jest.fn()
@@ -226,7 +242,8 @@ describe('Contract Detail Page', () => {
     render(<ContractDetailPage />)
 
     await waitFor(() => {
-      expect(screen.getByText(/failed to fetch contract/i)).toBeInTheDocument()
+      // Page now shows a friendly error message instead of the raw error text
+      expect(screen.getByText(/we couldn't load this contract/i)).toBeInTheDocument()
     })
   })
 
@@ -1489,7 +1506,7 @@ describe('Contract Detail Page', () => {
       })
     })
 
-    it('shows error message when download fails', async () => {
+    it('shows toast error when download fails', async () => {
       const user = userEvent.setup()
       mockGetContract.mockResolvedValue(mockContract)
       mockGetSalesPeriods.mockResolvedValue([])
@@ -1505,7 +1522,10 @@ describe('Contract Detail Page', () => {
       await user.click(screen.getByRole('button', { name: /download template/i }))
 
       await waitFor(() => {
-        expect(screen.getByText(/failed to download template/i)).toBeInTheDocument()
+        // Page now uses toast.error instead of inline error text
+        expect(mockToastError).toHaveBeenCalledWith(
+          expect.stringMatching(/template download failed/i)
+        )
       })
     })
 

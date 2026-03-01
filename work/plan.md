@@ -324,13 +324,14 @@ Full specification in `docs/prd-royalty-tracking.md` — Phase 1 section.
 
 **Morning: Error Handling & Loading States**
 
-- [ ] Add global error handling (error boundary component)
-- [ ] Implement loading states:
-  - Skeleton loaders for dashboard
-  - Spinners for form submissions
-  - Progress bars for file uploads
-- [ ] Add toast notifications
-- [ ] Form validation improvements
+- [x] Add global error handling (error boundary component)
+- [x] Implement loading states:
+  - [x] Skeleton loaders for dashboard (DashboardSkeleton)
+  - [x] Skeleton loaders for contract detail (ContractDetailSkeleton, TableSkeleton)
+  - Spinners for form submissions (existing)
+  - Progress bars for file uploads (existing)
+- [x] Add toast notifications (react-hot-toast integrated in app layout)
+- [x] Form validation improvements (date ordering, royalty rate required, email warning, negative numbers)
 
 **Afternoon: Mobile Responsiveness & Deploy**
 
