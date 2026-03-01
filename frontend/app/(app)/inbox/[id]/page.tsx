@@ -784,6 +784,9 @@ export default function InboxReviewPage() {
           const separator = destination.includes('?') ? '&' : '?'
           destination += `${separator}storage_path=${encodeURIComponent(report.attachment_path)}`
         }
+        if (report.sender_email) {
+          destination += `&sender_email=${encodeURIComponent(report.sender_email)}`
+        }
         router.push(destination)
       } else {
         router.push('/inbox')
@@ -975,20 +978,25 @@ export default function InboxReviewPage() {
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-3">
         {/* Primary: Confirm & Open Upload Wizard */}
-        <button
-          onClick={handleConfirmWizard}
-          disabled={isSettled || isActing || !hasContractSelected}
-          aria-busy={confirmingWizard}
-          className="btn-primary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <CheckCircle className="w-4 h-4" />
-          {confirmingWizard ? 'Opening wizard...' : 'Confirm & Open Upload Wizard'}
-        </button>
+        <div className="flex flex-col gap-1">
+          <button
+            onClick={handleConfirmWizard}
+            disabled={isSettled || isActing || !hasContractSelected || !report.attachment_filename}
+            aria-busy={confirmingWizard}
+            className="btn-primary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <CheckCircle className="w-4 h-4" />
+            {confirmingWizard ? 'Opening wizard...' : 'Confirm & Open Upload Wizard'}
+          </button>
+          {!report.attachment_filename && hasContractSelected && !isSettled && (
+            <p className="text-xs text-gray-500">No attachment available — use Confirm Only instead.</p>
+          )}
+        </div>
 
         {/* Secondary: Confirm Only */}
         <button
           onClick={handleConfirmOnly}
-          disabled={isSettled || isActing}
+          disabled={isSettled || isActing || !hasContractSelected}
           aria-busy={confirmingOnly}
           className="btn-secondary inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
