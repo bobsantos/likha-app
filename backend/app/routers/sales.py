@@ -26,7 +26,39 @@ from app.auth import get_current_user, verify_contract_ownership
 router = APIRouter()
 
 
-@router.post("/", response_model=SalesPeriod)
+@router.post(
+    "/",
+    response_model=SalesPeriod,
+    responses={
+        200: {
+            "description": "Sales period recorded with calculated royalty",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "sp-abc123",
+                        "contract_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                        "period_start": "2026-01-01",
+                        "period_end": "2026-03-31",
+                        "net_sales": "125000.00",
+                        "royalty_calculated": "10000.00",
+                        "minimum_applied": False,
+                        "licensee_reported_royalty": "9500.00",
+                        "discrepancy_amount": "500.00",
+                        "has_discrepancy": True,
+                        "category_breakdown": None,
+                        "source_file_path": None,
+                        "created_at": "2026-04-05T09:00:00Z",
+                        "updated_at": "2026-04-05T09:00:00Z",
+                    }
+                }
+            },
+        },
+        400: {"description": "Royalty calculation failed (invalid rate format)"},
+        401: {"description": "Missing or invalid auth token"},
+        403: {"description": "Authenticated user does not own this contract"},
+        404: {"description": "Contract not found"},
+    },
+)
 async def create_sales_period(
     period: SalesPeriodCreate,
     user_id: str = Depends(get_current_user),
@@ -34,10 +66,16 @@ async def create_sales_period(
     """
     Record a new sales period and calculate royalties.
 
+    Accepts net_sales and an optional category_breakdown (for category-rate
+    contracts). Calculates royalty using the contract's royalty_rate structure
+    (flat, tiered, or category-specific). Applies the minimum guarantee if the
+    calculated royalty falls below the per-period floor.
+
+    Optionally accepts licensee_reported_royalty to track what the licensee
+    claimed to owe. The response includes discrepancy_amount and has_discrepancy
+    computed fields for instant discrepancy detection.
+
     Requires authentication. User must own the contract.
-    Minimum guarantee is applied if the calculated royalty falls below the
-    per-period floor derived from the contract's minimum_guarantee and
-    minimum_guarantee_period fields.
     """
     # Verify user owns the contract
     await verify_contract_ownership(period.contract_id, user_id)
@@ -198,7 +236,32 @@ async def list_sales_periods(
     return [SalesPeriod(**row) for row in result.data]
 
 
-@router.get("/summary/{contract_id}", response_model=RoyaltySummary)
+@router.get(
+    "/summary/{contract_id}",
+    response_model=RoyaltySummary,
+    responses={
+        200: {
+            "description": "YTD royalty summary for the contract",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "contract_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                        "contract_year": 1,
+                        "total_sales_ytd": "375000.00",
+                        "total_royalties_ytd": "30000.00",
+                        "minimum_guarantee_ytd": "40000.00",
+                        "shortfall": "10000.00",
+                        "advance_remaining": "0.00",
+                        "updated_at": "2026-09-30T23:59:59Z",
+                    }
+                }
+            },
+        },
+        401: {"description": "Missing or invalid auth token"},
+        403: {"description": "Authenticated user does not own this contract"},
+        404: {"description": "Contract not found"},
+    },
+)
 async def get_royalty_summary(
     contract_id: str,
     contract_year: int = 1,
@@ -210,8 +273,15 @@ async def get_royalty_summary(
     Aggregates all sales_periods for the contract, computes YTD totals,
     applies minimum guarantee comparison, and tracks advance payment credit.
 
+    Fields:
+    - **total_sales_ytd**: Sum of net_sales across all periods in this contract year
+    - **total_royalties_ytd**: Sum of royalty_calculated across all periods
+    - **minimum_guarantee_ytd**: The full annual minimum guarantee amount
+    - **shortfall**: Positive if total_royalties_ytd < minimum_guarantee_ytd (licensor is owed more)
+    - **advance_remaining**: Remaining advance credit (only applies in contract Year 1)
+
     Query parameter:
-    - contract_year (int, default 1): The 1-based contract year to summarise.
+    - **contract_year** (int, default 1): The 1-based contract year to summarise.
       Year 1 = first year of the contract. Advance payment credit only applies
       in Year 1.
 

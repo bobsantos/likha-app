@@ -43,7 +43,73 @@ def _refresh_pdf_url(contract: Contract) -> Contract:
     return contract
 
 
-@router.post("/extract", response_model=dict)
+@router.post(
+    "/extract",
+    response_model=dict,
+    responses={
+        200: {
+            "description": "Extraction succeeded — draft contract created",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "contract_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                        "filename": "acme_license_2026.pdf",
+                        "storage_path": "contracts/user-abc/acme_license_2026.pdf",
+                        "pdf_url": "https://project.supabase.co/storage/v1/object/sign/contracts/...",
+                        "extracted_terms": {
+                            "licensee_name": "Acme Corp",
+                            "royalty_rate": "8%",
+                            "royalty_base": "net sales",
+                            "territories": ["Worldwide"],
+                            "contract_start_date": "2026-01-01",
+                            "contract_end_date": "2028-12-31",
+                            "minimum_guarantee": "$10,000 per year",
+                            "reporting_frequency": "quarterly",
+                            "confidence_score": 0.92,
+                        },
+                        "form_values": {
+                            "licensee_name": "Acme Corp",
+                            "royalty_rate": 8.0,
+                            "royalty_base": "net_sales",
+                            "minimum_guarantee": 10000.0,
+                            "contract_start_date": "2026-01-01",
+                            "contract_end_date": "2028-12-31",
+                            "reporting_frequency": "quarterly",
+                            "territories": ["Worldwide"],
+                        },
+                        "token_usage": {
+                            "input_tokens": 1420,
+                            "output_tokens": 380,
+                            "total_tokens": 1800,
+                        },
+                    }
+                }
+            },
+        },
+        400: {"description": "File is not a PDF"},
+        401: {"description": "Missing or invalid auth token"},
+        409: {
+            "description": "Duplicate filename (DUPLICATE_FILENAME) or incomplete draft (INCOMPLETE_DRAFT)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "code": "DUPLICATE_FILENAME",
+                            "message": "A contract with this filename already exists.",
+                            "existing_contract": {
+                                "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                                "filename": "acme_license_2026.pdf",
+                                "licensee_name": "Acme Corp",
+                                "created_at": "2026-01-15T10:00:00Z",
+                                "status": "active",
+                            },
+                        }
+                    }
+                }
+            },
+        },
+    },
+)
 async def extract_contract_terms(
     file: UploadFile = File(...),
     user_id: str = Depends(get_current_user),
@@ -225,7 +291,47 @@ async def extract_contract_terms(
         os.unlink(tmp_path)
 
 
-@router.put("/{contract_id}/confirm", response_model=Contract)
+@router.put(
+    "/{contract_id}/confirm",
+    response_model=Contract,
+    responses={
+        200: {
+            "description": "Contract confirmed and now active",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                        "user_id": "user-abc",
+                        "status": "active",
+                        "agreement_number": "LKH-2026-1",
+                        "filename": "acme_license_2026.pdf",
+                        "licensee_name": "Acme Corp",
+                        "licensee_email": "royalties@acme.com",
+                        "royalty_rate": "8%",
+                        "royalty_base": "net_sales",
+                        "territories": ["Worldwide"],
+                        "product_categories": None,
+                        "contract_start_date": "2026-01-01",
+                        "contract_end_date": "2028-12-31",
+                        "minimum_guarantee": "10000.00",
+                        "minimum_guarantee_period": "annually",
+                        "advance_payment": None,
+                        "reporting_frequency": "quarterly",
+                        "is_expired": False,
+                        "days_until_report_due": 45,
+                        "pdf_url": "https://project.supabase.co/storage/v1/object/sign/contracts/...",
+                        "created_at": "2026-01-15T10:00:00Z",
+                        "updated_at": "2026-01-15T10:05:00Z",
+                    }
+                }
+            },
+        },
+        401: {"description": "Missing or invalid auth token"},
+        403: {"description": "Authenticated user does not own this contract"},
+        404: {"description": "Contract not found"},
+        409: {"description": "Contract is already active"},
+    },
+)
 async def confirm_contract(
     contract_id: str,
     confirm_data: ContractConfirm,
@@ -237,6 +343,7 @@ async def confirm_contract(
     Receives the user-reviewed fields and updates the draft row:
     - Populates all contract fields from ContractConfirm
     - Sets status from 'draft' → 'active'
+    - Auto-assigns an agreement number (format: LKH-{year}-{seq})
 
     Returns 409 if the contract is already active.
     Returns 404 if the contract does not exist.

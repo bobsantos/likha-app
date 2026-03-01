@@ -1,0 +1,8 @@
+# Dev and test dependencies (includes all production dependencies)
+-r requirements.txt
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-mock>=3.12.0
+httpx>=0.26.0
