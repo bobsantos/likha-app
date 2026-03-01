@@ -495,12 +495,12 @@ export default function ContractDetailPage() {
             </h2>
 
             <div className="space-y-4">
-              {contract.licensor_name && (
+              {(contract.extracted_terms?.licensor_name as string | null | undefined) && (
                 <div className="flex items-start gap-3">
                   <BarChart3 className="w-5 h-5 text-gray-400 mt-0.5" />
                   <div>
                     <p className="text-sm text-gray-600">Licensor</p>
-                    <p className="font-medium text-gray-900">{contract.licensor_name}</p>
+                    <p className="font-medium text-gray-900">{contract.extracted_terms?.licensor_name as string}</p>
                   </div>
                 </div>
               )}
@@ -584,7 +584,7 @@ export default function ContractDetailPage() {
                 </div>
               </div>
 
-              {contract.territories.length > 0 && (
+              {contract.territories && contract.territories.length > 0 && (
                 <div className="flex items-start gap-3">
                   <MapPin className="w-5 h-5 text-gray-400 mt-0.5" />
                   <div>
@@ -613,9 +613,9 @@ export default function ContractDetailPage() {
                     <p className="text-sm text-gray-600">Minimum Guarantee</p>
                     <p className="font-medium text-gray-900">
                       {formatCurrency(contract.minimum_guarantee)}
-                      {contract.mg_period && (
+                      {contract.minimum_guarantee_period && (
                         <span className="text-sm text-gray-600 ml-2 capitalize">
-                          ({contract.mg_period})
+                          ({contract.minimum_guarantee_period})
                         </span>
                       )}
                     </p>

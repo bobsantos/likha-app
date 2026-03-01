@@ -104,7 +104,7 @@ function formatRoyaltyRateSummary(rate: Contract['royalty_rate']): string {
       !('type' in (rate as object))
 
     if (isPlainDict) {
-      const plainDict = rate as Record<string, string>
+      const plainDict = rate as unknown as Record<string, string>
       const entries = Object.entries(plainDict)
       const lines = entries.slice(0, 3).map(([cat, r]) => `${cat} ${r}`)
       if (entries.length > 3) lines.push('...')
@@ -744,7 +744,7 @@ export default function InboxReviewPage() {
       }
 
       setReport(found)
-      const activeContracts = contractList.filter((c) => c.status === 'active')
+      const activeContracts = (contractList as Contract[]).filter((c) => c.status === 'active')
       setContracts(activeContracts)
 
       // Pre-select the auto-matched contract if present

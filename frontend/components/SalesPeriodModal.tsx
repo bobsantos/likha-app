@@ -41,7 +41,7 @@ export default function SalesPeriodModal({
 
     if (typeof rate === 'number') {
       setCalculatedRoyalty(sales * rate)
-    } else if (typeof rate === 'object' && 'type' in rate) {
+    } else if (rate !== null && typeof rate === 'object' && 'type' in rate) {
       if (rate.type === 'tiered') {
         const tierRate = rate as TieredRate
         let royalty = 0
@@ -118,6 +118,7 @@ export default function SalesPeriodModal({
   }
 
   const isCategoryRate =
+    contract.royalty_rate !== null &&
     typeof contract.royalty_rate === 'object' &&
     'type' in contract.royalty_rate &&
     contract.royalty_rate.type === 'category'

@@ -85,9 +85,8 @@ describe('Nav Component', () => {
     await waitFor(() => {
       expect(mockSignOut).toHaveBeenCalled()
       expect(mockPush).not.toHaveBeenCalled()
+      expect(screen.getByText('Failed to sign out')).toBeInTheDocument()
     })
-
-    expect(screen.getByText('Failed to sign out')).toBeInTheDocument()
   })
 
   // --- Hamburger menu tests ---
@@ -229,9 +228,8 @@ describe('Nav Component', () => {
 
     await waitFor(() => {
       expect(mockSignOut).toHaveBeenCalled()
+      expect(screen.getByText('Failed to sign out')).toBeInTheDocument()
     })
-
-    expect(screen.getByText('Failed to sign out')).toBeInTheDocument()
   })
 
   // --- Accessibility tests ---
