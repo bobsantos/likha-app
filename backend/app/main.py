@@ -80,8 +80,32 @@ def get_local_ip() -> Optional[str]:
 
 app = FastAPI(
     title="Likha API",
-    description="AI-powered licensing contract extraction and royalty tracking",
-    version="0.1.0",
+    description=(
+        "AI-powered licensing contract extraction and royalty tracking.\n\n"
+        "## Authentication\n\n"
+        "All endpoints except `/`, `/health`, `/health/db`, and `/health/storage` "
+        "require a Supabase JWT token in the `Authorization: Bearer <token>` header.\n\n"
+        "## Contract flow\n\n"
+        "1. `POST /api/contracts/extract` — upload PDF, get AI-extracted draft\n"
+        "2. `PUT /api/contracts/{id}/confirm` — user reviews and confirms terms\n"
+        "3. `POST /api/sales/` — record sales periods and calculate royalties\n"
+        "4. `GET /api/sales/summary/{contract_id}` — YTD summary with MG tracking\n\n"
+        "## Spreadsheet upload flow\n\n"
+        "1. `POST /api/sales/upload/{contract_id}` — upload licensee Excel/CSV file\n"
+        "2. `POST /api/sales/upload/{contract_id}/confirm` — map columns and create period\n\n"
+        "## Email intake\n\n"
+        "Each licensor account has a unique inbound address. "
+        "`GET /api/email-intake/inbound-address` returns the address. "
+        "Attach the address to a Postmark/Resend inbound route to receive reports automatically."
+    ),
+    version="1.0.0",
+    contact={
+        "name": "Likha Support",
+        "url": "https://likha.app",
+    },
+    license_info={
+        "name": "Private",
+    },
 )
 
 

@@ -357,19 +357,19 @@ Full specification in `docs/prd-royalty-tracking.md` — Phase 1 section.
 
 **Integration Tests & Railway Deployment**
 
-- [ ] Integration tests:
+- [x] Integration tests:
   - Test full auth flow
   - Test contract upload → extraction → create
   - Test sales period create → YTD summary
   - Test discrepancy calculation end-to-end
   - Mock Anthropic API to avoid costs
 
-- [ ] Deployment configuration:
+- [x] Deployment configuration:
   - Create `Dockerfile` for Railway
   - Add `railway.json` for service config
   - Document environment variables
 
-- [ ] API documentation polish:
+- [x] API documentation polish:
   - Review auto-generated `/docs`
   - Add response examples to docstrings
 

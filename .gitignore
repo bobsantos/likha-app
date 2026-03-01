@@ -138,8 +138,6 @@ tmp/
 *.sql.gz
 *.dump
 
-# Claude
-.claude/
 
 # Supabase
 .supabase/
