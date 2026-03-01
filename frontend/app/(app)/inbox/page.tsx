@@ -164,16 +164,22 @@ export default function InboxPage() {
       ) : (
         <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full" aria-label="Inbox">
               <thead>
                 <tr className="border-b border-gray-200 bg-gray-50">
                   <th className="text-left py-3 px-4 text-sm font-semibold text-gray-900">
                     Sender
                   </th>
-                  <th className="text-left py-3 px-4 text-sm font-semibold text-gray-900">
+                  <th
+                    data-testid="inbox-col-subject"
+                    className="hidden sm:table-cell text-left py-3 px-4 text-sm font-semibold text-gray-900"
+                  >
                     Subject
                   </th>
-                  <th className="text-left py-3 px-4 text-sm font-semibold text-gray-900">
+                  <th
+                    data-testid="inbox-col-received"
+                    className="hidden sm:table-cell text-left py-3 px-4 text-sm font-semibold text-gray-900"
+                  >
                     Received
                   </th>
                   <th className="text-left py-3 px-4 text-sm font-semibold text-gray-900">
@@ -194,19 +200,19 @@ export default function InboxPage() {
                     <td className="py-3 px-4">
                       <Link
                         href={`/inbox/${report.id}`}
-                        className="block text-sm font-medium text-gray-900 hover:text-primary-600"
+                        className="block text-sm font-medium text-gray-900 hover:text-primary-600 focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 rounded"
                       >
                         {report.sender_email}
                       </Link>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="hidden sm:table-cell py-3 px-4">
                       <Link href={`/inbox/${report.id}`} className="block">
                         <span className="text-sm text-gray-700">
                           {report.subject ?? <span className="text-gray-400 italic">No subject</span>}
                         </span>
                       </Link>
                     </td>
-                    <td className="py-3 px-4">
+                    <td className="hidden sm:table-cell py-3 px-4">
                       <span className="text-sm text-gray-600 whitespace-nowrap">
                         {formatDate(report.received_at)}
                       </span>

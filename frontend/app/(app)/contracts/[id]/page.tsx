@@ -406,7 +406,10 @@ export default function ContractDetailPage() {
 
       {/* Header */}
       <div className="card mb-6 animate-fade-in">
-        <div className="flex items-start justify-between">
+        <div
+          data-testid="contract-detail-header"
+          className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4"
+        >
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
               {contract.licensee_name ?? contract.filename ?? 'Untitled Draft'}
@@ -426,7 +429,7 @@ export default function ContractDetailPage() {
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 transition-colors text-sm font-mono text-gray-700"
                     data-testid="agreement-number-badge"
                   >
-                    <Hash className="w-3.5 h-3.5 text-gray-400" />
+                    <Hash className="w-3.5 h-3.5 text-gray-400" aria-hidden="true" />
                     {contract.agreement_number}
                   </button>
                   <button
@@ -436,41 +439,48 @@ export default function ContractDetailPage() {
                     className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
                     data-testid="copy-instructions-button"
                   >
-                    <ClipboardList className="w-4 h-4" />Copy instructions for licensee
+                    <ClipboardList className="w-4 h-4" aria-hidden="true" />
+                    <span
+                      data-testid="copy-instructions-text"
+                      className="hidden sm:inline"
+                    >
+                      Copy instructions for licensee
+                    </span>
                   </button>
                 </>
               )}
             </div>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex gap-3">
-              {contract.status === 'active' && (
-                <button
-                  onClick={handleDownloadTemplate}
-                  disabled={downloadingTemplate}
-                  aria-label="Download template"
-                  className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Download className="w-4 h-4" />
-                  Download Template
-                </button>
-              )}
-              {contract.pdf_url && (
-                <a
-                  href={resolveUrl(contract.pdf_url)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-secondary flex items-center gap-2"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  View PDF
-                </a>
-              )}
-              <Link href="/contracts" className="btn-secondary flex items-center gap-2">
-                <ArrowLeft className="w-4 h-4" />
-                Back
-              </Link>
-            </div>
+          <div
+            data-testid="contract-action-buttons"
+            className="flex flex-wrap gap-2"
+          >
+            {contract.status === 'active' && (
+              <button
+                onClick={handleDownloadTemplate}
+                disabled={downloadingTemplate}
+                aria-label="Download template"
+                className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download className="w-4 h-4" aria-hidden="true" />
+                Download Template
+              </button>
+            )}
+            {contract.pdf_url && (
+              <a
+                href={resolveUrl(contract.pdf_url)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-secondary flex items-center gap-2"
+              >
+                <ExternalLink className="w-4 h-4" aria-hidden="true" />
+                View PDF
+              </a>
+            )}
+            <Link href="/contracts" className="btn-secondary flex items-center gap-2">
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+              Back
+            </Link>
           </div>
         </div>
       </div>
@@ -718,22 +728,34 @@ export default function ContractDetailPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table
+              className="w-full"
+              aria-label="Sales periods"
+            >
               <thead>
                 <tr className="border-b border-gray-200">
                   <th className="text-left py-3 px-4 text-sm font-semibold text-gray-900">
                     Period
                   </th>
-                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                  <th
+                    data-testid="col-net-sales"
+                    className="hidden sm:table-cell text-right py-3 px-4 text-sm font-semibold text-gray-900"
+                  >
                     Net Sales
                   </th>
-                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                  <th
+                    data-testid="col-reported-royalty"
+                    className="hidden sm:table-cell text-right py-3 px-4 text-sm font-semibold text-gray-900"
+                  >
                     Reported Royalty
                   </th>
                   <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
                     Calculated Royalty
                   </th>
-                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                  <th
+                    data-testid="col-discrepancy"
+                    className="hidden md:table-cell text-right py-3 px-4 text-sm font-semibold text-gray-900"
+                  >
                     Discrepancy
                   </th>
                   <th className="py-3 px-4 w-10" aria-label="Source file" />
@@ -759,16 +781,16 @@ export default function ContractDetailPage() {
                     <tr key={period.id} className={`hover:bg-gray-50 ${rowBorderClass}`}>
                       <td className="py-3 px-4 min-w-[10rem]">
                         <div className="flex items-center gap-2">
-                          <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" aria-hidden="true" />
                           <span className="text-sm text-gray-900 whitespace-nowrap">
                             {formatDate(period.period_start)} - {formatDate(period.period_end)}
                           </span>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-medium text-gray-900 tabular-nums">
+                      <td className="hidden sm:table-cell py-3 px-4 text-right font-medium text-gray-900 tabular-nums">
                         {formatCurrency(period.net_sales)}
                       </td>
-                      <td className="py-3 px-4 text-right tabular-nums">
+                      <td className="hidden sm:table-cell py-3 px-4 text-right tabular-nums">
                         {hasReported
                           ? (
                             <span className="font-medium text-gray-900">
@@ -781,7 +803,7 @@ export default function ContractDetailPage() {
                       <td className="py-3 px-4 text-right font-semibold text-primary-600 tabular-nums">
                         {formatCurrency(period.royalty_calculated)}
                       </td>
-                      <td className="py-3 px-4 text-right">
+                      <td className="hidden md:table-cell py-3 px-4 text-right">
                         {hasReported && discrepancy !== null
                           ? <DiscrepancyCell amount={discrepancy} percentage={discrepancyPct} />
                           : <span className="text-gray-400 text-sm">—</span>
@@ -796,7 +818,7 @@ export default function ContractDetailPage() {
                             title="Download source file"
                             className="text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                           >
-                            <Download className="w-4 h-4" />
+                            <Download className="w-4 h-4" aria-hidden="true" />
                           </button>
                         )}
                       </td>

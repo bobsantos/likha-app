@@ -700,7 +700,7 @@ export default function UploadContractPage() {
           ) : (
             /* Normal dropzone */
             <div
-              className={`relative border-2 border-dashed rounded-xl p-12 text-center transition-colors duration-300 ${
+              className={`relative border-2 border-dashed rounded-xl p-8 sm:p-12 text-center transition-colors duration-300 ${
                 dragActive
                   ? 'border-primary-500 bg-primary-50'
                   : 'border-gray-300 hover:border-gray-400'
@@ -734,8 +734,17 @@ export default function UploadContractPage() {
                       onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
                       className="hidden"
                     />
-                    <Upload className="w-16 h-16 text-gray-400 mb-4 mx-auto" />
-                    <p className="text-lg font-medium text-gray-900 mb-2">
+                    <Upload className="w-16 h-16 text-gray-400 mb-4 mx-auto" aria-hidden="true" />
+                    <p
+                      data-testid="dropzone-mobile-text"
+                      className="md:hidden text-lg font-medium text-gray-900 mb-2"
+                    >
+                      Tap to choose a PDF
+                    </p>
+                    <p
+                      data-testid="dropzone-desktop-text"
+                      className="hidden md:block text-lg font-medium text-gray-900 mb-2"
+                    >
                       Drop your PDF here or click to browse
                     </p>
                     <p className="text-sm text-gray-500">PDF files only, max 10MB</p>
@@ -929,7 +938,7 @@ export default function UploadContractPage() {
               </div>
             </div>
 
-            <div className="flex gap-4 justify-end pt-4 border-t">
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-4 border-t">
               <button
                 type="button"
                 onClick={() => {
@@ -943,11 +952,11 @@ export default function UploadContractPage() {
                   setErrorType(null)
                   setErrorTitle('')
                 }}
-                className="btn-secondary"
+                className="btn-secondary w-full sm:w-auto"
               >
                 Cancel
               </button>
-              <button type="submit" className="btn-primary">
+              <button type="submit" className="btn-primary w-full sm:w-auto">
                 Confirm and Save
               </button>
             </div>

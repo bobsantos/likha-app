@@ -68,6 +68,13 @@ export default function AppLayout({
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Skip to main content — first focusable element for keyboard users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 z-50 px-4 py-2 bg-primary-600 text-white font-medium rounded-lg focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-primary-600"
+      >
+        Skip to main content
+      </a>
       <Nav userEmail={userEmail} />
       <Toaster
         position="top-right"
@@ -99,7 +106,11 @@ export default function AppLayout({
           },
         }}
       />
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 animate-fade-in">
+      <main
+        id="main-content"
+        className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 animate-fade-in"
+        aria-live="polite"
+      >
         <ErrorBoundary>
           {children}
         </ErrorBoundary>
