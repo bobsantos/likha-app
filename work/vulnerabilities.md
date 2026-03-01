@@ -120,3 +120,224 @@ Don't upgrade any direct dependencies. Use npm `overrides` to force safe version
 6. `npx jest --no-cache` — verify all 682 tests pass
 7. `npx next dev` — verify dev server starts and pages load
 8. Commit and push
+
+---
+
+---
+
+# Backend Vulnerability Audit
+
+**Created:** 2026-03-01
+**Tool:** `pip-audit 2.10.0` against `backend/requirements.txt` (full transitive dependency scan)
+**Installed Python:** 3.11
+**Total CVEs found:** 1 (medium severity, no fix available)
+
+---
+
+## Inventory
+
+| # | Package | Installed Version | Severity | Advisory | Fix Version | Affects Production? |
+|---|---------|-------------------|----------|----------|-------------|---------------------|
+| 1 | `ecdsa` 0.19.1 (via `python-jose`) | 0.19.1 | Medium | [CVE-2024-23342](https://nvd.nist.gov/vuln/detail/CVE-2024-23342) / [GHSA-wj6h-64fc-37mp](https://github.com/advisories/GHSA-wj6h-64fc-37mp) — Minerva timing attack on P-256 ECDSA signing | **None** (maintainers won't fix) | No — see analysis below |
+
+All other packages across the full transitive graph (79 packages scanned) returned zero vulnerabilities:
+
+| Key Package | Installed Version | Status |
+|-------------|-------------------|--------|
+| `fastapi` | 0.128.4 | Clean |
+| `uvicorn` | 0.40.0 | Clean |
+| `starlette` | 0.52.1 | Clean |
+| `pydantic` | 2.12.5 | Clean |
+| `pydantic-settings` | 2.12.0 | Clean |
+| `httpx` | 0.28.1 | Clean |
+| `anthropic` | 0.79.0 | Clean |
+| `supabase` | 2.27.3 | Clean |
+| `python-jose` | 3.5.0 | Clean (the package itself has no CVE; only its optional dep does) |
+| `cryptography` | 46.0.4 | Clean |
+| `python-multipart` | 0.0.22 | Clean |
+| `pdfplumber` | 0.11.9 | Clean |
+| `psycopg2-binary` | 2.9.11 | Clean |
+| `pillow` | 12.1.0 | Clean |
+| `requests` | 2.32.5 | Clean |
+| `urllib3` | 2.6.3 | Clean |
+| `certifi` | 2026.1.4 | Clean |
+
+---
+
+## Vulnerability Analysis
+
+### CVE-2024-23342 — Minerva Timing Attack on `ecdsa`
+
+**Description:** The `python-ecdsa` library's `sign_digest()` function leaks timing information during P-256 curve signing. An attacker with the ability to measure many signing operations and their durations can statistically recover the private signing key (Minerva attack). ECDSA signature verification is not affected.
+
+**Why `ecdsa` is in the dependency tree:**
+
+```
+python-jose[cryptography]>=3.3.0   ← requirements.txt (direct)
+└── ecdsa>=0.18.0                  ← python-jose's optional dep (always pulled by pip)
+    └── six
+```
+
+`python-jose` lists `ecdsa` as a dependency but when the `[cryptography]` extra is installed (which it is — `cryptography 46.0.4` is present in the venv), python-jose's `ECKey` class resolves entirely to `jose/backends/cryptography_backend.py`, which uses the `cryptography` package for all EC operations. The `ecdsa` package's `ECDSAECKey` implementation is never instantiated.
+
+**Crucially: this app does not use EC-based JWT signing at all.** The auth module (`app/auth.py`) calls `jwt.decode()` with `algorithms=["HS256"]` — an HMAC-based algorithm. No EC key material is ever passed to `python-jose`. The `ecdsa` package is a dead dependency at runtime.
+
+**Additionally:** The CVE requires the attacker to observe timing of the target process performing *signing* operations (private key used). Supabase JWTs are issued and signed by Supabase's own auth server — the backend only *verifies* them. Even if the `ecdsa` backend were active, it would only be called during verification (unaffected per the CVE description).
+
+**Exploitability in this context: None.**
+
+---
+
+## Dependency Chain
+
+```
+requirements.txt
+└── python-jose[cryptography]>=3.3.0
+    ├── ecdsa>=0.18.0             ← CVE-2024-23342 (installed but not exercised)
+    │   └── six
+    ├── pyasn1
+    └── rsa
+        └── pyasn1
+
+At runtime, jose's ECKey resolves to:
+python-jose[cryptography]
+└── cryptography (46.0.4)         ← actual EC implementation used (clean)
+    └── cffi
+        └── pycparser
+```
+
+---
+
+## Remediation Options
+
+### Option A: Accept as informational (recommended)
+
+The vulnerability is not exercised in this application. Document the finding and suppress the audit warning with a known-exceptions list.
+
+**Rationale:**
+- `ecdsa` is never called at runtime — the `cryptography` backend takes precedence when `python-jose[cryptography]` is installed
+- The app uses HS256 only, not any EC algorithm
+- The CVE requires timing *signing* operations; this backend only *verifies* tokens
+- No fix version exists and the maintainers explicitly will not fix it
+- No action needed until the dependency tree changes
+
+To suppress the false positive in future `pip-audit` runs:
+
+```bash
+# Create a pip-audit ignore file
+cat > /Users/bobsantos/likha/dev/likha-app/backend/.pip-audit-ignore << 'EOF'
+# CVE-2024-23342: ecdsa Minerva timing attack
+# ecdsa is pulled by python-jose but the cryptography backend takes precedence
+# when python-jose[cryptography] is installed. This app uses HS256 only.
+# No fix version available from upstream.
+CVE-2024-23342
+EOF
+```
+
+Then run: `pip-audit -r requirements.txt --ignore-vuln CVE-2024-23342`
+
+**Risk:** None. The vulnerable code path is never reached.
+**Effort:** 5 minutes (document and suppress).
+
+### Option B: Replace `python-jose` with `PyJWT`
+
+Eliminate `ecdsa` from the dependency tree entirely by switching the JWT library. `PyJWT` is already installed in the venv (pulled by another dependency) and supports HS256 with a simpler API. It has no `ecdsa` dependency.
+
+Changes required in `app/auth.py`:
+
+```python
+# Before (python-jose):
+from jose import jwt, JWTError, ExpiredSignatureError
+payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+
+# After (PyJWT):
+import jwt as pyjwt
+from jwt.exceptions import ExpiredSignatureError, InvalidTokenError
+payload = pyjwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+```
+
+Then update `requirements.txt`:
+
+```diff
+-python-jose[cryptography]>=3.3.0
++PyJWT>=2.8.0
+```
+
+**Fixes:** Removes `ecdsa`, `pyasn1`, `rsa` from the dependency tree entirely.
+**Risk:** Low. The auth logic is simple (HS256 decode + `sub` claim extraction). PyJWT is widely used and actively maintained. The API change is a one-file, five-line edit. Existing tests mock the auth layer so they will still pass; a manual verification of the JWT flow is needed.
+**Effort:** ~1 hour (code change + manual auth smoke test + update `requirements.txt`).
+
+### Option C: Pin `ecdsa` out and use `python-jose` without it
+
+Remove the `[cryptography]` extra from `requirements.txt` and explicitly exclude `ecdsa`. Not recommended — `python-jose` without `[cryptography]` falls back to the pure-Python `ecdsa` backend for any EC operations, which is worse from a security standpoint if EC algorithms are ever added later.
+
+---
+
+## Recommendation
+
+**Do Option A now; schedule Option B post-MVP.**
+
+1. **Immediate (today):** The finding is genuinely a false positive for this application's threat model. Accept it, add the suppress comment to CI, and move on. There is zero exploitability risk.
+
+2. **Planned (post-MVP):** Migrate from `python-jose` to `PyJWT`. `python-jose` is lightly maintained (last release 2023), whereas `PyJWT` is actively maintained by the Python Software Foundation. This is a good hygiene upgrade independent of the CVE. PyJWT is simpler, has no problematic transitive deps, and `cryptography` is already in the venv so HS256 acceleration is automatic.
+
+---
+
+## Execution Steps (Option A — suppress, then Option B migration)
+
+### Option A (immediate)
+
+```bash
+cd /Users/bobsantos/likha/dev/likha-app/backend
+pip-audit -r requirements.txt --ignore-vuln CVE-2024-23342
+# Expected output: No known vulnerabilities found
+```
+
+### Option B (post-MVP migration to PyJWT)
+
+1. Edit `backend/requirements.txt`:
+   - Replace `python-jose[cryptography]>=3.3.0` with `PyJWT>=2.8.0`
+
+2. Edit `backend/app/auth.py`, function `_verify_jwt_locally`:
+
+```python
+# Replace:
+from jose import jwt, JWTError, ExpiredSignatureError
+
+payload = jwt.decode(
+    token,
+    SUPABASE_JWT_SECRET,
+    algorithms=["HS256"],
+    options={"verify_aud": False},
+)
+# except ExpiredSignatureError / JWTError
+
+# With:
+import jwt as pyjwt
+from jwt.exceptions import ExpiredSignatureError, DecodeError
+
+payload = pyjwt.decode(
+    token,
+    SUPABASE_JWT_SECRET,
+    algorithms=["HS256"],
+    options={"verify_aud": False},
+)
+# except ExpiredSignatureError / DecodeError
+```
+
+3. Reinstall dependencies:
+```bash
+source backend/.venv/bin/activate
+pip install -r backend/requirements.txt
+```
+
+4. Run backend tests:
+```bash
+source backend/.venv/bin/activate && python -m pytest backend/tests/ -x -q
+```
+
+5. Manual smoke test: start the dev server, log in via the frontend, make an authenticated API call, verify 200 response.
+
+6. Run `pip-audit -r backend/requirements.txt` — verify 0 vulnerabilities.
+
+7. Commit and push.

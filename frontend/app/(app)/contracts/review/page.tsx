@@ -15,15 +15,15 @@
 import { redirect } from 'next/navigation'
 
 interface ReviewPageProps {
-  searchParams: { draft?: string }
+  searchParams: Promise<{ draft?: string }>
 }
 
 export const metadata = {
   title: 'Review Contract - Likha',
 }
 
-export default function ContractReviewPage({ searchParams }: ReviewPageProps) {
-  const draftId = searchParams.draft
+export default async function ContractReviewPage({ searchParams }: ReviewPageProps) {
+  const { draft: draftId } = await searchParams
   const target = draftId
     ? `/contracts/upload?draft=${encodeURIComponent(draftId)}`
     : '/contracts/upload'
