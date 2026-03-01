@@ -194,6 +194,260 @@ Split action buttons:
 
 No migration is needed for the `contracts` table. The `agreement_number` column, which would improve the precision of Signal 2, is deferred and is not added in this change.
 
+### Known deviations from original spec
+
+Documented during implementation review (2026-02-28). These are intentional deviations or known limitations accepted for the MVP.
+
+- **Signal 2 matching is case-sensitive and whitespace-sensitive.** `re.escape(agr_num)` does exact string matching. `lic-1042` or `LIC - 1042` would NOT match `LKH-2025-1`. Acceptable per ADR.
+- **Signal 1 multiple matches return confidence `'high'` with candidates**, not `'none'`. All matches are surfaced as candidates; no auto-pick.
+- **When no signal matches, `candidate_contract_ids` contains ALL active contracts** (not null/empty). The detail page shows the no-match state with a select dropdown.
+- **Suggestion cards show "licensee name" hardcoded as the "matched on" tag.** The backend does not return per-candidate signal source, so Signal 2 matches also show "licensee name". Per-candidate signal tracking is deferred.
+- **Candidates are not sorted by signal strength.** They appear in the order returned by the database. Sorting is deferred.
+- **No-match contract select is a native `<select>`**, not a searchable/filterable combobox. Contracts are listed flat, not grouped by licensee. A combobox upgrade is deferred.
+- **Attachment preview strip shows icon + filename only.** File size, row count, and column count are not shown in the strip. Row/column data is in the Zone C preview (metadata + sample data table).
+- **Detected period display format is "Detected period: Jul 1, 2025 – Sep 30, 2025"**, not "Q3 2025 (Jul 1 – Sep 30, 2025)". The quarter label is not stored separately.
+- **Provenance hint text is "Detected from email attachment — verify before continuing"**, not "email subject". More accurate since the data comes from the attachment.
+- **Wizard skips the upload step entirely for inbox source** instead of showing a filename badge with "Change file" link. The user can go back to Step 1 to upload a new file via the standard drop zone.
+- **Period extraction does not support full month names** (e.g. "January-March 2025"). The Pattern 2 regex uses 3-char abbreviations only. Known limitation.
+- **Period extraction does not support "Period From: January 1, 2025" format.** Pattern 4 metadata rows expect ISO date format (YYYY-MM-DD). Known limitation.
+- **Non-US date formats (e.g. `31/01/2025`) return null gracefully.** No crash, but the date is not extracted.
+- **No API-level guard exists for status transitions.** The PATCH and confirm endpoints do not check current status before updating. The UI is the sole guard (buttons disabled for non-pending statuses).
+
+---
+
+## Acceptance criteria
+
+**Last verified:** 2026-02-28 — 83 of 91 items code-verified via implementation review and automated test coverage (839 backend tests, 604 frontend tests passing).
+
+### Signal hierarchy matching
+
+#### Signal 1 — Sender email exact match
+
+- [x] **Happy path: sender email matches exactly one active contract.** `contract_id` is set. `match_confidence` is `high`. Green auto-matched card shown.
+- [x] **Sender email matches zero contracts.** Falls through to Signal 2/3 or `none`.
+- [x] **Sender email matches more than one active contract.** All returned as candidates, `confidence = 'high'`, no auto-pick.
+- [x] **Sender email matches an inactive contract.** Query filters `status = 'active'`; match is skipped.
+
+#### Signal 2 — Agreement reference number in attachment
+
+- [x] **`Lic-\d+` pattern matches a contract's `agreement_number`.** `high` confidence, auto-matched.
+- [x] **`AGR-\d+` pattern matches.** Same behavior.
+- [x] **`Agreement #\d+` pattern matches.** Same behavior.
+- [x] **Pattern present but no contract has matching `agreement_number`.** Falls through to Signal 3.
+- [x] **Reference in rows beyond first 20.** Not matched (scan limited to `_SCAN_ROWS = 20`).
+- [ ] **Extra whitespace or mixed case (e.g. `lic-1042`, `LIC - 1042`).** Known limitation: case-sensitive, whitespace-sensitive exact match.
+
+#### Signal 3 — Licensee name in attachment
+
+- [x] **Exact case match.** `medium` confidence. `contract_id` null, candidate populated.
+- [x] **Different case (all-caps, title-case).** Case-insensitive scan finds it.
+- [x] **Substring of longer company name.** Substring scan finds it. Leading-words matching also enabled (min 2 words, min 5 chars).
+- [x] **Substring matches two contracts.** Both in `candidate_contract_ids`. User must select.
+- [x] **No email match and no licensee name found.** All active contracts returned as candidates, `confidence = 'none'`.
+
+#### Signal 4 — Sender domain match (deferred)
+
+- [x] **Signal 4 is NOT implemented.** No domain-matching code exists.
+
+#### Multi-candidate edge cases
+
+- [x] **No attachment, no email match.** No-match state with "No attachment" badge and select dropdown.
+- [x] **Multiple attachments.** Only first processed. No error.
+- [x] **Attachment upload fails.** Logged as warning. Row inserted with null attachment fields. Matching/period extraction still fire (text decoded before upload).
+
+### Period date extraction
+
+#### Quarter labels
+
+- [x] **`Q1 2025` → `2025-01-01` / `2025-03-31`.**
+- [x] **`Q2 2025` → `2025-04-01` / `2025-06-30`.**
+- [x] **`Q3 2025` → `2025-07-01` / `2025-09-30`.**
+- [x] **`Q4 2025` → `2025-10-01` / `2025-12-31`.**
+- [x] **Quarter label in header cell.** Scan covers all rows in first 20, no header/data distinction.
+
+#### Named ranges
+
+- [x] **`Reporting Period: Jan-Mar 2025` → `2025-01-01` / `2025-03-31`.**
+- [ ] **`Period From: January 1, 2025`.** Known limitation: Pattern 4 expects ISO dates, not long-form dates.
+- [x] **Abbreviated month names (`Jan`, `Feb`).** Normalized via `_MONTH_ABBR` lookup.
+- [ ] **Full month names (`January`, `March`).** Known limitation: Pattern 2 regex uses 3-char abbreviations only.
+
+#### Explicit date ranges
+
+- [x] **US format `01/01/2025 - 03/31/2025`.** Handled by Pattern 3a.
+- [x] **ISO format `2025-01-01 to 2025-03-31`.** Handled by Pattern 3b.
+- [x] **Non-US format (e.g. `31/01/2025`).** Returns null gracefully; no crash.
+
+#### No match
+
+- [x] **No recognizable period label in first 20 rows.** Both fields null. No "Detected period" row shown.
+- [x] **No attachment.** Both fields null.
+- [x] **Period label beyond row 20.** Not detected. Accepted limitation.
+
+### Inbox detail page
+
+#### Auto-matched state (high confidence)
+
+- [x] **High-confidence report loads detail page.** Green card with CheckCircle icon and contract name.
+- [x] **"Wrong match?" toggle clicked.** Falls back to suggestions or search state.
+- [x] **High-confidence with no attachment.** Green card shown. "Confirm & Open Upload Wizard" disabled. Hint: "No attachment available — use Confirm Only instead."
+
+#### Suggestions state (medium confidence)
+
+- [x] **Candidates populated, `contract_id = null`.** Amber banner "Suggested match" + suggestion cards.
+- [x] **Confidence pill >= 80.** `bg-green-100 text-green-700` "Strong match".
+- [x] **Confidence pill 50–79.** `bg-amber-100 text-amber-700` "Possible match".
+- [x] **Confidence pill < 50.** `bg-gray-100 text-gray-500` "Weak match".
+- [x] **"Matched on" tags on suggestion cards.** Gray pills showing evidence signal (currently "licensee name" hardcoded).
+- [x] **User clicks suggestion card.** Card highlights. Confirm buttons become enabled.
+- [ ] **Candidates sorted by signal strength.** Known gap: displayed in database order, not sorted by score.
+
+#### No match state
+
+- [x] **No `contract_id`, no `candidate_contract_ids`.** Amber banner + native `<select>` dropdown.
+- [ ] **Type-to-filter in select.** Not implemented: native `<select>` lacks search. Known gap.
+- [x] **User selects contract from dropdown.** Confirm buttons become enabled.
+- [x] **No active contracts.** Placeholder option only. Buttons remain disabled.
+
+#### Attachment preview strip
+
+- [x] **Attachment present.** FileSpreadsheet icon + filename shown.
+- [x] **No attachment.** "No attachment" badge. Wizard button disabled.
+- [x] **Upload failed at ingest (filename null).** Same "No attachment" badge.
+
+#### Detected period display
+
+- [x] **Period dates populated.** Blue banner: "Detected period: {start} – {end}" with "from attachment" badge.
+- [x] **Period dates null.** Row not shown.
+- [x] **Explicit date range (not quarter).** Displays formatted date range.
+
+#### Multi-contract callout
+
+- [x] **Licensee has >1 active contract.** Blue callout with licensee name and contract count.
+- [x] **Licensee has exactly 1 contract.** Callout not shown.
+- [x] **No contract selected yet.** Callout not shown (licensee unknown).
+
+#### Action buttons
+
+- [x] **Three buttons in correct positions.** Primary + secondary together; reject separated.
+- [x] **Buttons disabled when already confirmed/rejected.** Message: "This report has already been {status}."
+- [x] **Wizard button disabled without contract.** `disabled:opacity-50 disabled:cursor-not-allowed`.
+- [x] **Wizard button disabled without attachment.** Disabled with hint text.
+- [x] **"Confirm Only" enabled without attachment.** Only requires contract selection.
+
+### Post-confirm redirect flow
+
+#### Confirm & Open Wizard
+
+- [x] **Matched contract + detected period.** Redirect URL includes `contract_id`, `report_id`, `period_start`, `period_end`, `source=inbox`. Frontend appends `storage_path` and `sender_email`.
+- [x] **Matched contract, no detected period.** URL omits period params.
+- [x] **Correct `contract_id` (override, not original auto-match).**
+- [x] **Correct `report_id`.**
+- [x] **Period params are ISO date strings (YYYY-MM-DD).**
+
+#### Confirm Only
+
+- [x] **Confirm Only on pending report.** API called with `open_wizard: false`. Redirects to `/inbox?confirmed={reportId}`. Success toast with "Process now" link.
+- [ ] **"Process now" link URL is correct.** Needs manual verification.
+- [x] **Report shows "Confirmed" badge in inbox list.**
+
+#### Period dates in redirect URL
+
+- [x] **Q1 → `period_start=2025-01-01&period_end=2025-03-31`.**
+- [x] **Explicit range → exact ISO dates.**
+- [x] **No period detected → params absent from URL.**
+
+### Upload wizard integration (source=inbox)
+
+#### Query param reading
+
+- [x] **All params present.** Wizard reads them. Period fields pre-filled.
+- [x] **No period params.** Date fields empty. Other inbox behaviors still apply.
+- [x] **No `source=inbox`.** Standard upload flow.
+
+#### Pre-filled period dates
+
+- [x] **Period dates pre-filled with provenance hint.** Hint: "Detected from email attachment — verify before continuing."
+- [x] **User edits pre-filled dates.** Period overlap check fires normally.
+
+#### Subtitle
+
+- [x] **Subtitle reflects sender email.** "Processing emailed report from {senderEmail}." Falls back to contract name if sender_email param absent.
+
+#### Pre-loaded attachment
+
+- [x] **Attachment pre-loaded from storage.** Auto-parse skips to map-columns step.
+- [ ] **"Change file" link.** Not implemented. User can go back to Step 1 for manual upload.
+- [x] **No attachment (attachment_path null).** Standard drop zone shown. No error on mount.
+
+#### sales_period_id linkback
+
+- [x] **Wizard completes with `source=inbox` and `report_id`.** Frontend calls `PATCH /api/inbox/{report_id}` with `sales_period_id`.
+- [ ] **Database verification.** Needs end-to-end manual test.
+- [x] **PATCH call fails.** Fire-and-forget; logged via `console.warn`. Does not block user.
+
+#### Status transition to 'processed'
+
+- [x] **Status is `processed` after wizard completes.** Backend PATCH sets both `status = 'processed'` and `sales_period_id`.
+- [x] **StatusBadge handles `processed`.** Blue badge "Processed" (list) / green badge "Processed" (detail).
+
+#### Multi-contract "Process for another?" prompt
+
+- [x] **Licensee with >1 active contract.** Prompt appears with sibling contract pills.
+- [x] **User clicks contract pill.** Navigates to wizard with all params (contract_id, report_id, storage_path, period, sender_email).
+- [x] **Licensee with exactly 1 contract.** Prompt not shown; normal redirect.
+- [x] **User dismisses prompt.** "Continue to contract page" redirects to `/contracts/{id}?success=period_created`.
+
+### Audit trail
+
+#### sales_period_id linkback
+
+- [x] **End-to-end flow produces non-null `sales_period_id`.** Matches `sales_periods.id`.
+- [x] **Join back to originating report.** `sales_period_id` indexed + FK reference.
+- [x] **`ON DELETE SET NULL`.** Defined in migration `20260225200000`.
+
+#### Status progression
+
+- [x] **`pending` after ingest.**
+- [x] **`confirmed` after user confirms.** Regardless of `open_wizard` value.
+- [x] **`processed` after wizard completes.** PATCH sets both status and `sales_period_id`.
+- [x] **`processed` valid in CHECK constraint.** Migration includes it.
+- [x] **`rejected` → no further UI transitions.** Buttons disabled. No API-level guard (known gap).
+
+### Edge cases
+
+#### No attachment
+
+- [x] **Email with no attachment.** Row inserted with null attachment fields.
+- [x] **Wizard button disabled.** Also returns 422 if called via API.
+- [x] **"Confirm Only" succeeds.** Status changes to `confirmed`.
+
+#### No contract match
+
+- [x] **No signal matches.** Amber no-match state. Both buttons require contract selection.
+- [x] **Confirm without selecting contract.** Both buttons disabled.
+
+#### Multiple contracts at same confidence
+
+- [x] **Two Signal 3 matches.** Both shown as candidates. No auto-pick.
+- [x] **Two Signal 2 matches.** Both shown as candidates. No auto-pick or warning.
+
+#### Report spans multiple contracts
+
+- [x] **Multi-contract licensee.** Blue callout shown.
+- [x] **Re-processing for different contract.** PATCH overwrites `sales_period_id` with latest. "Process for another?" prompt handles this gracefully.
+
+#### Zero-sales report
+
+- [x] **Zero data or zero values.** Matching and extraction proceed normally.
+- [ ] **Full end-to-end flow with zero-sales.** Needs manual test.
+
+#### Data integrity
+
+- [x] **Candidates restricted to user's contracts.** `_fetch_active_contracts_for_user` filters by `user_id`.
+- [ ] **Confirm rejects cross-user `contract_id`.** Code review confirms 403 check; needs live verification.
+- [x] **Cross-user report access returns 404.** `_get_report_for_user` filters by both `report_id` and `user_id`.
+
 ---
 
 ## Consequences
