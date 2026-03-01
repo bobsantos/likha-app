@@ -64,9 +64,9 @@ export default function UploadPreview({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-200">
-                {mappedHeaders.map((header) => (
+                {mappedHeaders.map((header, i) => (
                   <th
-                    key={header.field}
+                    key={`${header.field}-${i}`}
                     className="text-left py-2 px-3 text-xs font-semibold text-gray-600 uppercase tracking-wide whitespace-nowrap"
                   >
                     {header.label}
@@ -77,8 +77,8 @@ export default function UploadPreview({
             <tbody className="divide-y divide-gray-100">
               {sampleRows.map((row, i) => (
                 <tr key={i} className="hover:bg-gray-50">
-                  {mappedHeaders.map((header) => (
-                    <td key={header.field} className="py-2 px-3 text-gray-900">
+                  {mappedHeaders.map((header, j) => (
+                    <td key={`${header.field}-${j}`} className="py-2 px-3 text-gray-900">
                       {row[header.originalColumn] ?? '—'}
                     </td>
                   ))}
