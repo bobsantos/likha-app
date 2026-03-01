@@ -273,4 +273,36 @@ describe('UploadPreview component', () => {
     expect(warningEl).toBeInTheDocument()
     expect(confirmBtn).toBeInTheDocument()
   })
+
+  // --- Zero net sales warning ---
+
+  it('shows zero net sales warning when net_sales is 0', () => {
+    const zeroSalesPeriod: SalesPeriod = {
+      ...defaultSalesPeriod,
+      net_sales: 0,
+      royalty_calculated: 0,
+    }
+    render(<UploadPreview {...defaultProps} salesPeriod={zeroSalesPeriod} />)
+    expect(
+      screen.getByText(/total net sales is \$0\.00 — are you sure this is correct\?/i)
+    ).toBeInTheDocument()
+  })
+
+  it('does not show zero net sales warning when net_sales is greater than 0', () => {
+    render(<UploadPreview {...defaultProps} />)
+    expect(
+      screen.queryByText(/total net sales is \$0\.00/i)
+    ).not.toBeInTheDocument()
+  })
+
+  it('zero net sales warning does not block the Confirm button', () => {
+    const zeroSalesPeriod: SalesPeriod = {
+      ...defaultSalesPeriod,
+      net_sales: 0,
+      royalty_calculated: 0,
+    }
+    render(<UploadPreview {...defaultProps} salesPeriod={zeroSalesPeriod} />)
+    const confirmBtn = screen.getByRole('button', { name: /confirm/i })
+    expect(confirmBtn).not.toBeDisabled()
+  })
 })

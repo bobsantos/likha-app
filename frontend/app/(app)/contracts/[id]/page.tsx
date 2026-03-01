@@ -27,9 +27,11 @@ import {
   ClipboardList,
   Copy,
 } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { getContract, getSalesPeriods, getSalesReportDownloadUrl, getContractTotals, downloadReportTemplate, isUnauthorizedError } from '@/lib/api'
 import { resolveUrl } from '@/lib/url-utils'
 import { copyToClipboard } from '@/lib/clipboard'
+import ContractDetailSkeleton from '@/components/skeletons/ContractDetailSkeleton'
 import type { Contract, SalesPeriod, TieredRate, CategoryRate, ContractTotals } from '@/types'
 
 // ---------------------------------------------------------------------------
@@ -115,10 +117,6 @@ export default function ContractDetailPage() {
   const [error, setError] = useState<string | null>(null)
   const [downloadingPeriodId, setDownloadingPeriodId] = useState<string | null>(null)
   const [downloadingTemplate, setDownloadingTemplate] = useState(false)
-  const [templateDownloadError, setTemplateDownloadError] = useState<string | null>(null)
-  const [agreementNumberCopied, setAgreementNumberCopied] = useState(false)
-  const [instructionsCopied, setInstructionsCopied] = useState(false)
-  const [successCalloutCopied, setSuccessCalloutCopied] = useState(false)
 
   // Scroll to hash anchor after data loads (e.g., #sales-periods from upload wizard link)
   useEffect(() => {
@@ -149,7 +147,7 @@ export default function ContractDetailPage() {
         // Keep loading=true so no error panel flashes before navigation
         return
       }
-      setError(err instanceof Error ? err.message : 'Failed to load contract data')
+      setError("We couldn't load this contract. Please try again.")
       setLoading(false)
     }
   }
@@ -161,7 +159,7 @@ export default function ContractDetailPage() {
       const rawUrl = await getSalesReportDownloadUrl(contractId, periodId)
       window.open(resolveUrl(rawUrl), '_blank', 'noopener,noreferrer')
     } catch {
-      // Silently ignore — the backend will log the error
+      toast.error('Could not download file. Please try again.')
     } finally {
       setDownloadingPeriodId(null)
     }
@@ -169,12 +167,11 @@ export default function ContractDetailPage() {
 
   const handleDownloadTemplate = async () => {
     if (downloadingTemplate) return
-    setTemplateDownloadError(null)
     setDownloadingTemplate(true)
     try {
       await downloadReportTemplate(contractId)
-    } catch (err) {
-      setTemplateDownloadError(err instanceof Error ? err.message : 'Failed to download template')
+    } catch {
+      toast.error('Template download failed. Please try again.')
     } finally {
       setDownloadingTemplate(false)
     }
@@ -183,8 +180,9 @@ export default function ContractDetailPage() {
   const handleCopyAgreementNumber = async (agreementNumber: string) => {
     const success = await copyToClipboard(agreementNumber)
     if (success) {
-      setAgreementNumberCopied(true)
-      setTimeout(() => setAgreementNumberCopied(false), 2000)
+      toast.success('Copied to clipboard')
+    } else {
+      toast.error('Could not copy — select the text manually')
     }
   }
 
@@ -192,8 +190,9 @@ export default function ContractDetailPage() {
     const message = `Please include the following reference in your royalty report emails:\nAgreement Reference: ${agreementNumber}`
     const success = await copyToClipboard(message)
     if (success) {
-      setInstructionsCopied(true)
-      setTimeout(() => setInstructionsCopied(false), 2000)
+      toast.success('Copied to clipboard')
+    } else {
+      toast.error('Could not copy — select the text manually')
     }
   }
 
@@ -201,8 +200,9 @@ export default function ContractDetailPage() {
     const message = `Please include the following reference in your royalty report emails:\nAgreement Reference: ${agreementNumber}`
     const success = await copyToClipboard(message)
     if (success) {
-      setSuccessCalloutCopied(true)
-      setTimeout(() => setSuccessCalloutCopied(false), 2000)
+      toast.success('Copied to clipboard')
+    } else {
+      toast.error('Could not copy — select the text manually')
     }
   }
 
@@ -300,13 +300,7 @@ export default function ContractDetailPage() {
   }
 
   if (loading) {
-    return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="skeleton h-8 w-48 mb-6" />
-        <div className="skeleton h-24 mb-6" />
-        <div className="skeleton h-96" />
-      </div>
-    )
+    return <ContractDetailSkeleton />
   }
 
   if (error || !contract) {
@@ -405,17 +399,17 @@ export default function ContractDetailPage() {
             className="flex items-center gap-1.5 text-sm font-medium text-green-700 hover:text-green-900 transition-colors flex-shrink-0"
             data-testid="success-callout-copy-button"
           >
-            {successCalloutCopied
-              ? <><CheckCircle2 className="w-4 h-4" />Copied!</>
-              : <><Copy className="w-4 h-4" />Copy</>
-            }
+            <Copy className="w-4 h-4" />Copy
           </button>
         </div>
       )}
 
       {/* Header */}
       <div className="card mb-6 animate-fade-in">
-        <div className="flex items-start justify-between">
+        <div
+          data-testid="contract-detail-header"
+          className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4"
+        >
           <div>
             <h1 className="text-3xl font-bold text-gray-900 mb-2">
               {contract.licensee_name ?? contract.filename ?? 'Untitled Draft'}
@@ -435,10 +429,7 @@ export default function ContractDetailPage() {
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 hover:bg-gray-200 transition-colors text-sm font-mono text-gray-700"
                     data-testid="agreement-number-badge"
                   >
-                    {agreementNumberCopied
-                      ? <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
-                      : <Hash className="w-3.5 h-3.5 text-gray-400" />
-                    }
+                    <Hash className="w-3.5 h-3.5 text-gray-400" aria-hidden="true" />
                     {contract.agreement_number}
                   </button>
                   <button
@@ -448,47 +439,48 @@ export default function ContractDetailPage() {
                     className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors"
                     data-testid="copy-instructions-button"
                   >
-                    {instructionsCopied
-                      ? <><CheckCircle2 className="w-4 h-4 text-green-600" /><span className="text-green-600">Copied!</span></>
-                      : <><ClipboardList className="w-4 h-4" />Copy instructions for licensee</>
-                    }
+                    <ClipboardList className="w-4 h-4" aria-hidden="true" />
+                    <span
+                      data-testid="copy-instructions-text"
+                      className="hidden sm:inline"
+                    >
+                      Copy instructions for licensee
+                    </span>
                   </button>
                 </>
               )}
             </div>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <div className="flex gap-3">
-              {contract.status === 'active' && (
-                <button
-                  onClick={handleDownloadTemplate}
-                  disabled={downloadingTemplate}
-                  aria-label="Download template"
-                  className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Download className="w-4 h-4" />
-                  Download Template
-                </button>
-              )}
-              {contract.pdf_url && (
-                <a
-                  href={resolveUrl(contract.pdf_url)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="btn-secondary flex items-center gap-2"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                  View PDF
-                </a>
-              )}
-              <Link href="/contracts" className="btn-secondary flex items-center gap-2">
-                <ArrowLeft className="w-4 h-4" />
-                Back
-              </Link>
-            </div>
-            {templateDownloadError && (
-              <p className="text-sm text-red-600">{templateDownloadError}</p>
+          <div
+            data-testid="contract-action-buttons"
+            className="flex flex-wrap gap-2"
+          >
+            {contract.status === 'active' && (
+              <button
+                onClick={handleDownloadTemplate}
+                disabled={downloadingTemplate}
+                aria-label="Download template"
+                className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download className="w-4 h-4" aria-hidden="true" />
+                Download Template
+              </button>
             )}
+            {contract.pdf_url && (
+              <a
+                href={resolveUrl(contract.pdf_url)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="btn-secondary flex items-center gap-2"
+              >
+                <ExternalLink className="w-4 h-4" aria-hidden="true" />
+                View PDF
+              </a>
+            )}
+            <Link href="/contracts" className="btn-secondary flex items-center gap-2">
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+              Back
+            </Link>
           </div>
         </div>
       </div>
@@ -736,22 +728,34 @@ export default function ContractDetailPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table
+              className="w-full"
+              aria-label="Sales periods"
+            >
               <thead>
                 <tr className="border-b border-gray-200">
                   <th className="text-left py-3 px-4 text-sm font-semibold text-gray-900">
                     Period
                   </th>
-                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                  <th
+                    data-testid="col-net-sales"
+                    className="hidden sm:table-cell text-right py-3 px-4 text-sm font-semibold text-gray-900"
+                  >
                     Net Sales
                   </th>
-                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                  <th
+                    data-testid="col-reported-royalty"
+                    className="hidden sm:table-cell text-right py-3 px-4 text-sm font-semibold text-gray-900"
+                  >
                     Reported Royalty
                   </th>
                   <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
                     Calculated Royalty
                   </th>
-                  <th className="text-right py-3 px-4 text-sm font-semibold text-gray-900">
+                  <th
+                    data-testid="col-discrepancy"
+                    className="hidden md:table-cell text-right py-3 px-4 text-sm font-semibold text-gray-900"
+                  >
                     Discrepancy
                   </th>
                   <th className="py-3 px-4 w-10" aria-label="Source file" />
@@ -777,16 +781,16 @@ export default function ContractDetailPage() {
                     <tr key={period.id} className={`hover:bg-gray-50 ${rowBorderClass}`}>
                       <td className="py-3 px-4 min-w-[10rem]">
                         <div className="flex items-center gap-2">
-                          <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" aria-hidden="true" />
                           <span className="text-sm text-gray-900 whitespace-nowrap">
                             {formatDate(period.period_start)} - {formatDate(period.period_end)}
                           </span>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-medium text-gray-900 tabular-nums">
+                      <td className="hidden sm:table-cell py-3 px-4 text-right font-medium text-gray-900 tabular-nums">
                         {formatCurrency(period.net_sales)}
                       </td>
-                      <td className="py-3 px-4 text-right tabular-nums">
+                      <td className="hidden sm:table-cell py-3 px-4 text-right tabular-nums">
                         {hasReported
                           ? (
                             <span className="font-medium text-gray-900">
@@ -799,7 +803,7 @@ export default function ContractDetailPage() {
                       <td className="py-3 px-4 text-right font-semibold text-primary-600 tabular-nums">
                         {formatCurrency(period.royalty_calculated)}
                       </td>
-                      <td className="py-3 px-4 text-right">
+                      <td className="hidden md:table-cell py-3 px-4 text-right">
                         {hasReported && discrepancy !== null
                           ? <DiscrepancyCell amount={discrepancy} percentage={discrepancyPct} />
                           : <span className="text-gray-400 text-sm">—</span>
@@ -814,7 +818,7 @@ export default function ContractDetailPage() {
                             title="Download source file"
                             className="text-gray-400 hover:text-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                           >
-                            <Download className="w-4 h-4" />
+                            <Download className="w-4 h-4" aria-hidden="true" />
                           </button>
                         )}
                       </td>

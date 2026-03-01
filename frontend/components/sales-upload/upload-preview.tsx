@@ -130,6 +130,20 @@ export default function UploadPreview({
         )}
       </div>
 
+      {/* Zero net sales warning — non-blocking, just a heads-up */}
+      {net_sales === 0 && (
+        <div
+          className="flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg"
+          role="alert"
+          data-testid="zero-net-sales-warning"
+        >
+          <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+          <p className="text-sm text-amber-700">
+            Total net sales is $0.00 — are you sure this is correct?
+          </p>
+        </div>
+      )}
+
       {/* Royalty calculation card */}
       <div className="card bg-primary-50 border border-primary-100">
         <h3 className="text-sm font-semibold text-primary-800 mb-3 uppercase tracking-wide">

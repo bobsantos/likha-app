@@ -10,6 +10,8 @@ import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { getSession } from '@/lib/auth'
 import Nav from '@/components/Nav'
+import ErrorBoundary from '@/components/ErrorBoundary'
+import { Toaster } from 'react-hot-toast'
 
 export default function AppLayout({
   children,
@@ -66,9 +68,52 @@ export default function AppLayout({
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Skip to main content — first focusable element for keyboard users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 z-50 px-4 py-2 bg-primary-600 text-white font-medium rounded-lg focus:ring-2 focus:ring-white focus:ring-offset-2 focus:ring-offset-primary-600"
+      >
+        Skip to main content
+      </a>
       <Nav userEmail={userEmail} />
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 animate-fade-in">
-        {children}
+      <Toaster
+        position="top-right"
+        containerStyle={{ top: 72 }}
+        toastOptions={{
+          style: {
+            fontFamily: 'Inter, sans-serif',
+            fontSize: '14px',
+            fontWeight: 500,
+            borderRadius: '10px',
+            padding: '12px 16px',
+            maxWidth: '380px',
+          },
+          success: {
+            duration: 3500,
+            style: {
+              background: '#f0fdf4',
+              color: '#15803d',
+              border: '1px solid #bbf7d0',
+            },
+          },
+          error: {
+            duration: 5000,
+            style: {
+              background: '#fef2f2',
+              color: '#b91c1c',
+              border: '1px solid #fecaca',
+            },
+          },
+        }}
+      />
+      <main
+        id="main-content"
+        className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 animate-fade-in"
+        aria-live="polite"
+      >
+        <ErrorBoundary>
+          {children}
+        </ErrorBoundary>
       </main>
     </div>
   )

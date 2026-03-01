@@ -21,11 +21,14 @@ detect_ip() {
 
 HOST_IP=$(detect_ip)
 
+# Remove stale anonymous volumes (e.g. node_modules) so rebuilds pick up new deps
+docker compose down -v 2>/dev/null
+
 if [ -n "$HOST_IP" ]; then
   echo "  Detected host IP: $HOST_IP"
-  HOST_IP="$HOST_IP" docker compose up "$@"
+  HOST_IP="$HOST_IP" docker compose up --build "$@"
 else
   echo "  Could not detect host IP — mobile access may not work."
-  echo "  You can set it manually: HOST_IP=192.168.x.x docker compose up"
-  docker compose up "$@"
+  echo "  You can set it manually: HOST_IP=192.168.x.x ./start.sh"
+  docker compose up --build "$@"
 fi

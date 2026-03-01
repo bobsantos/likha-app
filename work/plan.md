@@ -324,22 +324,33 @@ Full specification in `docs/prd-royalty-tracking.md` — Phase 1 section.
 
 **Morning: Error Handling & Loading States**
 
-- [ ] Add global error handling (error boundary component)
-- [ ] Implement loading states:
-  - Skeleton loaders for dashboard
-  - Spinners for form submissions
-  - Progress bars for file uploads
-- [ ] Add toast notifications
-- [ ] Form validation improvements
+- [x] Add global error handling (error boundary component)
+- [x] Implement loading states:
+  - [x] Skeleton loaders for dashboard (DashboardSkeleton)
+  - [x] Skeleton loaders for contract detail (ContractDetailSkeleton, TableSkeleton)
+  - Spinners for form submissions (existing)
+  - Progress bars for file uploads (existing)
+- [x] Add toast notifications (react-hot-toast integrated in app layout)
+- [x] Form validation improvements (date ordering, royalty rate required, email warning, negative numbers)
 
 **Afternoon: Mobile Responsiveness & Deploy**
 
-- [ ] Mobile responsive design:
+- [x] Mobile responsive design:
   - Test all pages on mobile viewport (375px, 768px, 1024px)
-  - Hamburger menu on mobile
-  - Touch-friendly button sizes (min 44px)
-- [ ] Accessibility improvements (ARIA labels, keyboard navigation)
-- [ ] Final testing of complete user flow
+  - Hamburger menu on mobile (slide-over drawer, Escape closes, backdrop closes)
+  - Touch-friendly button sizes (min 44px — py-2.5 on all btn-* and .input classes)
+  - Contract detail header stacks on mobile (flex-col → sm:flex-row)
+  - Contract detail table hides Net Sales + Reported Royalty on mobile (hidden sm:table-cell)
+  - Inbox table hides Subject + Received on mobile (hidden sm:table-cell)
+  - Dropzone shows "Tap to choose a PDF" on mobile, drag text on md+
+- [x] Accessibility improvements (ARIA labels, keyboard navigation):
+  - nav aria-label="Main navigation"
+  - Hamburger aria-expanded + aria-controls
+  - Sales periods table and Inbox table have aria-label
+  - Decorative icons aria-hidden="true" throughout nav
+  - Skip-to-content link as first focusable element in layout
+  - Mobile drawer closes on Escape, returns focus to hamburger
+- [x] Final testing of complete user flow (TDD — 36 new tests, all passing)
 - [ ] Deploy to Vercel
 
 ### Backend Tasks
@@ -586,8 +597,8 @@ NEXT_PUBLIC_API_URL=https://[backend].railway.app
 - [x] YTD summary is displayed
 - [x] Minimum guarantee logic works
 - [ ] App is deployed (Frontend: Vercel, Backend: Railway)
-- [ ] All pages are mobile responsive
-- [ ] Error states are handled gracefully
+- [x] All pages are mobile responsive
+- [x] Error states are handled gracefully
 
 ### Phase 1 Complete (Discrepancy Detection) ✅
 

@@ -13,6 +13,7 @@ import { getContracts, getDashboardSummary, isUnauthorizedError } from '@/lib/ap
 import ContractCard from '@/components/ContractCard'
 import DashboardSummary from '@/components/DashboardSummary'
 import EmptyState from '@/components/EmptyState'
+import DashboardSkeleton from '@/components/skeletons/DashboardSkeleton'
 import type { Contract } from '@/types'
 
 export default function DashboardPage() {
@@ -57,22 +58,7 @@ export default function DashboardPage() {
   }, [])
 
   if (loading) {
-    return (
-      <div className="px-4 py-6 sm:px-0">
-        <div className="animate-pulse">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-            <div className="bg-gray-200 rounded-xl h-32"></div>
-            <div className="bg-gray-200 rounded-xl h-32"></div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="bg-gray-200 rounded-xl h-48"></div>
-            <div className="bg-gray-200 rounded-xl h-48"></div>
-            <div className="bg-gray-200 rounded-xl h-48"></div>
-          </div>
-        </div>
-        <p className="text-center text-gray-600 mt-8">Loading contracts...</p>
-      </div>
-    )
+    return <DashboardSkeleton />
   }
 
   if (error) {

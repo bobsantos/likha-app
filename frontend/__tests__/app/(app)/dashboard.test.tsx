@@ -103,7 +103,9 @@ describe('Dashboard Page', () => {
     mockGetContracts.mockImplementation(() => new Promise(() => {}))
     mockGetDashboardSummary.mockImplementation(() => new Promise(() => {}))
     render(<DashboardPage />)
-    expect(screen.getByText(/loading/i)).toBeInTheDocument()
+    // DashboardSkeleton uses aria-busy and aria-label instead of "Loading..." text
+    expect(screen.getByRole('status')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByLabelText(/loading dashboard/i)).toBeInTheDocument()
   })
 
   it('displays contracts when loaded', async () => {
