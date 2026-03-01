@@ -13,7 +13,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Upload, FileText, Check, AlertCircle, Loader2, ExternalLink } from 'lucide-react'
-import { ApiError, getContract, getSavedMapping, uploadSalesReport, confirmSalesUpload, checkPeriodOverlap, parseFromStorage } from '@/lib/api'
+import { ApiError, getContract, getContracts, getSavedMapping, uploadSalesReport, confirmSalesUpload, checkPeriodOverlap, parseFromStorage, linkSalesPeriodToReport } from '@/lib/api'
 import ColumnMapper from '@/components/sales-upload/column-mapper'
 import CategoryMapper from '@/components/sales-upload/category-mapper'
 import UploadPreview, { type MappedHeader } from '@/components/sales-upload/upload-preview'
@@ -691,6 +691,7 @@ export default function SalesUploadPage() {
   const inboxPeriodEnd = searchParams.get('period_end')
   const source = searchParams.get('source')
   const storagePath = searchParams.get('storage_path')
+  const senderEmail = searchParams.get('sender_email')
   const isInboxSource = source === 'inbox'
   const shouldAutoParse = isInboxSource && !!storagePath
 
@@ -719,6 +720,8 @@ export default function SalesUploadPage() {
   const [confirmError, setConfirmError] = useState<string | null>(null)
   const [duplicatePeriodError, setDuplicatePeriodError] = useState(false)
   const [lastCategoryMapping, setLastCategoryMapping] = useState<CategoryMapping | undefined>(undefined)
+  const [siblingContracts, setSiblingContracts] = useState<Contract[]>([])
+  const [showMultiContractPrompt, setShowMultiContractPrompt] = useState(false)
 
   // Reset overrideIntent whenever the user changes either date field
   const setPeriodStart = useCallback((v: string) => {
@@ -831,6 +834,26 @@ export default function SalesUploadPage() {
       setSalesPeriod(response)
       setUploadWarnings(response.upload_warnings ?? [])
       setStep('preview')
+
+      // Link sales period back to inbound report (best-effort, don't block user)
+      if (isInboxSource && reportId && response.id) {
+        linkSalesPeriodToReport(reportId, response.id).catch((err) => {
+          console.warn('Failed to link sales period to inbound report:', err)
+        })
+      }
+
+      // Check for multi-contract licensee (for "Process for another?" prompt)
+      if (isInboxSource && contract?.licensee_name) {
+        try {
+          const allContracts = await getContracts()
+          const siblings = allContracts.filter(
+            (c: Contract) => c.status === 'active' && c.licensee_name === contract.licensee_name && c.id !== contractId
+          )
+          setSiblingContracts(siblings)
+        } catch {
+          // Non-fatal
+        }
+      }
     } catch (err) {
       if (
         err instanceof ApiError &&
@@ -892,6 +915,11 @@ export default function SalesUploadPage() {
 
   const handlePreviewConfirm = async () => {
     if (salesPeriod) {
+      // If multi-contract prompt is available, show it instead of immediately redirecting
+      if (isInboxSource && siblingContracts.length > 0) {
+        setShowMultiContractPrompt(true)
+        return
+      }
       handleConfirmFinal()
       return
     }
@@ -975,7 +1003,13 @@ export default function SalesUploadPage() {
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Upload Sales Report</h1>
       {isInboxSource ? (
         <p className="text-gray-600 mb-8">
-          Processing emailed report from {contractName}.
+          Processing emailed report from{' '}
+          {senderEmail ? (
+            <span className="font-medium">{senderEmail}</span>
+          ) : (
+            contractName
+          )}
+          .
         </p>
       ) : (
         <p className="text-gray-600 mb-8">
@@ -1134,17 +1168,66 @@ export default function SalesUploadPage() {
         )}
 
         {step === 'preview' && salesPeriod && uploadPreview && (
-          <UploadPreview
-            sampleRows={uploadPreview.sample_rows}
-            mappedHeaders={mappedHeaders}
-            totalRows={uploadPreview.total_rows}
-            salesPeriod={salesPeriod}
-            uploadWarnings={uploadWarnings}
-            onConfirm={handlePreviewConfirm}
-            onBack={() => setStep('map-columns')}
-            confirming={confirming}
-            confirmError={confirmError}
-          />
+          <>
+            <UploadPreview
+              sampleRows={uploadPreview.sample_rows}
+              mappedHeaders={mappedHeaders}
+              totalRows={uploadPreview.total_rows}
+              salesPeriod={salesPeriod}
+              uploadWarnings={uploadWarnings}
+              onConfirm={handlePreviewConfirm}
+              onBack={() => setStep('map-columns')}
+              confirming={confirming}
+              confirmError={confirmError}
+            />
+
+            {/* "Process for another contract?" prompt for multi-contract licensees */}
+            {isInboxSource && siblingContracts.length > 0 && (
+              <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p className="text-sm font-medium text-blue-900 mb-3">
+                  Process for another contract?
+                </p>
+                <p className="text-xs text-blue-700 mb-3">
+                  {contract?.licensee_name} has other active contracts. Click to process this report for another contract.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {siblingContracts.map((sc) => {
+                    const params = new URLSearchParams({
+                      contract_id: sc.id,
+                      source: 'inbox',
+                      ...(reportId ? { report_id: reportId } : {}),
+                      ...(storagePath ? { storage_path: storagePath } : {}),
+                      ...(periodStart ? { period_start: periodStart } : {}),
+                      ...(periodEnd ? { period_end: periodEnd } : {}),
+                      ...(senderEmail ? { sender_email: senderEmail } : {}),
+                    })
+                    return (
+                      <button
+                        key={sc.id}
+                        onClick={() => router.push(`/sales/upload?${params.toString()}`)}
+                        className="inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium bg-white border border-blue-300 text-blue-700 hover:bg-blue-100 transition-colors"
+                      >
+                        {sc.licensee_name ?? 'Untitled'}
+                      </button>
+                    )
+                  })}
+                </div>
+                {showMultiContractPrompt && (
+                  <div className="mt-4 pt-4 border-t border-blue-200">
+                    <p className="text-sm text-blue-800 mb-3">
+                      Or continue to the contract page for the current report.
+                    </p>
+                    <button
+                      onClick={handleConfirmFinal}
+                      className="btn-primary text-sm"
+                    >
+                      Continue to contract page
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

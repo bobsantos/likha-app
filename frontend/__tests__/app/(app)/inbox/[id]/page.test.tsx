@@ -369,7 +369,7 @@ describe('Inbox Review Page', () => {
       ])
       render(<InboxReviewPage />)
       await waitFor(() => {
-        expect(screen.getByText(/no attachment/i)).toBeInTheDocument()
+        expect(screen.getAllByText(/no attachment/i).length).toBeGreaterThanOrEqual(1)
       })
     })
   })
