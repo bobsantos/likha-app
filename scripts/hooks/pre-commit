@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# Pre-commit hook: Run frontend tests before committing
+# If tests fail, the commit is aborted
+
+echo "🧪 Running frontend tests before commit..."
+
+# Store the current directory
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+
+# Run frontend tests
+echo ""
+echo "=== Frontend Tests ==="
+cd "$ROOT_DIR/frontend"
+
+# Check if node_modules exists
+if [ ! -d "node_modules" ]; then
+    echo "❌ node_modules not found! Run 'npm install' in frontend directory."
+    exit 1
+fi
+
+# Run Jest tests without coverage and bail on first failure
+npx jest --no-coverage --bail
+FRONTEND_EXIT=$?
+
+# Check results
+if [ $FRONTEND_EXIT -ne 0 ]; then
+    echo ""
+    echo "❌ Frontend tests failed! Commit aborted."
+    echo "   Fix the failing tests and try again."
+    exit 1
+fi
+
+echo ""
+echo "✅ All frontend tests passed! Proceeding with commit..."
+
+# --- Security Audit Warnings (non-blocking) ---
+echo ""
+echo "=== Security Audit (warnings only) ==="
+
+# Frontend: npm audit
+cd "$ROOT_DIR/frontend"
+echo ""
+echo "--- npm audit ---"
+npm audit --omit=dev 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "⚠️  Frontend has known vulnerabilities (see above). Not blocking commit."
+fi
+
+# Backend: pip-audit
+cd "$ROOT_DIR/backend"
+echo ""
+echo "--- pip-audit ---"
+if command -v pip-audit &>/dev/null; then
+    pip-audit -r requirements.txt --ignore-vuln CVE-2024-23342 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "⚠️  Backend has known vulnerabilities (see above). Not blocking commit."
+    fi
+else
+    echo "⚠️  pip-audit not installed, skipping backend audit."
+fi
+
+echo ""
+exit 0

@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# Pre-push hook: Run all tests before pushing
+# If tests fail, the push is aborted
+
+echo "🧪 Running tests before push..."
+
+# Store the current directory
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+
+# Run backend tests
+echo ""
+echo "=== Backend Tests ==="
+cd "$ROOT_DIR/backend"
+
+# Activate virtual environment if it exists
+if [ -f ".venv/bin/activate" ]; then
+    source .venv/bin/activate
+fi
+
+# Check if pytest is available
+if command -v pytest &> /dev/null; then
+    pytest tests/ -v --tb=short
+    BACKEND_EXIT=$?
+else
+    # Try with python -m pytest
+    python -m pytest tests/ -v --tb=short
+    BACKEND_EXIT=$?
+fi
+
+# Check results
+if [ $BACKEND_EXIT -ne 0 ]; then
+    echo ""
+    echo "❌ Backend tests failed! Push aborted."
+    echo "   Fix the failing tests and try again."
+    exit 1
+fi
+
+echo ""
+echo "✅ All tests passed! Proceeding with push..."
+exit 0
